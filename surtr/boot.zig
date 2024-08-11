@@ -210,7 +210,7 @@ pub fn main() uefi.Status {
     }
 
     // Jump to kernel entry point.
-    const KernelEntryType = fn (defs.BootInfo) callconv(.Win64) void;
+    const KernelEntryType = fn (defs.BootInfo) callconv(.Win64) noreturn;
     const kernel_entry: *KernelEntryType = @ptrFromInt(elf_header.entry);
     const boot_info = defs.BootInfo{
         .magic = defs.surt_magic,

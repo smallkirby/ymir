@@ -55,7 +55,7 @@ fn panic(
         var ix: usize = 0;
         log.err("=== Stack Trace ==============", .{});
         while (it.next()) |frame| {
-            log.err("#{d:0>2}: 0x{X}: (No symbol available)", .{ ix, frame });
+            log.err("#{d:0>2}: 0x{X:0>16}: (No symbol available)", .{ ix, frame });
             ix += 1;
         }
     }
