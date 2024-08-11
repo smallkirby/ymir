@@ -94,7 +94,6 @@ pub fn main() uefi.Status {
         \\  Is 64-bit           : {d}
         \\  # of Program Headers: {d}
         \\  # of Section Headers: {d}
-        \\
     ,
         .{
             elf_header.entry,

@@ -1,8 +1,17 @@
 //! This module exposes x86_64-specific functions.
 
 pub const serial = @import("serial.zig");
+pub const intr = @import("interrupt.zig");
+pub const gdt = @import("gdt.zig");
 
 const am = @import("asm.zig");
+
+/// Page size.
+pub const page_size: usize = 4096;
+/// Page shift in bits.
+pub const page_shift: usize = 12;
+/// Page mask.
+pub const page_mask: usize = page_size - 1;
 
 /// Pause a CPU for a short period of time.
 pub fn relax() void {
