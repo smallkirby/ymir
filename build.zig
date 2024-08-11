@@ -8,6 +8,14 @@ pub fn build(b: *std.Build) void {
     });
     const optimize = b.standardOptimizeOption(.{});
 
+    const surtr_module = b.createModule(.{
+        .root_source_file = b.path("surtr/defs.zig"),
+    });
+    const ymir_module = b.createModule(.{
+        .root_source_file = b.path("ymir/ymir.zig"),
+    });
+    ymir_module.addImport("ymir", ymir_module);
+
     const ymir = b.addExecutable(.{
         .name = "ymir.elf",
         .root_source_file = b.path("ymir/main.zig"),
@@ -18,6 +26,8 @@ pub fn build(b: *std.Build) void {
     ymir.root_module.red_zone = false; // Disable stack red zone.
     ymir.link_z_relro = false;
     ymir.entry = .{ .symbol_name = "kernelEntry" };
+    ymir.root_module.addImport("surtr", surtr_module);
+    ymir.root_module.addImport("ymir", ymir_module);
 
     const surtr = b.addExecutable(.{
         .name = "BOOTX64.EFI",
