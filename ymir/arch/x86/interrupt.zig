@@ -119,7 +119,6 @@ fn unhandledHandler(context: *Context) void {
     asm volatile ("hlt");
 }
 
-/// TODO: move to an appropriate place
 fn unhandledFaultHandler(context: *Context) void {
     log.err("============ Unhandled Fault ===================", .{});
 
@@ -157,10 +156,6 @@ const virtualization_exception = 20;
 const control_protection_excepton = 21;
 
 const num_system_exceptions = 32;
-
-// User-defined interrupt vectors.
-pub const xhc_interrupt = 0x30;
-pub const timer_interrupt = 0x31;
 
 /// Get the name of an exception.
 pub inline fn exceptionName(vector: u64) []const u8 {

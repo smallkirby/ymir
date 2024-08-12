@@ -69,6 +69,7 @@ pub fn build(b: *std.Build) void {
         "-serial",
         "mon:stdio",
         "-no-reboot",
+        "-s",
     };
     const qemu_cmd = b.addSystemCommand(&qemu_args);
     qemu_cmd.step.dependOn(&install_ymir.step);

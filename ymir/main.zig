@@ -43,10 +43,28 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // From this moment, interrupts are enabled.
     arch.intr.init();
     log.info("Initialized IDT.", .{});
+
+    // Initialize PIC.
+    arch.pic.init();
+    log.info("Initialized PIC.", .{});
+
+    // Enable PIT.
+    arch.pic.unsetMask(.Timer);
+    arch.intr.registerHandler(arch.pic.primary_vector_offset, blobTimerHandler);
+
+    // EOL
+    log.info("Reached EOL.", .{});
+    while (true)
+        arch.halt();
 }
 
 fn validateBootInfo(boot_info: surtr.BootInfo) !void {
     if (boot_info.magic != surtr.surtr_magic) {
         return error.InvalidMagic;
     }
+}
+
+// TODO: temporary
+fn blobTimerHandler(_: *arch.intr.Context) void {
+    arch.pic.notifyEoi(.Timer);
 }
