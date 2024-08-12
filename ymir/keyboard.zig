@@ -6,21 +6,59 @@ const log = std.log.scoped(.kbd);
 const ymir = @import("ymir");
 const idefs = @import("interrupts.zig");
 const arch = ymir.arch;
+const Serial = ymir.serial.Serial;
+
+/// Type of keyboard source.
+pub const KeyboardSource = enum {
+    /// PS/2 keyboard.
+    ps2,
+    /// Serial console. Serial 1 is used.
+    serial,
+};
+
+/// Keyboard.
+/// Currently, PS/2 keyboard and serial console are supported.
+pub const Keyboard = union(KeyboardSource) {
+    /// PS/2 keyboard.
+    ps2: struct {},
+    /// Serial console. Serial 1 is used.
+    serial: Serial,
+};
 
 /// PS/2 keyboard scan code parser.
 var parser = ScancodeParser{};
 
+/// Keyboard instance.
+var instance: Keyboard = undefined;
+
 /// Initialize PS/2 keyboard and its interrupt handler.
-pub fn init() void {
-    arch.pic.unsetMask(.Keyboard);
-    arch.intr.registerHandler(idefs.pic_keyboard, interruptHandler);
+pub fn init(source: Keyboard) void {
+    instance = source;
+
+    switch (source) {
+        .ps2 => {
+            arch.intr.registerHandler(idefs.pic_keyboard, ps2InterruptHandler);
+            arch.pic.unsetMask(.Keyboard);
+        },
+        .serial => {
+            arch.intr.registerHandler(idefs.pic_serial1, serialInterruptHandler);
+            arch.serial.enableInterrupt(.COM1);
+            arch.pic.unsetMask(.Serial1);
+        },
+    }
 }
 
-fn interruptHandler(_: *arch.intr.Context) void {
+fn ps2InterruptHandler(_: *arch.intr.Context) void {
     if (parser.feed(arch.pic.ps2ReadScanCode())) |_| {
         // Do something with the key.
     }
     arch.pic.notifyEoi(.Keyboard);
+}
+
+fn serialInterruptHandler(_: *arch.intr.Context) void {
+    _ = instance.serial.read();
+    // Do something with the key.
+    arch.pic.notifyEoi(.Serial1);
 }
 
 /// Set 1 "XT" scan code.

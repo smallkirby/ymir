@@ -66,6 +66,7 @@ pub fn build(b: *std.Build) void {
         "/usr/share/ovmf/OVMF.fd", // TODO: Make this configurable
         "-hda",
         b.fmt("fat:rw:{s}/{s}", .{ b.install_path, out_dir_name }),
+        "-nographic",
         "-serial",
         "mon:stdio",
         "-no-reboot",

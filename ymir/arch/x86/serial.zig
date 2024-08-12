@@ -79,6 +79,17 @@ pub fn getSerial(serial: *Serial, port: Ports) void {
         Ports.COM3 => writeByteCom3,
         Ports.COM4 => writeByteCom5,
     };
+    serial._read_fn = switch (port) {
+        Ports.COM1 => readByteCom1,
+        Ports.COM2 => readByteCom2,
+        Ports.COM3 => readByteCom3,
+        Ports.COM4 => readByteCom4,
+    };
+}
+
+pub fn enableInterrupt(port: Ports) void {
+    const p = @intFromEnum(port);
+    am.outb(0b0000_0001, p + UartOffset.IER); // Receive data available interrupt
 }
 
 fn writeByte(byte: u8, port: Ports) void {
@@ -105,4 +116,30 @@ fn writeByteCom3(byte: u8) void {
 
 fn writeByteCom5(byte: u8) void {
     writeByte(byte, Ports.COM4);
+}
+
+fn readByte(port: Ports) u8 {
+    // wait until the receiver buffer is not empty
+    while (am.inb(@intFromEnum(port) + UartOffset.LSR) & 0b0000_0001 == 0) {
+        am.relax();
+    }
+
+    // read char from the receiver buffer
+    return am.inb(@intFromEnum(port));
+}
+
+fn readByteCom1() u8 {
+    return readByte(Ports.COM1);
+}
+
+fn readByteCom2() u8 {
+    return readByte(Ports.COM2);
+}
+
+fn readByteCom3() u8 {
+    return readByte(Ports.COM3);
+}
+
+fn readByteCom4() u8 {
+    return readByte(Ports.COM4);
 }

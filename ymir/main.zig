@@ -53,9 +53,11 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Enable PIT.
     arch.pic.unsetMask(.Timer);
     arch.intr.registerHandler(idefs.pic_timer, blobTimerHandler);
+    log.info("Enabled PIT.", .{});
 
-    // Init PS/2 keyboard.
-    kbd.init();
+    // Init keyboard.
+    kbd.init(.{ .serial = sr }); // TODO: make this configurable
+    log.info("Initialized keyboard.", .{});
 
     // EOL
     log.info("Reached EOL.", .{});
