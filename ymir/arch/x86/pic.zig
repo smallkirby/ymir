@@ -42,6 +42,11 @@ const icw4_buf_primary = 0x0C;
 /// End-of-interrupt command.
 const eoi = 0x20;
 
+// PS/2 I/O Ports
+const ps2_data_port: u16 = 0x60;
+const ps2_status_port: u16 = 0x64;
+const ps2_command_port: u16 = ps2_status_port;
+
 /// Initialize the PIC remapping its interrupt vectors.
 /// You MUST call this function before using the PIC.
 pub fn init() void {
@@ -101,6 +106,14 @@ pub fn notifyEoi(irq: IrqLine) void {
         am.outb(eoi, secondary_command_port);
     }
     am.outb(eoi, primary_command_port);
+}
+
+/// Read a scan code from the PS/2 keyboard.
+pub fn ps2ReadScanCode() u8 {
+    while (am.inb(ps2_status_port) & 1 == 0) {
+        am.relax();
+    }
+    return am.inb(ps2_data_port);
 }
 
 /// Line numbers for the PIC.

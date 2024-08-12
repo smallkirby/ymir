@@ -155,7 +155,7 @@ const simd_exception = 19;
 const virtualization_exception = 20;
 const control_protection_excepton = 21;
 
-const num_system_exceptions = 32;
+pub const num_system_exceptions = 32;
 
 /// Get the name of an exception.
 pub inline fn exceptionName(vector: u64) []const u8 {

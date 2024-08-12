@@ -6,6 +6,8 @@ const log = std.log.scoped(.main);
 const surtr = @import("surtr");
 
 const ymir = @import("ymir");
+const kbd = @import("keyboard.zig");
+const idefs = @import("interrupts.zig");
 const serial = ymir.serial;
 const klog = ymir.klog;
 const arch = ymir.arch;
@@ -50,7 +52,10 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
 
     // Enable PIT.
     arch.pic.unsetMask(.Timer);
-    arch.intr.registerHandler(arch.pic.primary_vector_offset, blobTimerHandler);
+    arch.intr.registerHandler(idefs.pic_timer, blobTimerHandler);
+
+    // Init PS/2 keyboard.
+    kbd.init();
 
     // EOL
     log.info("Reached EOL.", .{});
