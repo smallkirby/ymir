@@ -1,7 +1,5 @@
 //! This module provides a serial interface.
 
-const std = @import("std");
-
 const ymir = @import("ymir");
 const spin = ymir.spin;
 const arch = ymir.arch;
