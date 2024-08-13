@@ -178,11 +178,11 @@ pub fn main() uefi.Status {
     log.info("Exiting boot services.", .{});
     const map_buffer_size = 4096 * 4;
     var map_buffer: [map_buffer_size]u8 = undefined;
-    var map = MemoryMap{
+    var map = defs.MemoryMap{
         .buffer_size = map_buffer.len,
         .descriptors = @alignCast(@ptrCast(&map_buffer)),
         .map_key = 0,
-        .map_size = 0,
+        .map_size = map_buffer.len,
         .descriptor_size = 0,
         .descriptor_version = 0,
     };
@@ -192,10 +192,29 @@ pub fn main() uefi.Status {
         return status;
     }
 
+    // Print memory map.
+    log.info("Memory Map (Physical): Buf=0x{X}, MapSize=0x{X}, DescSize=0x{X}", .{
+        @intFromPtr(map.descriptors),
+        map.map_size,
+        map.descriptor_size,
+    });
+    var map_iter = defs.MemoryDescriptorIterator.new(map);
+    while (true) {
+        if (map_iter.next()) |md| {
+            log.info("  0x{X:0>16} - 0x{X:0>16} : {s}", .{
+                md.physical_start,
+                md.physical_start + md.number_of_pages * 4096,
+                @tagName(md.type),
+            });
+        } else break;
+    }
+
     status = boot_service.exitBootServices(uefi.handle, map.map_key);
     if (status != .Success) {
         // May fail if the memory map has been changed.
         // Retry after getting the memory map again.
+        map.buffer_size = map_buffer.len;
+        map.map_size = map_buffer.len;
         status = getMemoryMap(&map, boot_service);
         if (status != .Success) {
             log.err("Failed to get memory map after failed to exit boot services.", .{});
@@ -213,20 +232,12 @@ pub fn main() uefi.Status {
     const kernel_entry: *KernelEntryType = @ptrFromInt(elf_header.entry);
     const boot_info = defs.BootInfo{
         .magic = defs.surtr_magic,
+        .memory_map = map,
     };
     kernel_entry(boot_info);
 
     unreachable;
 }
-
-const MemoryMap = struct {
-    buffer_size: usize,
-    descriptors: [*]uefi.tables.MemoryDescriptor,
-    map_size: usize,
-    map_key: usize,
-    descriptor_size: usize,
-    descriptor_version: u32,
-};
 
 inline fn toUcs2(comptime s: [:0]const u8) [s.len * 2:0]u16 {
     var ucs2: [s.len * 2:0]u16 = [_:0]u16{0} ** (s.len * 2);
@@ -237,9 +248,9 @@ inline fn toUcs2(comptime s: [:0]const u8) [s.len * 2:0]u16 {
     return ucs2;
 }
 
-fn getMemoryMap(map: *MemoryMap, boot_services: *uefi.tables.BootServices) uefi.Status {
+fn getMemoryMap(map: *defs.MemoryMap, boot_services: *uefi.tables.BootServices) uefi.Status {
     return boot_services.getMemoryMap(
-        &map.buffer_size,
+        &map.map_size,
         map.descriptors,
         &map.map_key,
         &map.descriptor_size,
