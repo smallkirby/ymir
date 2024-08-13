@@ -9,15 +9,15 @@ var spin_lock: spin.SpinLock = spin.SpinLock{};
 
 /// Serial console.
 pub const Serial = struct {
-    const writeFn = *const fn (u8) void;
-    const readFn = *const fn () u8;
+    const WriteFn = *const fn (u8) void;
+    const ReadFn = *const fn () u8;
 
     /// Pointer to the arch-specific write-function.
     /// Do NOT access this field directly, use the `write` function instead.
-    _write_fn: writeFn = undefined,
+    _write_fn: WriteFn = undefined,
     /// Pointer to the arch-specific read-function.
     /// Do NOT access this field directly, use the `read` function instead.
-    _read_fn: readFn = undefined,
+    _read_fn: ReadFn = undefined,
 
     const Self = @This();
 
