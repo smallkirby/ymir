@@ -26,6 +26,7 @@ pub fn build(b: *std.Build) void {
     ymir.root_module.red_zone = false; // Disable stack red zone.
     ymir.link_z_relro = false;
     ymir.entry = .{ .symbol_name = "kernelEntry" };
+    ymir.root_module.code_model = .kernel;
     ymir.root_module.addImport("surtr", surtr_module);
     ymir.root_module.addImport("ymir", ymir_module);
 
@@ -77,4 +78,17 @@ pub fn build(b: *std.Build) void {
     qemu_cmd.step.dependOn(&install_surtr.step);
     const run_qemu = b.step("run", "Run QEMU");
     run_qemu.dependOn(&qemu_cmd.step);
+
+    // Unit tests
+    const ymir_tests = b.addTest(.{
+        .name = "Unit Test",
+        .root_source_file = b.path("ymir/ymir.zig"),
+        .target = b.standardTargetOptions(.{}),
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    ymir_tests.root_module.addImport("ymir", &ymir_tests.root_module);
+    const run_ymir_tests = b.addRunArtifact(ymir_tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_ymir_tests.step);
 }
