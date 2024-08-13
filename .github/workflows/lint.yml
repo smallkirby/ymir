@@ -1,0 +1,36 @@
+name: Lint
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+env:
+  ZIG_VERSION: 0.13.0
+  LLVM_VERSION: 18
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install clang-format
+        run: |
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository 'deb http://apt.llvm.org/noble/ llvm-toolchain-noble main'
+          sudo apt update
+          sudo apt install clang-format-${{env.LLVM_VERSION}} make
+
+      - name: Install zig
+        run: |
+          curl https://ziglang.org/download/${{env.ZIG_VERSION}}/zig-linux-x86_64-${{env.ZIG_VERSION}}.tar.xz -L -o zig.tar.xz
+          tar -xf zig.tar.xz
+          echo "$(pwd)/zig-linux-x86_64-${{env.ZIG_VERSION}}" >> $GITHUB_PATH
+
+      - name: Lint Zig
+        run: |
+          zig fmt --check **/*.zig --exclude .zig-cache/**/*.zig
