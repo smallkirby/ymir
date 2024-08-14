@@ -15,8 +15,27 @@ const arch = ymir.arch;
 pub const panic = @import("panic.zig").panic_fn;
 pub const std_options = klog.default_log_options;
 
-/// Kernel entry point called by the bootloader.
-export fn kernelEntry(boot_info: surtr.BootInfo) callconv(.Win64) noreturn {
+/// Size in 4KiB pages of the kernel stack.
+const kstack_size = arch.page_size * 0x50;
+/// Kernel stack.
+/// The first page is used as a guard page.
+/// TODO: make the guard page read-only.
+var kstack: [kstack_size + arch.page_size]u8 align(arch.page_size) = [_]u8{0} ** (kstack_size + arch.page_size);
+
+/// Kernel entry point called by surtr.
+/// The function switches stack from the surtr stack to the kernel stack.
+export fn kernelEntry() callconv(.Naked) noreturn {
+    asm volatile (
+        \\movq %[new_stack], %%rsp
+        \\call kernelTrampoline
+        :
+        : [new_stack] "r" (@intFromPtr(&kstack) + kstack_size + arch.page_size),
+    );
+}
+
+/// Trampoline function to call the kernel main function.
+/// The role of this function is to make main function return errors.
+export fn kernelTrampoline(boot_info: surtr.BootInfo) callconv(.Win64) noreturn {
     kernelMain(boot_info) catch |err| {
         log.err("Kernel aborted with error: {}", .{err});
         @panic("Exiting...");
@@ -25,6 +44,7 @@ export fn kernelEntry(boot_info: surtr.BootInfo) callconv(.Win64) noreturn {
     unreachable;
 }
 
+/// Kernel main function.
 fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Initialize the serial console and logger.
     const sr = serial.init();
@@ -38,6 +58,7 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     };
 
     // Initialize GDT.
+    // It switches GDT from the one prepared by surtr to the ymir GDT.
     arch.gdt.init();
     log.info("Initialized GDT.", .{});
 
