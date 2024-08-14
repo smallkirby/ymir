@@ -57,6 +57,11 @@ pub const Virt = u64;
 /// Therefore, the offset is 0x0 for OVMF.
 const phys_virt_offset = 0x0;
 
+pub const PageAttribute = enum {
+    ReadOnly,
+    ReadWrite,
+};
+
 /// Make level-4 page table writable.
 /// The page tables prepared by the bootloader are marked as read-only.
 /// To modify page mappings, this function duplicates the level-4 page table
@@ -73,12 +78,54 @@ pub fn setLv4PageTableWritable(bs: *BootServices) PageError!void {
     am.loadCr3(@intFromPtr(new_lv4_table.ptr));
 }
 
+/// Change page attribute of the page at the given virtual address.
+pub fn changeMap(virt: Virt, attr: PageAttribute) PageError!void {
+    if (virt & 0xFFF != 0) return PageError.InvalidAddress;
+    if (!isCanonical(virt)) return PageError.NotCanonical;
+
+    const lv4_table = getLv4PageTable();
+    const lv4_index = (virt >> lv4_shift) & index_mask;
+    const lv4_entry = &lv4_table[lv4_index];
+    if (!lv4_entry.present) return PageError.NotPresent;
+
+    const lv3_table = getLv3PageTable(lv4_entry.address());
+    const lv3_index = (virt >> lv3_shift) & index_mask;
+    const lv3_entry = &lv3_table[lv3_index];
+    if (!lv3_entry.present) return PageError.NotPresent;
+
+    const lv2_table = getLv2PageTable(lv3_entry.address());
+    const lv2_index = (virt >> lv2_shift) & index_mask;
+    const lv2_entry = &lv2_table[lv2_index];
+    if (!lv2_entry.present) return PageError.NotPresent;
+
+    const lv1_table = getLv1PageTable(lv2_entry.address());
+    const lv1_index = (virt >> lv1_shift) & index_mask;
+    const lv1_entry = &lv1_table[lv1_index];
+    if (!lv1_entry.present) return PageError.NotPresent;
+
+    lv1_entry.rw = switch (attr) {
+        PageAttribute.ReadOnly => false,
+        PageAttribute.ReadWrite => true,
+    };
+
+    flushTlbSingle(virt);
+}
+
+fn flushTlbSingle(virt: Virt) void {
+    asm volatile (
+        \\invlpg (%[virt])
+        :
+        : [virt] "r" (virt),
+        : "memory"
+    );
+}
+
 /// Maps 4KiB page at the given virtual address to the given physical address.
 /// If the mapping already exists, this function modifies the existing mapping.
 /// If the mapping does not exist, this function creates a new mapping,
 /// where new memory is allocated for page tables using BootServices.
 /// New page tables are allocated as 4KiB BootServicesData pages.
-pub fn mapTo(virt: Virt, phys: Phys, bs: *BootServices) PageError!void {
+pub fn mapTo(virt: Virt, phys: Phys, attr: PageAttribute, bs: *BootServices) PageError!void {
     if (virt & 0xFFF != 0) return PageError.InvalidAddress;
     if (phys & 0xFFF != 0) return PageError.InvalidAddress;
     if (!isCanonical(virt)) return PageError.NotCanonical;
@@ -122,7 +169,10 @@ pub fn mapTo(virt: Virt, phys: Phys, bs: *BootServices) PageError!void {
     const lv1_entry = &lv1_table[lv1_index];
     lv1_entry.* = Lv1PageTableEntry{
         .present = true,
-        .rw = true, // TODO: make this configurable
+        .rw = switch (attr) {
+            PageAttribute.ReadOnly => false,
+            PageAttribute.ReadWrite => true,
+        },
         .us = false,
         .pat = false,
         .phys_addr = @truncate(phys >> page_shift),

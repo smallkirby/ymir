@@ -135,8 +135,14 @@ pub fn main() uefi.Status {
         return .LoadError;
     };
     log.debug("Set page table writable.", .{});
+
     for (0..pages_4kib) |i| {
-        arch.page.mapTo(kernel_start + 4096 * i, kernel_phys + 4096 * i, boot_service) catch |err| {
+        arch.page.mapTo(
+            kernel_start + 4096 * i,
+            kernel_phys + 4096 * i,
+            .ReadWrite,
+            boot_service,
+        ) catch |err| {
             log.err("Failed to map memory for kernel image: {?}", .{err});
             return .LoadError;
         };
@@ -144,6 +150,7 @@ pub fn main() uefi.Status {
     log.info("Mapped memory for kernel image.", .{});
 
     // Load kernel image.
+    log.info("Loading kernel image...", .{});
     iter = elf_header.program_header_iterator(kernel);
     while (true) {
         const phdr = iter.next() catch |err| {
@@ -177,6 +184,20 @@ pub fn main() uefi.Status {
         const zero_count = phdr.p_memsz - phdr.p_filesz;
         if (zero_count > 0) {
             boot_service.setMem(@ptrFromInt(phdr.p_vaddr + phdr.p_filesz), zero_count, 0);
+        }
+
+        // Change memory protection.
+        const page_start = phdr.p_vaddr & ~(@as(u64, 0xFFF));
+        const page_end = (phdr.p_vaddr + phdr.p_memsz + 0xFFF) & ~(@as(u64, 0xFFF));
+        const size = (page_end - page_start) / 4096;
+        for (0..size) |i| {
+            arch.page.changeMap(
+                page_start + 4096 * i,
+                if (phdr.p_flags & elf.PF_W != 0) .ReadWrite else .ReadOnly,
+            ) catch |err| {
+                log.err("Failed to change memory protection: {?}", .{err});
+                return .LoadError;
+            };
         }
     }
 
@@ -217,7 +238,7 @@ pub fn main() uefi.Status {
     }
 
     // Print memory map.
-    log.info("Memory Map (Physical): Buf=0x{X}, MapSize=0x{X}, DescSize=0x{X}", .{
+    log.debug("Memory Map (Physical): Buf=0x{X}, MapSize=0x{X}, DescSize=0x{X}", .{
         @intFromPtr(map.descriptors),
         map.map_size,
         map.descriptor_size,
@@ -225,7 +246,7 @@ pub fn main() uefi.Status {
     var map_iter = defs.MemoryDescriptorIterator.new(map);
     while (true) {
         if (map_iter.next()) |md| {
-            log.info("  0x{X:0>16} - 0x{X:0>16} : {s}", .{
+            log.debug("  0x{X:0>16} - 0x{X:0>16} : {s}", .{
                 md.physical_start,
                 md.physical_start + md.number_of_pages * 4096,
                 @tagName(md.type),

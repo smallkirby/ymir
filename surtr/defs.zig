@@ -56,3 +56,17 @@ pub const MemoryDescriptorIterator = struct {
         return md;
     }
 };
+
+/// Check if the memory region described by the descriptor is usable for ymir kernel.
+/// Note that these memory areas may contain crucial data for the kernel,
+/// including page tables, stack, and GDT.
+/// You MUST copy them before using the area.
+pub inline fn isUsableMemory(descriptor: uefi.tables.MemoryDescriptor) bool {
+    return switch (descriptor.type) {
+        .ConventionalMemory,
+        .BootServicesCode,
+        .BootServicesData,
+        => true,
+        else => false,
+    };
+}
