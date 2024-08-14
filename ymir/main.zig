@@ -11,6 +11,7 @@ const idefs = @import("interrupts.zig");
 const serial = ymir.serial;
 const klog = ymir.klog;
 const arch = ymir.arch;
+const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
 
 pub const panic = @import("panic.zig").panic_fn;
 pub const std_options = klog.default_log_options;
@@ -66,6 +67,10 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // From this moment, interrupts are enabled.
     arch.intr.init();
     log.info("Initialized IDT.", .{});
+
+    // Initialize BootstrapPageAllocator.
+    BootstrapPageAllocator.init(boot_info.memory_map);
+    log.info("Initialized early stage page allocator.", .{});
 
     // Initialize PIC.
     arch.pic.init();

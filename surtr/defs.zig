@@ -61,7 +61,7 @@ pub const MemoryDescriptorIterator = struct {
 /// Note that these memory areas may contain crucial data for the kernel,
 /// including page tables, stack, and GDT.
 /// You MUST copy them before using the area.
-pub inline fn isUsableMemory(descriptor: uefi.tables.MemoryDescriptor) bool {
+pub inline fn isUsableMemory(descriptor: *uefi.tables.MemoryDescriptor) bool {
     return switch (descriptor.type) {
         .ConventionalMemory,
         .BootServicesCode,

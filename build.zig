@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("ymir/ymir.zig"),
     });
     ymir_module.addImport("ymir", ymir_module);
+    ymir_module.addImport("surtr", surtr_module);
 
     const ymir = b.addExecutable(.{
         .name = "ymir.elf",
