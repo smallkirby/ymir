@@ -5,6 +5,10 @@ const Allocator = std.mem.Allocator;
 const arch = @import("arch.zig");
 const am = @import("asm.zig");
 
+const ymir = @import("ymir");
+const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
+const direct_map_base = ymir.direct_map_base;
+
 pub const PageError = error{
     /// Failed to allocate memory.
     NoMemory,
@@ -85,8 +89,18 @@ pub fn getLv1PageTable(lv1_table_addr: Phys) []Lv1PageTableEntry {
 }
 
 /// Translate the given virtual address to physical address.
+pub fn translate(addr: Virt) Phys {
+    return if (addr < direct_map_base) addr else addr - direct_map_base;
+}
+
+/// Translate the given physical address to virtual address.
+pub fn translateRev(addr: Phys) Virt {
+    return addr + direct_map_base;
+}
+
+/// Translate the given virtual address to physical address by walking page tables.
 /// If the translation fails, return null.
-pub fn translate(addr: Virt) ?Phys {
+pub fn translateWalk(addr: Virt) ?Phys {
     if (!isCanonical(addr)) return null;
 
     const lv4_table = getLv4PageTable();
@@ -117,35 +131,143 @@ pub fn translate(addr: Virt) ?Phys {
     return lv1_entry.phys_addr + (addr & 0xFFF);
 }
 
+/// Clone page tables prepared by UEFI.
+/// After calling this function, cloned page tables are set to CR3.
+pub fn cloneUefiPageTables() !void {
+    const lv4_table = getLv4PageTable();
+    const new_lv4_ptr: [*]Lv4PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv4_table = new_lv4_ptr[0..num_table_entries];
+    @memcpy(new_lv4_table, lv4_table);
+
+    for (new_lv4_table) |*lv4_entry| {
+        if (lv4_entry.present) {
+            const lv3_table = getLv3PageTable(lv4_entry.address());
+            const new_lv3_table = try cloneLevel3Table(lv3_table);
+            lv4_entry.phys_pdpt = @truncate(@as(u64, @intFromPtr(new_lv3_table.ptr)) >> page_shift);
+        }
+    }
+
+    am.loadCr3(@intFromPtr(new_lv4_table));
+}
+
+fn cloneLevel3Table(lv3_table: []Lv3PageTableEntry) ![]Lv3PageTableEntry {
+    const new_lv3_ptr: [*]Lv3PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv3_table = new_lv3_ptr[0..num_table_entries];
+    @memcpy(new_lv3_table, lv3_table);
+
+    for (new_lv3_table) |*lv3_entry| {
+        if (lv3_entry.present) {
+            if (lv3_entry.ps) @panic("1GiB page is not supported yet.");
+            const lv2_table = getLv2PageTable(lv3_entry.address());
+            const new_lv2_table = try cloneLevel2Table(lv2_table);
+            lv3_entry.phys_pdt = @truncate(@as(u64, @intFromPtr(new_lv2_table.ptr)) >> page_shift);
+        }
+    }
+
+    return new_lv3_table;
+}
+
+fn cloneLevel2Table(lv2_table: []Lv2PageTableEntry) ![]Lv2PageTableEntry {
+    const new_lv2_ptr: [*]Lv2PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv2_table = new_lv2_ptr[0..num_table_entries];
+    @memcpy(new_lv2_table, lv2_table);
+
+    for (new_lv2_table) |*lv2_entry| {
+        if (!lv2_entry.present) continue;
+
+        if (lv2_entry.ps) { // 2MiB page
+            // TODO
+        } else { // Page Table
+            const lv1_table = getLv1PageTable(lv2_entry.address());
+            const new_lv1_table = try cloneLevel1Table(lv1_table);
+            lv2_entry.phys_pt = @truncate(@as(u64, @intFromPtr(new_lv1_table.ptr)) >> page_shift);
+        }
+    }
+
+    return new_lv2_table;
+}
+
+fn cloneLevel1Table(lv1_table: []Lv1PageTableEntry) ![]Lv1PageTableEntry {
+    const new_lv1_ptr: [*]Lv1PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv1_table = new_lv1_ptr[0..num_table_entries];
+    @memcpy(new_lv1_table, lv1_table);
+
+    return new_lv1_table;
+}
+
+/// Directly map all memory with offset
+/// After calling this function, it is safe to unmap direct mappings.
+pub fn directOffsetMap() !void {
+    const lv4_table = getLv4PageTable();
+    const directmap_lv4_index = (direct_map_base >> lv4_shift) & index_mask;
+
+    for (lv4_table[0..directmap_lv4_index], 0..) |*lv4_entry, i| {
+        if (!lv4_entry.present) continue;
+
+        const lv3_table = getLv3PageTable(lv4_entry.address());
+        lv4_table[directmap_lv4_index + i] = Lv4PageTableEntry{
+            .present = true,
+            .rw = true,
+            .us = false,
+            .phys_pdpt = @truncate(@as(u64, @intFromPtr(lv3_table.ptr)) >> page_shift),
+        };
+    }
+
+    reloadCr3();
+}
+
+/// Unmap straight map region starting at address 0x0.
+/// Note that after calling this function,
+/// BootstrapPageAllocator returns invalid virtual address because they are unmapped by this function.
+pub fn unmapStraightMap() !void {
+    const lv4_table = getLv4PageTable();
+    const directmap_lv4_index = (direct_map_base >> lv4_shift) & index_mask;
+
+    for (lv4_table[0..directmap_lv4_index]) |*lv4_entry| {
+        if (!lv4_entry.present) continue;
+        lv4_entry.present = false;
+    }
+
+    reloadCr3();
+}
+
+fn reloadCr3() void {
+    const lv4_table = getLv4PageTable();
+    am.loadCr3(@intFromPtr(lv4_table.ptr));
+}
+
 /// Show the process of the address translation for the given linear address.
-/// TODO: do not use logger of this scope.
-/// TODO: Level-1 page table entry is not implemented.
-pub fn showPageTable(lin_addr: Virt) void {
+pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     const pml4_index = (lin_addr >> lv4_shift) & index_mask;
     const pdp_index = (lin_addr >> lv3_shift) & index_mask;
     const pdt_index = (lin_addr >> lv2_shift) & index_mask;
     const pt_index = (lin_addr >> lv1_shift) & index_mask;
-    log.err("Linear Address: 0x{X:0>16} (0x{X}, 0x{X}, 0x{X}, 0x{X})", .{
-        lin_addr,
-        pml4_index,
-        pdp_index,
-        pdt_index,
-        pt_index,
-    });
+    logger.err(
+        "Linear Address: 0x{X:0>16} (0x{X}, 0x{X}, 0x{X}, 0x{X})",
+        .{ lin_addr, pml4_index, pdp_index, pdt_index, pt_index },
+    );
 
     const cr3 = am.readCr3();
-    const pml4: [*]Lv4PageTableEntry = @ptrFromInt(cr3);
-    log.debug("PML4: 0x{X:0>16}", .{@intFromPtr(pml4)});
-    const pml4_entry = pml4[pml4_index];
-    log.debug("\tPML4[{d}]: 0x{X:0>16}", .{ pml4_index, std.mem.bytesAsValue(u64, &pml4_entry).* });
-    const pdp: [*]Lv3PageTableEntry = @ptrFromInt(pml4_entry.phys_pdpt << page_shift);
-    log.debug("PDPT: 0x{X:0>16}", .{@intFromPtr(pdp)});
-    const pdp_entry = pdp[pdp_index];
-    log.debug("\tPDPT[{d}]: 0x{X:0>16}", .{ pdp_index, std.mem.bytesAsValue(u64, &pdp_entry).* });
-    const pdt: [*]Lv2PageTableEntry = @ptrFromInt(pdp_entry.phys_pdt << page_shift);
-    log.debug("PDT: 0x{X:0>16}", .{@intFromPtr(pdt)});
-    const pdt_entry = pdt[pdt_index];
-    log.debug("\tPDT[{d}]: 0x{X:0>16}", .{ pdt_index, std.mem.bytesAsValue(u64, &pdt_entry).* });
+    const lv4_table: [*]Lv4PageTableEntry = @ptrFromInt(translateRev(cr3));
+    const lv4_entry = lv4_table[pml4_index];
+    const lv3_table: [*]Lv3PageTableEntry = @ptrFromInt(translateRev(lv4_entry.phys_pdpt << page_shift));
+    const lv3_entry = lv3_table[pdp_index];
+    const lv2_table: [*]Lv2PageTableEntry = @ptrFromInt(translateRev(lv3_entry.phys_pdt << page_shift));
+    const lv2_entry = lv2_table[pdt_index];
+
+    logger.info("Lv4: 0x{X:0>16}", .{@intFromPtr(lv4_table)});
+    logger.info("\t[{d}]: 0x{X:0>16}", .{ pml4_index, std.mem.bytesAsValue(u64, &lv4_entry).* });
+    logger.info("Lv3: 0x{X:0>16}", .{@intFromPtr(lv3_table)});
+    logger.info("\t[{d}]: 0x{X:0>16}", .{ pdp_index, std.mem.bytesAsValue(u64, &lv3_entry).* });
+    logger.info("Lv2: 0x{X:0>16}", .{@intFromPtr(lv2_table)});
+    logger.info("\t[{d}]: 0x{X:0>16}", .{ pdt_index, std.mem.bytesAsValue(u64, &lv2_entry).* });
+
+    if (!lv2_entry.ps) {
+        const lv1_table: [*]Lv1PageTableEntry = @ptrFromInt(translateRev(lv2_entry.phys_pt << page_shift));
+        const lv1_entry = lv1_table[pt_index];
+        logger.info("Lv1: 0x{X:0>16}", .{@intFromPtr(lv1_table)});
+        logger.info("\t[{d}]: 0x{X:0>16}", .{ pt_index, std.mem.bytesAsValue(u64, &lv1_entry).* });
+    }
 }
 
 /// Level-4 (First) page table entry, PML4E.
@@ -390,4 +512,5 @@ test "isCanonical" {
     try testing.expectEqual(false, isCanonical(0x1000_0000_0000_0000));
     try testing.expectEqual(false, isCanonical(0xFFFF_7FFF_FFFF_FFFF));
     try testing.expectEqual(true, isCanonical(0xFFFF_FFFF_8000_0000));
+    try testing.expectEqual(true, isCanonical(0xFFFF_8880_0000_0000));
 }

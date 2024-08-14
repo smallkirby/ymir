@@ -5,6 +5,7 @@
 //! When more appropriate allocator becomes available,
 //! you have to tell the pages are in use to the new allocator.
 //! This allocator does not support deallocation.
+//! This allocator requires that memory regions described by the memory map are directly mapped.
 
 const std = @import("std");
 const uefi = std.os.uefi;
@@ -30,7 +31,7 @@ const Error = error{
 };
 
 /// Static buffer size in bytes for the allocator.
-const buffer_size = page_size * 3;
+const buffer_size = page_size * 10;
 
 /// Static buffer internally used by the allocator.
 var buffer: [buffer_size]u8 = undefined;
@@ -57,7 +58,8 @@ pub fn init(memory_map: MemoryMap) void {
 }
 
 /// Allocate a 4 KiB page from the usable region.
-pub fn allocatePage() Error![*]u8 {
+/// Note that this functions returns a physical address.
+pub fn allocatePage() Error![*]align(page_size) u8 {
     lock.lockDisableIrq();
     defer lock.unlockEnableIrq();
 

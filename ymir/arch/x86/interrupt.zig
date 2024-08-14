@@ -124,7 +124,7 @@ fn unhandledFaultHandler(context: *Context) void {
 
     const cr2 = am.readCr2();
     log.err("Fault Address: 0x{X:0>16}", .{cr2});
-    page.showPageTable(cr2);
+    page.showPageTable(cr2, log);
     log.err("", .{});
     log.err("Common unhandled handler continues...", .{});
     log.err("", .{});

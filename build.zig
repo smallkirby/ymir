@@ -19,6 +19,10 @@ pub fn build(b: *std.Build) void {
     ymir_module.addImport("ymir", ymir_module);
     ymir_module.addImport("surtr", surtr_module);
 
+    // Options
+    const options = b.addOptions();
+    options.addOption(@TypeOf(kernel_base), "kernel_base", kernel_base);
+
     const ymir = b.addExecutable(.{
         .name = "ymir.elf",
         .root_source_file = b.path("ymir/main.zig"),
@@ -31,6 +35,7 @@ pub fn build(b: *std.Build) void {
     ymir.entry = .{ .symbol_name = "kernelEntry" };
     ymir.image_base = kernel_base;
     ymir.root_module.code_model = .kernel;
+    ymir.root_module.addOptions("option", options);
     ymir.root_module.addImport("surtr", surtr_module);
     ymir.root_module.addImport("ymir", ymir_module);
 
@@ -91,6 +96,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    ymir_tests.root_module.addOptions("option", options);
     ymir_tests.root_module.addImport("ymir", &ymir_tests.root_module);
     ymir_tests.root_module.addImport("surtr", surtr_module);
     const run_ymir_tests = b.addRunArtifact(ymir_tests);

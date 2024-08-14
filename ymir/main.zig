@@ -72,6 +72,21 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     BootstrapPageAllocator.init(boot_info.memory_map);
     log.info("Initialized early stage page allocator.", .{});
 
+    // Clone page tables prepared by UEFI and surtr.
+    // This operation must be done before initializing allocators other than BootstrapPageAllocator,
+    // that allocate pages from any usable regions.
+    log.info("Cloning UEFI page tables...", .{});
+    try arch.page.cloneUefiPageTables();
+    // Map direct map with offset region.
+    log.info("Creating direct map region...", .{});
+    try arch.page.directOffsetMap();
+    // Unmap straight map region.
+    log.info("Unmapping straight map region...", .{});
+    try arch.page.unmapStraightMap();
+
+    // Now, stack, GDT, and page tables are switched to the ymir's ones.
+    // We are ready to destroy any available memory regions in the memory map.
+
     // Initialize PIC.
     arch.pic.init();
     log.info("Initialized PIC.", .{});
