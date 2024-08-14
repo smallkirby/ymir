@@ -57,7 +57,7 @@ pub fn init(memory_map: MemoryMap) void {
 }
 
 /// Allocate a 4 KiB page from the usable region.
-pub fn allocatePage() ![*]u8 {
+pub fn allocatePage() Error![*]u8 {
     lock.lockDisableIrq();
     defer lock.unlockEnableIrq();
 
