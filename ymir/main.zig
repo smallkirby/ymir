@@ -86,7 +86,7 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     log.info("Initialized page allocator.", .{});
 
     // Now, stack, GDT, and page tables are switched to the ymir's ones.
-    // We are ready to destroy any available memory regions in the memory map.
+    // We are ready to destroy any usable regions in UEFI memory map.
 
     // Unmap straight map region.
     // After this operation, memory map passed by UEFI is no longer used.
