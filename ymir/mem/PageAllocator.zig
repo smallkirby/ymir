@@ -13,6 +13,7 @@ const MemoryDescriptorIterator = surtr.MemoryDescriptorIterator;
 const BootstrapPageAllocator = @import("BootstrapPageAllocator.zig");
 
 const ymir = @import("ymir");
+const spin = ymir.spin;
 const arch = ymir.arch;
 const p2v = arch.page.translateRev;
 const v2p = arch.page.translate;
@@ -57,6 +58,8 @@ pub const PageAllocator = struct {
 
     /// Bitmap to manage page frames.
     bitmap: BitMap = undefined,
+    /// Spin lock.
+    lock: spin.SpinLock = spin.SpinLock{},
 
     /// Instantiate an uninitialized PageAllocator.
     /// Returned instance must be initialized by calling `init`.
@@ -69,6 +72,9 @@ pub const PageAllocator = struct {
 
     /// Initialize the allocator.
     pub fn init(self: *PageAllocator, map: MemoryMap) void {
+        self.lock.lockDisableIrq();
+        defer self.lock.unlockEnableIrq();
+
         var avail_end: u64 = 0;
 
         // Scan memory map and mark usable regions.
@@ -154,6 +160,8 @@ fn allocate(ctx: *anyopaque, n: usize, log2_align: u8, ra: usize) ?[*]u8 {
     _ = ra;
 
     const self: *PageAllocator = @alignCast(@ptrCast(ctx));
+    self.lock.lockDisableIrq();
+    defer self.lock.unlockEnableIrq();
 
     const num_frames = (n + arch.page_size - 1) / arch.page_size;
     var start_frame = self.frame_begin;
@@ -179,6 +187,8 @@ fn free(ctx: *anyopaque, slice: []u8, log2_buf_align: u8, return_address: usize)
     _ = return_address;
 
     const self: *PageAllocator = @alignCast(@ptrCast(ctx));
+    self.lock.lockDisableIrq();
+    defer self.lock.unlockEnableIrq();
 
     const num_frames = (slice.len + arch.page_size - 1) / arch.page_size;
     const start_frame_vaddr: u64 = @intFromPtr(slice.ptr) & ~arch.page_mask;
