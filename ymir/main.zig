@@ -82,6 +82,8 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try arch.page.directOffsetMap();
 
     // Initialize page allocator.
+    // TODO: should map heap area to other regions than the direct (w/ offset) map region.
+    //      Then, should modify the page allocator to return addresses in that region.
     ymir.mem.initPageAllocator(boot_info.memory_map);
     log.info("Initialized page allocator.", .{});
 
