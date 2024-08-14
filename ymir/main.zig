@@ -80,12 +80,18 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Map direct map with offset region.
     log.info("Creating direct map region...", .{});
     try arch.page.directOffsetMap();
-    // Unmap straight map region.
-    log.info("Unmapping straight map region...", .{});
-    try arch.page.unmapStraightMap();
+
+    // Initialize page allocator.
+    ymir.mem.initPageAllocator(boot_info.memory_map);
+    log.info("Initialized page allocator.", .{});
 
     // Now, stack, GDT, and page tables are switched to the ymir's ones.
     // We are ready to destroy any available memory regions in the memory map.
+
+    // Unmap straight map region.
+    // After this operation, memory map passed by UEFI is no longer used.
+    log.info("Unmapping straight map region...", .{});
+    try arch.page.unmapStraightMap();
 
     // Initialize PIC.
     arch.pic.init();

@@ -60,6 +60,8 @@ pub fn init(memory_map: MemoryMap) void {
 /// Allocate a 4 KiB page from the usable region.
 /// Note that this functions returns a physical address.
 pub fn allocatePage() Error![*]align(page_size) u8 {
+    if (!initialized) @panic("BootstrapPageAllocator is not initialized");
+
     lock.lockDisableIrq();
     defer lock.unlockEnableIrq();
 
@@ -85,6 +87,18 @@ pub fn allocatePage() Error![*]align(page_size) u8 {
     }
 
     return Error.NoMemory;
+}
+
+/// Get the first node of the list of allocated pages.
+pub fn getAllocatedPages() ?*PageInUseList.Node {
+    return page_inuse_list.first;
+}
+
+/// Deinitialize the allocator.
+/// After calling this function, you cannot use the allocator.
+pub fn deinit() void {
+    if (!initialized) @panic("BootstrapPageAllocator is not initialized");
+    initialized = false;
 }
 
 inline fn markPageInuse(page: PageAddr) Error!void {
