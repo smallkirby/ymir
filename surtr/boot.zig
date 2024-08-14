@@ -14,6 +14,7 @@ const log = std.log.scoped(.surtr);
 
 const blog = @import("log.zig");
 const defs = @import("defs.zig");
+const arch = @import("arch.zig").impl;
 
 // Override the default log options
 pub const std_options = blog.default_log_options;
@@ -116,8 +117,31 @@ pub fn main() uefi.Status {
         if (phdr.p_vaddr < kernel_start) kernel_start = phdr.p_vaddr;
         if (phdr.p_vaddr + phdr.p_memsz > kernel_end) kernel_end = phdr.p_vaddr + phdr.p_memsz;
     }
-    const pages = (kernel_end - kernel_start + 4095) / 4096;
-    log.info("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start, kernel_end, pages });
+    const pages_4kib = (kernel_end - kernel_start + 4095) / 4096;
+    log.info("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start, kernel_end, pages_4kib });
+
+    // Allocate memory for kernel image.
+    var kernel_phys: u64 = undefined;
+    status = boot_service.allocatePages(.AllocateAnyPages, .LoaderData, pages_4kib, @ptrCast(&kernel_phys));
+    if (status != .Success) {
+        log.err("Failed to allocate memory for kernel image: {?}", .{status});
+        return status;
+    }
+    log.info("Allocated memory for kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ kernel_phys, kernel_phys + pages_4kib * 4096 });
+
+    // Map memory for kernel image
+    arch.page.setLv4PageTableWritable(boot_service) catch |err| {
+        log.err("Failed to set page table writable: {?}", .{err});
+        return .LoadError;
+    };
+    log.debug("Set page table writable.", .{});
+    for (0..pages_4kib) |i| {
+        arch.page.mapTo(kernel_start + 4096 * i, kernel_phys + 4096 * i, boot_service) catch |err| {
+            log.err("Failed to map memory for kernel image: {?}", .{err});
+            return .LoadError;
+        };
+    }
+    log.info("Mapped memory for kernel image.", .{});
 
     // Load kernel image.
     iter = elf_header.program_header_iterator(kernel);
