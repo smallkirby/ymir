@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const kernel_base = 0xFFFF_FFFF_8000_0000;
-
 pub fn build(b: *std.Build) void {
     const target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
@@ -9,10 +7,6 @@ pub fn build(b: *std.Build) void {
         .ofmt = .elf,
     });
     const optimize = b.standardOptimizeOption(.{});
-
-    // Options
-    const options = b.addOptions();
-    options.addOption(@TypeOf(kernel_base), "kernel_base", kernel_base);
 
     // Modules
     const surtr_module = b.createModule(.{
@@ -23,7 +17,6 @@ pub fn build(b: *std.Build) void {
     });
     ymir_module.addImport("ymir", ymir_module);
     ymir_module.addImport("surtr", surtr_module);
-    ymir_module.addOptions("option", options);
 
     const ymir = b.addExecutable(.{
         .name = "ymir.elf",
@@ -31,13 +24,13 @@ pub fn build(b: *std.Build) void {
         .target = target, // Freestanding x64 ELF executable
         .optimize = optimize, // You can choose the optimization level.
         .linkage = .static,
+        .code_model = .kernel,
     });
     ymir.root_module.red_zone = false; // Disable stack red zone.
     ymir.link_z_relro = false;
     ymir.entry = .{ .symbol_name = "kernelEntry" };
-    ymir.image_base = kernel_base;
+    ymir.linker_script = b.path("ymir/linker.ld");
     ymir.root_module.code_model = .kernel;
-    ymir.root_module.addOptions("option", options);
     ymir.root_module.addImport("surtr", surtr_module);
     ymir.root_module.addImport("ymir", ymir_module);
 
@@ -98,7 +91,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    ymir_tests.root_module.addOptions("option", options);
     ymir_tests.root_module.addImport("ymir", &ymir_tests.root_module);
     ymir_tests.root_module.addImport("surtr", surtr_module);
     const run_ymir_tests = b.addRunArtifact(ymir_tests);

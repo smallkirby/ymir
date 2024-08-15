@@ -16,8 +16,8 @@ const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
 pub const panic = @import("panic.zig").panic_fn;
 pub const std_options = klog.default_log_options;
 
-/// Size in 4KiB pages of the kernel stack.
-const kstack_size = arch.page_size * 0x50;
+/// Size in bytes pages of the kernel stack.
+const kstack_size = arch.page_size * 5;
 /// Kernel stack.
 /// The first page is used as a guard page.
 /// TODO: make the guard page read-only.
