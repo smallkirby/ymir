@@ -2,6 +2,10 @@
 //!
 //! This allocator can be used after the necessary structures (eg. GDT, Page Tables)
 //! are copied to ymir region frmo surtr region.
+//! This allocator is initialized using BootstrapPageAllocator.
+//!
+//! This allocator allocates pages from direct map region.
+//! Therefore, returned pages are ensured to be physically contiguous.
 
 const std = @import("std");
 const log = std.log.scoped(.pa);
@@ -71,6 +75,7 @@ pub const PageAllocator = struct {
     }
 
     /// Initialize the allocator.
+    /// This function MUST be called before the direct mapping w/ offset 0x0 is unmapped.
     pub fn init(self: *PageAllocator, map: MemoryMap) void {
         self.lock.lockDisableIrq();
         defer self.lock.unlockEnableIrq();

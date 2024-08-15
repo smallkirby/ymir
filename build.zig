@@ -102,4 +102,13 @@ pub fn build(b: *std.Build) void {
     const run_ymir_tests = b.addRunArtifact(ymir_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_ymir_tests.step);
+
+    // Documentation
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = ymir.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+    const docs_step = b.step("docs", "Generate documentation");
+    docs_step.dependOn(&install_docs.step);
 }

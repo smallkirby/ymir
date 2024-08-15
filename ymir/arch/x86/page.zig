@@ -1,3 +1,19 @@
+//! Provides kernel page table and memory management functionalities.
+//!
+//! Before calling `directOffsetMap()`, ymir uses page tables provided by surtr bootloader.
+//! That directly maps all available physical memory to virtual memory with offset 0x0.
+//! Additionally, surtr maps the ymir loadable image to the virtual address
+//! where the ymir ELF requested to load.
+//!
+//! After calling `directOffsetMap()`,
+//! ymir maps all available physical memory to the virtual address with offset `direct_map_base`.
+//! These region can be used to access physical memory.
+//!
+//! After calling `unmapStraightMap()`,
+//! ymir unmaps the straight map region starting at address 0x0.
+//! It means that ymir no longer uses the memory map provided by UEFI,
+//! and has to use the direct map region to access physical memory.
+
 const std = @import("std");
 const log = std.log.scoped(.archp);
 const Allocator = std.mem.Allocator;
