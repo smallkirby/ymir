@@ -19,8 +19,10 @@ const BootstrapPageAllocator = @import("BootstrapPageAllocator.zig");
 const ymir = @import("ymir");
 const spin = ymir.spin;
 const arch = ymir.arch;
-const p2v = arch.page.translateRev;
-const v2p = arch.page.translate;
+const p2v = ymir.mem.phys2virt;
+const v2p = ymir.mem.virt2phys;
+const Phys = ymir.mem.Phys;
+const Virt = ymir.mem.Virt;
 
 const kib = 1024;
 const mib = 1024 * kib;
@@ -80,7 +82,7 @@ pub const PageAllocator = struct {
         self.lock.lockDisableIrq();
         defer self.lock.unlockEnableIrq();
 
-        var avail_end: u64 = 0;
+        var avail_end: Phys = 0;
 
         // Scan memory map and mark usable regions.
         var desc_iter = MemoryDescriptorIterator.new(map);
@@ -153,10 +155,6 @@ pub const PageAllocator = struct {
             .unused => self.bitmap[line_index] &= ~(@as(MapLineType, 1) << bit_index),
         }
     }
-
-    inline fn phys2frame(phys: u64) FrameId {
-        return phys / bytes_per_frame;
-    }
 };
 
 fn allocate(ctx: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
@@ -179,7 +177,7 @@ fn allocate(ctx: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
         }
         if (i == num_frames) {
             self.markAllocated(start_frame, num_frames);
-            return @ptrFromInt(p2v(start_frame * bytes_per_frame));
+            return @ptrFromInt(p2v(frame2phys(start_frame)));
         }
 
         start_frame += i + 1;
@@ -195,11 +193,19 @@ fn free(ctx: *anyopaque, slice: []u8, _: u8, _: usize) void {
     defer self.lock.unlockEnableIrq();
 
     const num_frames = (slice.len + arch.page_size - 1) / arch.page_size;
-    const start_frame_vaddr: u64 = @intFromPtr(slice.ptr) & ~arch.page_mask;
-    const start_frame = v2p(start_frame_vaddr) / bytes_per_frame;
+    const start_frame_vaddr: Virt = @intFromPtr(slice.ptr) & ~arch.page_mask;
+    const start_frame = phys2frame(v2p(start_frame_vaddr));
     self.markNotUsed(start_frame, num_frames);
 }
 
 fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
     @panic("PageAllocator does not support resizing");
+}
+
+inline fn phys2frame(phys: Phys) FrameId {
+    return phys / bytes_per_frame;
+}
+
+inline fn frame2phys(frame: FrameId) Phys {
+    return frame * bytes_per_frame;
 }

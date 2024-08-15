@@ -24,6 +24,10 @@ const am = @import("asm.zig");
 const ymir = @import("ymir");
 const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
 const direct_map_base = ymir.direct_map_base;
+const virt2phys = ymir.mem.virt2phys;
+const phys2virt = ymir.mem.phys2virt;
+const Virt = ymir.mem.Virt;
+const Phys = ymir.mem.Phys;
 
 pub const PageError = error{
     /// Failed to allocate memory.
@@ -56,11 +60,6 @@ const index_mask = 0x1FF;
 const implemented_bit_length = 48;
 /// Most significant implemented bit in 0-origin.
 const msi_bit = 47;
-
-/// Physical address.
-pub const Phys = u64;
-/// Virtual address.
-pub const Virt = u64;
 
 /// Offset from physical to virtual address for page tables.
 /// This value is determined by surtr bootloader and a backing UEFI firmware.
@@ -102,16 +101,6 @@ pub fn getLv2PageTable(lv2_table_addr: Phys) []Lv2PageTableEntry {
 pub fn getLv1PageTable(lv1_table_addr: Phys) []Lv1PageTableEntry {
     const lv1_table_ptr: [*]Lv1PageTableEntry = @ptrFromInt(lv1_table_addr + phys_virt_offset);
     return lv1_table_ptr[0..num_table_entries];
-}
-
-/// Translate the given virtual address to physical address.
-pub fn translate(addr: Virt) Phys {
-    return if (addr < direct_map_base) addr else addr - direct_map_base;
-}
-
-/// Translate the given physical address to virtual address.
-pub fn translateRev(addr: Phys) Virt {
-    return addr + direct_map_base;
 }
 
 /// Translate the given virtual address to physical address by walking page tables.
@@ -264,11 +253,11 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     );
 
     const cr3 = am.readCr3();
-    const lv4_table: [*]Lv4PageTableEntry = @ptrFromInt(translateRev(cr3));
+    const lv4_table: [*]Lv4PageTableEntry = @ptrFromInt(phys2virt(cr3));
     const lv4_entry = lv4_table[pml4_index];
-    const lv3_table: [*]Lv3PageTableEntry = @ptrFromInt(translateRev(lv4_entry.phys_pdpt << page_shift));
+    const lv3_table: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv4_entry.phys_pdpt << page_shift));
     const lv3_entry = lv3_table[pdp_index];
-    const lv2_table: [*]Lv2PageTableEntry = @ptrFromInt(translateRev(lv3_entry.phys_pdt << page_shift));
+    const lv2_table: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv3_entry.phys_pdt << page_shift));
     const lv2_entry = lv2_table[pdt_index];
 
     logger.info("Lv4: 0x{X:0>16}", .{@intFromPtr(lv4_table)});
@@ -279,7 +268,7 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     logger.info("\t[{d}]: 0x{X:0>16}", .{ pdt_index, std.mem.bytesAsValue(u64, &lv2_entry).* });
 
     if (!lv2_entry.ps) {
-        const lv1_table: [*]Lv1PageTableEntry = @ptrFromInt(translateRev(lv2_entry.phys_pt << page_shift));
+        const lv1_table: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv2_entry.phys_pt << page_shift));
         const lv1_entry = lv1_table[pt_index];
         logger.info("Lv1: 0x{X:0>16}", .{@intFromPtr(lv1_table)});
         logger.info("\t[{d}]: 0x{X:0>16}", .{ pt_index, std.mem.bytesAsValue(u64, &lv1_entry).* });

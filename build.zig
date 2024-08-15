@@ -10,6 +10,11 @@ pub fn build(b: *std.Build) void {
     });
     const optimize = b.standardOptimizeOption(.{});
 
+    // Options
+    const options = b.addOptions();
+    options.addOption(@TypeOf(kernel_base), "kernel_base", kernel_base);
+
+    // Modules
     const surtr_module = b.createModule(.{
         .root_source_file = b.path("surtr/defs.zig"),
     });
@@ -18,10 +23,7 @@ pub fn build(b: *std.Build) void {
     });
     ymir_module.addImport("ymir", ymir_module);
     ymir_module.addImport("surtr", surtr_module);
-
-    // Options
-    const options = b.addOptions();
-    options.addOption(@TypeOf(kernel_base), "kernel_base", kernel_base);
+    ymir_module.addOptions("option", options);
 
     const ymir = b.addExecutable(.{
         .name = "ymir.elf",
