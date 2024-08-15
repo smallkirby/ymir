@@ -154,10 +154,10 @@ pub const PageAllocator = struct {
     }
 };
 
-// TODO: log2_align, ra
-fn allocate(ctx: *anyopaque, n: usize, log2_align: u8, ra: usize) ?[*]u8 {
-    _ = log2_align;
-    _ = ra;
+fn allocate(ctx: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
+    // NOTE: 3rd argument (`ptr_align`) can be safely ignored for the page allocator
+    //  because the allocator always returns a page-aligned address
+    //  and Zig does not assumes an align larger than a page size is not requested for Allocator interface.
 
     const self: *PageAllocator = @alignCast(@ptrCast(ctx));
     self.lock.lockDisableIrq();
@@ -181,10 +181,9 @@ fn allocate(ctx: *anyopaque, n: usize, log2_align: u8, ra: usize) ?[*]u8 {
     }
 }
 
-// TODO: log2_buf_align, return_address
-fn free(ctx: *anyopaque, slice: []u8, log2_buf_align: u8, return_address: usize) void {
-    _ = log2_buf_align;
-    _ = return_address;
+fn free(ctx: *anyopaque, slice: []u8, _: u8, _: usize) void {
+    // NOTE: 3rd argument (`ptr_align`) can be safely ignored for the page allocator.
+    //  See the comment in `allocate` function.
 
     const self: *PageAllocator = @alignCast(@ptrCast(ctx));
     self.lock.lockDisableIrq();
