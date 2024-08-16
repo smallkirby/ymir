@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.archp);
 const uefi = std.os.uefi;
+const elf = std.elf;
 const BootServices = uefi.tables.BootServices;
 
 const am = @import("asm.zig");
@@ -58,8 +59,16 @@ pub const Virt = u64;
 const phys_virt_offset = 0x0;
 
 pub const PageAttribute = enum {
-    ReadOnly,
-    ReadWrite,
+    /// RO
+    read_only,
+    /// RW
+    read_write,
+    /// RX
+    executable,
+
+    pub fn fromFlags(flags: u32) PageAttribute {
+        return if (flags & elf.PF_X != 0) .executable else if (flags & elf.PF_W != 0) .read_write else .read_only;
+    }
 };
 
 /// Make level-4 page table writable.
@@ -104,9 +113,10 @@ pub fn changeMap(virt: Virt, attr: PageAttribute) PageError!void {
     if (!lv1_entry.present) return PageError.NotPresent;
 
     lv1_entry.rw = switch (attr) {
-        PageAttribute.ReadOnly => false,
-        PageAttribute.ReadWrite => true,
+        .read_only, .executable => false,
+        .read_write => true,
     };
+    lv1_entry.xd = attr != .executable;
 
     flushTlbSingle(virt);
 }
@@ -170,12 +180,13 @@ pub fn mapTo(virt: Virt, phys: Phys, attr: PageAttribute, bs: *BootServices) Pag
     lv1_entry.* = Lv1PageTableEntry{
         .present = true,
         .rw = switch (attr) {
-            PageAttribute.ReadOnly => false,
-            PageAttribute.ReadWrite => true,
+            .read_only, .executable => false,
+            .read_write => true,
         },
         .us = false,
         .pat = false,
         .phys_addr = @truncate(phys >> page_shift),
+        .xd = attr != .executable,
     };
 }
 
@@ -374,7 +385,10 @@ const Lv2PageTableEntry = packed struct(u64) {
     restart: bool = false,
     /// When the entry maps a 2MiB page, physical address of the 2MiB page.
     /// When the entry references a Page Table, 4KB aligned address of the Page Table.
-    phys_pt: u52,
+    phys_pt: u51,
+    /// If the entry maps a 2MiB page and the bit is set, the 2MiB page is not executable.
+    /// If the entry references a Page Table, the bit must be unset.
+    xd: bool = false,
 
     /// Get a new PDT entry with the present bit set to false.
     pub fn new_nopresent() Lv2PageTableEntry {
@@ -449,7 +463,10 @@ const Lv1PageTableEntry = packed struct(u64) {
     /// Ignored except for HLAT paging.
     restart: bool = false,
     /// Physical address of the 4KiB page.
-    phys_addr: u52,
+    phys_addr: u51,
+    /// If the entry maps a 4KiB page and the bit is set, the 4KiB page is not executable.
+    /// If the entry references a Page Table, the bit must be unset.
+    xd: bool = false,
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv1PageTableEntry) Phys {

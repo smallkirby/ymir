@@ -130,7 +130,7 @@ pub fn main() uefi.Status {
     }
     log.info("Allocated memory for kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ kernel_start, kernel_start + pages_4kib * 4096 });
 
-    // Map memory for kernel image
+    // Map memory for kernel image.
     arch.page.setLv4PageTableWritable(boot_service) catch |err| {
         log.err("Failed to set page table writable: {?}", .{err});
         return .LoadError;
@@ -141,7 +141,7 @@ pub fn main() uefi.Status {
         arch.page.mapTo(
             kernel_start_virt + 4096 * i,
             kernel_start + 4096 * i,
-            .ReadWrite,
+            .read_write,
             boot_service,
         ) catch |err| {
             log.err("Failed to map memory for kernel image: {?}", .{err});
@@ -191,16 +191,20 @@ pub fn main() uefi.Status {
         const page_start = phdr.p_vaddr & ~(@as(u64, 0xFFF));
         const page_end = (phdr.p_vaddr + phdr.p_memsz + 0xFFF) & ~(@as(u64, 0xFFF));
         const size = (page_end - page_start) / 4096;
+        const attribute = arch.page.PageAttribute.fromFlags(phdr.p_flags);
         for (0..size) |i| {
             arch.page.changeMap(
                 page_start + 4096 * i,
-                if (phdr.p_flags & elf.PF_W != 0) .ReadWrite else .ReadOnly,
+                attribute,
             ) catch |err| {
                 log.err("Failed to change memory protection: {?}", .{err});
                 return .LoadError;
             };
         }
     }
+
+    // Enable NX-bit.
+    arch.enableNxBit();
 
     // Clean up memory.
     status = boot_service.freePool(header_buffer);
