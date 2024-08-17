@@ -161,12 +161,12 @@ fn cloneLevel3Table(lv3_table: []Lv3PageTableEntry) ![]Lv3PageTableEntry {
     @memcpy(new_lv3_table, lv3_table);
 
     for (new_lv3_table) |*lv3_entry| {
-        if (lv3_entry.present) {
-            if (lv3_entry.ps) @panic("1GiB page is not supported yet.");
-            const lv2_table = getLv2PageTable(lv3_entry.address());
-            const new_lv2_table = try cloneLevel2Table(lv2_table);
-            lv3_entry.phys_pdt = @truncate(@as(u64, @intFromPtr(new_lv2_table.ptr)) >> page_shift);
-        }
+        if (!lv3_entry.present) continue;
+        if (lv3_entry.ps) continue;
+
+        const lv2_table = getLv2PageTable(lv3_entry.address());
+        const new_lv2_table = try cloneLevel2Table(lv2_table);
+        lv3_entry.phys_pdt = @truncate(@as(u64, @intFromPtr(new_lv2_table.ptr)) >> page_shift);
     }
 
     return new_lv3_table;
@@ -179,14 +179,11 @@ fn cloneLevel2Table(lv2_table: []Lv2PageTableEntry) ![]Lv2PageTableEntry {
 
     for (new_lv2_table) |*lv2_entry| {
         if (!lv2_entry.present) continue;
+        if (lv2_entry.ps) continue;
 
-        if (lv2_entry.ps) { // 2MiB page
-            // TODO
-        } else { // Page Table
-            const lv1_table = getLv1PageTable(lv2_entry.address());
-            const new_lv1_table = try cloneLevel1Table(lv1_table);
-            lv2_entry.phys_pt = @truncate(@as(u64, @intFromPtr(new_lv1_table.ptr)) >> page_shift);
-        }
+        const lv1_table = getLv1PageTable(lv2_entry.address());
+        const new_lv1_table = try cloneLevel1Table(lv1_table);
+        lv2_entry.phys_pt = @truncate(@as(u64, @intFromPtr(new_lv1_table.ptr)) >> page_shift);
     }
 
     return new_lv2_table;
