@@ -105,22 +105,39 @@ pub inline fn readCr3() u64 {
     return cr3;
 }
 
-pub inline fn readEflags() u64 {
+pub inline fn loadCr4(cr4: u64) void {
+    asm volatile (
+        \\mov %[cr4], %%cr4
+        :
+        : [cr4] "r" (cr4),
+    );
+}
+
+pub inline fn readCr4() u64 {
+    var cr4: u64 = undefined;
+    asm volatile (
+        \\mov %%cr4, %[cr4]
+        : [cr4] "=r" (cr4),
+    );
+    return cr4;
+}
+
+pub inline fn readEflags() FlagsRegister {
     var eflags: u64 = undefined;
     asm volatile (
         \\pushfq
         \\pop %[eflags]
         : [eflags] "=r" (eflags),
     );
-    return eflags;
+    return @bitCast(eflags);
 }
 
-pub inline fn writeEflags(eflags: u64) void {
+pub inline fn writeEflags(eflags: FlagsRegister) void {
     asm volatile (
         \\push %[eflags]
         \\popfq
         :
-        : [eflags] "r" (eflags),
+        : [eflags] "r" (@as(u64, @bitCast(eflags))),
     );
 }
 
@@ -160,7 +177,126 @@ pub fn cpuid(eax: u32) CpuidRegisters {
     };
 }
 
+pub fn readMsr(msr: Msr) u64 {
+    var eax: u32 = undefined;
+    var edx: u32 = undefined;
+    asm volatile (
+        \\rdmsr
+        : [eax] "={eax}" (eax),
+          [edx] "={edx}" (edx),
+        : [msr] "{ecx}" (@intFromEnum(msr)),
+    );
+
+    return (@as(u64, edx) << 32) | @as(u64, eax);
+}
+
+pub fn writeMsr(msr: Msr, value: u64) void {
+    asm volatile (
+        \\wrmsr
+        :
+        : [msr] "{ecx}" (@intFromEnum(msr)),
+          [eax] "{eax}" (@as(u32, @truncate(value))),
+          [edx] "{edx}" (@as(u32, @truncate(value >> 32))),
+    );
+}
+
+pub fn readMsrFeatureControl() MsrFeatureControl {
+    const val = readMsr(Msr.feature_control);
+    return @bitCast(val);
+}
+
+pub fn writeMsrFeatureControl(value: MsrFeatureControl) void {
+    writeMsr(Msr.feature_control, @bitCast(value));
+}
+
 /// Pause the CPU for a short period of time.
 pub fn relax() void {
     asm volatile ("rep; nop");
 }
+
+pub const Msr = enum(u32) {
+    /// IA32_FEATURE_CONTROL MSR.
+    feature_control = 0x3A,
+};
+
+/// IA32_FEATURE_CONTROL MSR.
+pub const MsrFeatureControl = packed struct(u64) {
+    /// Lock bit.
+    /// When set to true, further writes to this MSR causes #GP.
+    /// Once the bit is set, it cannot be cleared until system reset.
+    lock: bool,
+    /// VMX in SMX (Safer Mode Extensions) operation.
+    /// If set to false, VMXON in SMX causes #GP.
+    vmx_in_smx: bool,
+    /// VMX outside SMX operation.
+    /// If set to false, VMXON outside SMX causes #GP.
+    vmx_outside_smx: bool,
+    /// Reserved.
+    _reserved1: u5,
+    /// Specify enabled functionality of the SYSENTER leaf function.
+    senter_lfe: u7,
+    /// SYSENTER global enable.
+    senter_global_enable: bool,
+    /// Reserved.
+    _reserved2: u1,
+    sgx_launch_control_enable: bool,
+    sgx_global_enable: bool,
+    /// Reserved.
+    _reserved3: u1,
+    lmce_on: bool,
+    /// Reserved.
+    _reserved4: u43,
+};
+
+pub const FlagsRegister = packed struct(u64) {
+    /// Carry flag.
+    cf: bool,
+    /// Reserved.
+    _reserved1: u1,
+    /// Parity flag.
+    pf: bool,
+    /// Reserved.
+    _reserved2: u1,
+    /// Auxiliary carry flag.
+    af: bool,
+    /// Reserved.
+    _reserved3: u1,
+    /// Zero flag.
+    zf: bool,
+    /// Sign flag.
+    sf: bool,
+    /// Trap flag.
+    tf: bool,
+    /// Interrupt enable flag.
+    ief: bool,
+    /// Direction flag.
+    df: bool,
+    /// Overflow flag.
+    of: bool,
+    /// IOPL (I/O privilege level).
+    iopl: u2,
+    /// Nested task flag.
+    nt: bool,
+    /// Reserved.
+    md: bool,
+    /// Resume flag.
+    rf: bool,
+    /// Virtual 8086 mode flag.
+    vm: bool,
+    // Alignment check.
+    ac: bool,
+    /// Virtual interrupt flag.
+    vif: bool,
+    /// Virtual interrupt pending.
+    vip: bool,
+    /// CPUID support.
+    id: bool,
+    /// Reserved.
+    _reserved4: u8,
+    /// Reserved.
+    aes: bool,
+    /// Alternate instruction set enabled.
+    ai: bool,
+    /// Reserved.
+    _reserved: u32,
+};

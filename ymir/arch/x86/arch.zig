@@ -5,6 +5,7 @@ pub const intr = @import("interrupt.zig");
 pub const page = @import("page.zig");
 pub const pic = @import("pic.zig");
 pub const serial = @import("serial.zig");
+pub const vmx = @import("vmx.zig");
 
 const cpuid = @import("cpuid.zig");
 const am = @import("asm.zig");
@@ -54,10 +55,10 @@ pub inline fn in(T: type, port: u16) T {
 
 /// Enable CPUID instruction.
 pub inline fn enableCpuid() void {
-    const eflags = am.readEflags();
-    const cpuid_enabled_bit = 1 << 21;
-    if (eflags & cpuid_enabled_bit == 0) {
-        _ = am.writeEflags(eflags | cpuid_enabled_bit);
+    var eflags = am.readEflags();
+    if (!eflags.id) {
+        eflags.id = true;
+        _ = am.writeEflags(eflags);
     }
 }
 
@@ -83,8 +84,7 @@ pub fn getCpuVendorId() [12]u8 {
 /// Get the feature information from CPUID.
 pub fn getFeatureInformation() cpuid.CpuidInformation {
     const eflags = am.readEflags();
-    const cpuid_enabled_bit = 1 << 21;
-    if (eflags & cpuid_enabled_bit == 0) @panic("CPUID is not enabled");
+    if (!eflags.id) @panic("CPUID is not enabled");
 
     const regs = am.cpuid(cpuid.functions.feature_information);
     return cpuid.CpuidInformation{

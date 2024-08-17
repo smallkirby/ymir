@@ -119,6 +119,14 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     const feature = arch.getFeatureInformation();
     if (!feature.ecx.vmx) @panic("VMX is not supported.");
 
+    // Enable VMX.
+    arch.vmx.enableVmx();
+    log.info("Enabled VMX.", .{});
+
+    // Enter VMX root operation.
+    try arch.vmx.vmxon(ymir.mem.page_allocator);
+    log.info("Entered VMX root operation.", .{});
+
     // EOL
     log.info("Reached EOL.", .{});
     while (true)
