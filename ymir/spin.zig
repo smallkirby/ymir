@@ -1,3 +1,5 @@
+const is_test = @import("builtin").is_test;
+
 const ymir = @import("ymir");
 const arch = ymir.arch;
 
@@ -25,7 +27,7 @@ pub const SpinLock = struct {
     /// Must be paired with `unlockEnableIrq()`.
     pub inline fn lockDisableIrq(self: *SpinLock) void {
         self.lock();
-        arch.disableIntr();
+        if (!is_test) arch.disableIntr();
     }
 
     /// Unlock the spin lock.
@@ -43,6 +45,6 @@ pub const SpinLock = struct {
     /// Unlock the spin lock and enable interrupts.
     pub inline fn unlockEnableIrq(self: *SpinLock) void {
         self.unlock();
-        arch.enableIntr();
+        if (!is_test) arch.enableIntr();
     }
 };

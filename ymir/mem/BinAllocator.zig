@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const spin = @import("ymir").spin;
 
 const Self = @This();
 
@@ -28,12 +29,15 @@ comptime {
 page_allocator: Allocator,
 /// Heads of the chunk lists.
 list_heads: [bin_sizes.len]ChunkMetaPointer,
+/// Spin lock.
+lock: spin.SpinLock = spin.SpinLock{},
 
 /// Get a instance of BinAllocator without initialization.
 pub fn newUninit() Self {
     return Self{
         .page_allocator = undefined,
         .list_heads = undefined,
+        .lock = spin.SpinLock{},
     };
 }
 
@@ -41,6 +45,7 @@ pub fn newUninit() Self {
 pub fn init(self: *Self, page_allocator: Allocator) void {
     self.page_allocator = page_allocator;
     @memset(self.list_heads[0..self.list_heads.len], null);
+    self.lock = spin.SpinLock{};
 }
 
 /// Get the bin index for the given size.
@@ -55,6 +60,9 @@ fn binIndex(size: usize) ?usize {
 }
 
 fn allocFromBin(self: *Self, bin_index: usize) ?[*]u8 {
+    self.lock.lockDisableIrq();
+    defer self.lock.unlockEnableIrq();
+
     if (self.list_heads[bin_index] == null) {
         initBinPage(self, bin_index) orelse return null;
     }
@@ -62,6 +70,9 @@ fn allocFromBin(self: *Self, bin_index: usize) ?[*]u8 {
 }
 
 fn freeToBin(self: *Self, bin_index: usize, ptr: [*]u8) void {
+    self.lock.lockDisableIrq();
+    defer self.lock.unlockEnableIrq();
+
     const chunk: *ChunkMetaNode = @alignCast(@ptrCast(ptr));
     push(&self.list_heads[bin_index], chunk);
 }
