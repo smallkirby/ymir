@@ -116,7 +116,7 @@ fn unhandledHandler(context: *Context) void {
     log.err("CS     : 0x{X:0>4}", .{context.cs});
     log.err("SS     : 0x{X:0>4}", .{context.ss});
 
-    asm volatile ("hlt");
+    while (true) asm volatile ("hlt");
 }
 
 fn unhandledFaultHandler(context: *Context) void {
