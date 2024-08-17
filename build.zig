@@ -75,6 +75,9 @@ pub fn build(b: *std.Build) void {
         "-serial",
         "mon:stdio",
         "-no-reboot",
+        "-enable-kvm",
+        "-cpu",
+        "host",
         "-s",
     };
     const qemu_cmd = b.addSystemCommand(&qemu_args);

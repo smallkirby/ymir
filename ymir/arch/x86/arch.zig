@@ -6,6 +6,7 @@ pub const page = @import("page.zig");
 pub const pic = @import("pic.zig");
 pub const serial = @import("serial.zig");
 
+const cpuid = @import("cpuid.zig");
 const am = @import("asm.zig");
 
 /// Page size.
@@ -48,6 +49,47 @@ pub inline fn in(T: type, port: u16) T {
         u16 => am.inw(port),
         u32 => am.inl(port),
         else => @compileError("Unsupported type for asm in()"),
+    };
+}
+
+/// Enable CPUID instruction.
+pub inline fn enableCpuid() void {
+    const eflags = am.readEflags();
+    const cpuid_enabled_bit = 1 << 21;
+    if (eflags & cpuid_enabled_bit == 0) {
+        _ = am.writeEflags(eflags | cpuid_enabled_bit);
+    }
+}
+
+pub fn getCpuVendorId() [12]u8 {
+    var ret: [12]u8 = undefined;
+    const regs = am.cpuid(cpuid.functions.vendor_id);
+
+    for (0..4) |i| {
+        const b: usize = (regs.ebx >> @truncate(i * 8));
+        ret[0 + i] = @as(u8, @truncate(b));
+    }
+    for (0..4) |i| {
+        const b: usize = (regs.edx >> @truncate(i * 8));
+        ret[4 + i] = @as(u8, @truncate(b));
+    }
+    for (0..4) |i| {
+        const b: usize = (regs.ecx >> @truncate(i * 8));
+        ret[8 + i] = @as(u8, @truncate(b));
+    }
+    return ret;
+}
+
+/// Get the feature information from CPUID.
+pub fn getFeatureInformation() cpuid.CpuidInformation {
+    const eflags = am.readEflags();
+    const cpuid_enabled_bit = 1 << 21;
+    if (eflags & cpuid_enabled_bit == 0) @panic("CPUID is not enabled");
+
+    const regs = am.cpuid(cpuid.functions.feature_information);
+    return cpuid.CpuidInformation{
+        .ecx = @bitCast(regs.ecx),
+        .edx = @bitCast(regs.edx),
     };
 }
 

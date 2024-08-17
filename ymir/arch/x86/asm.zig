@@ -105,6 +105,61 @@ pub inline fn readCr3() u64 {
     return cr3;
 }
 
+pub inline fn readEflags() u64 {
+    var eflags: u64 = undefined;
+    asm volatile (
+        \\pushfq
+        \\pop %[eflags]
+        : [eflags] "=r" (eflags),
+    );
+    return eflags;
+}
+
+pub inline fn writeEflags(eflags: u64) void {
+    asm volatile (
+        \\push %[eflags]
+        \\popfq
+        :
+        : [eflags] "r" (eflags),
+    );
+}
+
+const CpuidRegisters = struct {
+    eax: u32,
+    ebx: u32,
+    ecx: u32,
+    edx: u32,
+};
+
+pub fn cpuid(eax: u32) CpuidRegisters {
+    var eax_ret: u32 = undefined;
+    var ebx: u32 = undefined;
+    var ecx: u32 = undefined;
+    var edx: u32 = undefined;
+
+    asm volatile (
+        \\mov %[eax], %%eax
+        \\cpuid
+        \\mov %%eax, %[eax_ret]
+        \\mov %%ebx, %[ebx]
+        \\mov %%ecx, %[ecx]
+        \\mov %%edx, %[edx]
+        : [eax_ret] "=r" (eax_ret),
+          [ebx] "=r" (ebx),
+          [ecx] "=r" (ecx),
+          [edx] "=r" (edx),
+        : [eax] "r" (eax),
+        : "rax", "rbx", "rcx", "rdx"
+    );
+
+    return .{
+        .eax = eax_ret,
+        .ebx = ebx,
+        .ecx = ecx,
+        .edx = edx,
+    };
+}
+
 /// Pause the CPU for a short period of time.
 pub fn relax() void {
     asm volatile ("rep; nop");

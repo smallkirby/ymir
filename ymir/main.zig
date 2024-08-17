@@ -102,13 +102,22 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     log.info("Initialized PIC.", .{});
 
     // Enable PIT.
-    arch.pic.unsetMask(.Timer);
     arch.intr.registerHandler(idefs.pic_timer, blobTimerHandler);
+    arch.pic.unsetMask(.Timer);
     log.info("Enabled PIT.", .{});
 
     // Init keyboard.
     kbd.init(.{ .serial = sr }); // TODO: make this configurable
     log.info("Initialized keyboard.", .{});
+
+    // Check if VMX is supported.
+    arch.enableCpuid();
+    const vendor = arch.getCpuVendorId();
+    log.info("CPU vendor: {s}", .{vendor});
+    if (!std.mem.eql(u8, vendor[0..], "GenuineIntel")) @panic("Unsupported CPU vendor.");
+
+    const feature = arch.getFeatureInformation();
+    if (!feature.ecx.vmx) @panic("VMX is not supported.");
 
     // EOL
     log.info("Reached EOL.", .{});
