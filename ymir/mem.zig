@@ -10,9 +10,16 @@ pub const page_allocator = Allocator{
     .ptr = &page_allocator_instance,
     .vtable = &pa.vtable,
 };
+pub const general_allocator = Allocator{
+    .ptr = &bin_allocator_instance,
+    .vtable = &BinAllocator.vtable,
+};
 
 const pa = @import("mem/PageAllocator.zig");
-var page_allocator_instance = pa.PageAllocator.new_uninit();
+var page_allocator_instance = pa.PageAllocator.newUninit();
+
+const BinAllocator = @import("mem/BinAllocator.zig");
+var bin_allocator_instance = BinAllocator.newUninit();
 
 /// Physical address.
 pub const Phys = u64;
@@ -23,6 +30,12 @@ pub const Virt = u64;
 /// You MUST call this function before using `page_allocator`.
 pub fn initPageAllocator(map: MemoryMap) void {
     page_allocator_instance.init(map);
+}
+
+/// Initialize the general allocator.
+/// You mUST call this function before using `general_allocator`.
+pub fn initGeneralAllocator() void {
+    bin_allocator_instance.init(page_allocator);
 }
 
 /// Translate the given virtual address to physical address.

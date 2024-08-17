@@ -69,7 +69,7 @@ pub const PageAllocator = struct {
 
     /// Instantiate an uninitialized PageAllocator.
     /// Returned instance must be initialized by calling `init`.
-    pub fn new_uninit() Self {
+    pub fn newUninit() Self {
         return Self{
             .frame_end = undefined,
             .bitmap = undefined,

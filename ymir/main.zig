@@ -93,6 +93,10 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     log.info("Unmapping straight map region...", .{});
     try arch.page.unmapStraightMap();
 
+    // Initialize general allocator.
+    ymir.mem.initGeneralAllocator();
+    log.info("Initialized general allocator.", .{});
+
     // Initialize PIC.
     arch.pic.init();
     log.info("Initialized PIC.", .{});
