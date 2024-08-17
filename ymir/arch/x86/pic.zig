@@ -48,11 +48,12 @@ const ps2_status_port: u16 = 0x64;
 const ps2_command_port: u16 = ps2_status_port;
 
 /// Initialize the PIC remapping its interrupt vectors.
+/// All interrupts are masked after initialization.
 /// You MUST call this function before using the PIC.
 pub fn init() void {
-    // Save the current interrupt mask.
-    const mask_primary = am.inb(primary_data_port);
-    const mask_secondary = am.inb(secondary_data_port);
+    // We have to disable interrupts to prevent PIC-driven interrupts before registering handlers.
+    am.cli();
+    defer am.sti();
 
     // Start initialization sequence.
     am.outb(icw1_init | icw1_icw4, primary_command_port);
@@ -79,9 +80,9 @@ pub fn init() void {
     am.outb(icw4_8086, secondary_data_port);
     am.relax();
 
-    // Restore the saved interrupt mask.
-    am.outb(mask_primary, primary_data_port);
-    am.outb(mask_secondary, secondary_data_port);
+    // Mask all IRQ lines.
+    am.outb(0xFF, primary_data_port);
+    am.outb(0xFF, secondary_data_port);
 }
 
 /// Mask the given IRQ line.
@@ -97,7 +98,7 @@ pub fn unsetMask(irq: IrqLine) void {
     const irq_value: u8 = @intFromEnum(irq);
     const port = if (irq_value < 8) primary_data_port else secondary_data_port;
     const irq_line = if (irq_value < 8) irq_value else irq_value - 8;
-    am.outb(am.inb(port) & (~(@as(u8, 1) << @truncate(irq_line))), port);
+    am.outb(am.inb(port) & ~((@as(u8, 1) << @truncate(irq_line))), port);
 }
 
 /// Notify the end of interrupt (EOI) to the PIC.
