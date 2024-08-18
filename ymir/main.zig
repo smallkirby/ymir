@@ -127,6 +127,10 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try arch.vmx.vmxon(ymir.mem.page_allocator);
     log.info("Entered VMX root operation.", .{});
 
+    // Exit VMX root operation.
+    log.info("Exiting VMX root operation...", .{});
+    arch.vmx.vmxoff();
+
     // EOL
     log.info("Reached EOL.", .{});
     while (true)

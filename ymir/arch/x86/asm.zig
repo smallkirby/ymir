@@ -79,6 +79,23 @@ pub inline fn hlt() void {
     asm volatile ("hlt");
 }
 
+pub inline fn loadCr0(cr0: u64) void {
+    asm volatile (
+        \\mov %[cr0], %%cr0
+        :
+        : [cr0] "r" (cr0),
+    );
+}
+
+pub inline fn readCr0() u64 {
+    var cr0: u64 = undefined;
+    asm volatile (
+        \\mov %%cr0, %[cr0]
+        : [cr0] "=r" (cr0),
+    );
+    return cr0;
+}
+
 pub inline fn readCr2() u64 {
     var cr2: u64 = undefined;
     asm volatile (
@@ -105,21 +122,21 @@ pub inline fn readCr3() u64 {
     return cr3;
 }
 
-pub inline fn loadCr4(cr4: u64) void {
+pub inline fn loadCr4(cr4: Cr4) void {
     asm volatile (
         \\mov %[cr4], %%cr4
         :
-        : [cr4] "r" (cr4),
+        : [cr4] "r" (@as(u64, @bitCast(cr4))),
     );
 }
 
-pub inline fn readCr4() u64 {
+pub inline fn readCr4() Cr4 {
     var cr4: u64 = undefined;
     asm volatile (
         \\mov %%cr4, %[cr4]
         : [cr4] "=r" (cr4),
     );
-    return cr4;
+    return @bitCast(cr4);
 }
 
 pub inline fn readEflags() FlagsRegister {
@@ -209,6 +226,20 @@ pub fn writeMsrFeatureControl(value: MsrFeatureControl) void {
     writeMsr(Msr.feature_control, @bitCast(value));
 }
 
+pub fn readMsrVmxBasic() MsrVmxBasic {
+    const val = readMsr(Msr.vmx_basic);
+    return @bitCast(val);
+}
+
+pub fn writeMsrVmxBasic(value: MsrVmxBasic) void {
+    writeMsr(Msr.vmx_basic, @bitCast(value));
+}
+
+pub fn testA20Mode() bool {
+    const cr4 = readCr4();
+    return (cr4 & (1 << 1)) != 0;
+}
+
 /// Pause the CPU for a short period of time.
 pub fn relax() void {
     asm volatile ("rep; nop");
@@ -216,7 +247,17 @@ pub fn relax() void {
 
 pub const Msr = enum(u32) {
     /// IA32_FEATURE_CONTROL MSR.
-    feature_control = 0x3A,
+    feature_control = 0x003A,
+    /// IA32_VMX_BASIC MSR.
+    vmx_basic = 0x0480,
+    /// IA32_VMX_CR0_FIXED0 MSR.
+    vmx_cr0_fixed0 = 0x0486,
+    /// IA32_VMX_CR0_FIXED1 MSR.
+    vmx_cr0_fixed1 = 0x0487,
+    /// IA32_VMX_CR4_FIXED0 MSR.
+    vmx_cr4_fixed0 = 0x0488,
+    /// IA32_VMX_CR4_FIXED1 MSR.
+    vmx_cr4_fixed1 = 0x0489,
 };
 
 /// IA32_FEATURE_CONTROL MSR.
@@ -246,6 +287,13 @@ pub const MsrFeatureControl = packed struct(u64) {
     lmce_on: bool,
     /// Reserved.
     _reserved4: u43,
+};
+
+pub const MsrVmxBasic = packed struct(u64) {
+    /// VMCS revision identifier.
+    vmcs_revision_id: u31,
+    /// Reserved.
+    _reserved: u33, // TODO: VMXON region size
 };
 
 pub const FlagsRegister = packed struct(u64) {
@@ -299,4 +347,59 @@ pub const FlagsRegister = packed struct(u64) {
     ai: bool,
     /// Reserved.
     _reserved: u32,
+};
+
+pub const Cr4 = packed struct(u64) {
+    /// Virtual-8086 mode extensions.
+    vme: bool,
+    /// Protected mode virtual interrupts.
+    pvi: bool,
+    /// Time stamp disable.
+    tsd: bool,
+    /// Debugging extensions.
+    de: bool,
+    /// Page size extension.
+    pse: bool,
+    /// Physical address extension.
+    pae: bool,
+    /// Machine check exception.
+    mce: bool,
+    /// Page global enable.
+    pge: bool,
+    /// Performance monitoring counter enable.
+    pce: bool,
+    /// Operating system support for FXSAVE and FXRSTOR instructions.
+    osfxsr: bool,
+    /// Operating system support for unmasked SIMD floating-point exceptions.
+    osxmmexcpt: bool,
+    /// Virtual machine extensions.
+    umip: bool,
+    /// Reserved.
+    _reserved: u1 = 0,
+    /// Virtual machine extensions enable.
+    vmxe: bool,
+    /// Safer mode extensions enable.
+    smxe: bool,
+    /// Reserved.
+    _reserved2: u1 = 0,
+    /// Enables the instructions RDFSBASE, RDGSBASE, WRFSBASE, and WRGSBASE.
+    fsgsbase: bool,
+    /// PCID enable.
+    pcide: bool,
+    /// XSAVE and processor extended states enable.
+    osxsave: bool,
+    /// Reserved.
+    _reserved3: u1 = 0,
+    /// Supervisor mode execution protection enable.
+    smep: bool,
+    /// Supervisor mode access protection enable.
+    smap: bool,
+    /// Protection key enable.
+    pke: bool,
+    /// Control-flow Enforcement Technology enable.
+    cet: bool,
+    /// Protection keys for supervisor-mode pages enable.
+    pks: bool,
+    /// Reserved.
+    _reserved4: u39 = 0,
 };
