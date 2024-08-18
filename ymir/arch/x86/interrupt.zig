@@ -90,7 +90,7 @@ fn unhandledHandler(context: *Context) void {
     @setCold(true);
 
     log.err("============ Oops! ===================", .{});
-    log.err("Unhandled interrupt: {s}({})", .{
+    log.err("Unhandled interrupt: {s} ({})", .{
         exceptionName(context.vector),
         context.vector,
     });
