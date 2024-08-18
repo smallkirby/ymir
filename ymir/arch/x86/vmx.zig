@@ -175,3 +175,7 @@ pub const VmcsRegion = packed struct {
         return @alignCast(@ptrCast(page.ptr));
     }
 };
+
+test {
+    std.testing.refAllDeclsRecursive(@This());
+}
