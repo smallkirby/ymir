@@ -96,7 +96,7 @@ fn debugPrintVmxonValidity() void {
     } else @panic("\t\tIA32_FEATURE_CONTROL is not locked");
 
     const vmx_basic = am.readMsrVmxBasic();
-    log.debug("\t\tVMXON region size: 0x{X}", .{(vmx_basic._reserved >> 1) & 0xFFFF});
+    log.debug("\t\tVMXON region size: 0x{X}", .{vmx_basic.vmxon_region_size});
 
     const vmx_cr0_fixed0: u32 = @truncate(am.readMsr(.vmx_cr0_fixed0));
     const vmx_cr0_fixed1: u32 = @truncate(am.readMsr(.vmx_cr0_fixed1));

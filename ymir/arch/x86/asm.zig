@@ -292,8 +292,12 @@ pub const MsrFeatureControl = packed struct(u64) {
 pub const MsrVmxBasic = packed struct(u64) {
     /// VMCS revision identifier.
     vmcs_revision_id: u31,
+    /// Reserved
+    _zero: u1 = 0,
+    /// VMXON region size.
+    vmxon_region_size: u16,
     /// Reserved.
-    _reserved: u33, // TODO: VMXON region size
+    _reserved: u16,
 };
 
 pub const FlagsRegister = packed struct(u64) {
