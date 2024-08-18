@@ -235,11 +235,6 @@ pub fn writeMsrVmxBasic(value: MsrVmxBasic) void {
     writeMsr(Msr.vmx_basic, @bitCast(value));
 }
 
-pub fn testA20Mode() bool {
-    const cr4 = readCr4();
-    return (cr4 & (1 << 1)) != 0;
-}
-
 /// Pause the CPU for a short period of time.
 pub fn relax() void {
     asm volatile ("rep; nop");
