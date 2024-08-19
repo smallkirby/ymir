@@ -1,5 +1,8 @@
 //! This module provides a set of functions corresponding to x64 asm instructions.
 
+const ymir = @import("ymir");
+const mem = ymir.mem;
+
 pub inline fn inb(port: u16) u8 {
     return asm volatile (
         \\inb %[port], %[ret]
@@ -233,6 +236,25 @@ pub fn readMsrVmxBasic() MsrVmxBasic {
 
 pub fn writeMsrVmxBasic(value: MsrVmxBasic) void {
     writeMsr(Msr.vmx_basic, @bitCast(value));
+}
+
+pub inline fn vmxon(vmxon_region: mem.Phys) FlagsRegister {
+    var rflags: u64 = undefined;
+    asm volatile (
+        \\vmxon (%[vmxon_phys])
+        \\pushf
+        \\popq %[rflags]
+        : [rflags] "=r" (rflags),
+        : [vmxon_phys] "r" (&vmxon_region),
+        : "cc", "memory"
+    );
+    return @bitCast(rflags);
+}
+
+pub inline fn vmxoff() void {
+    asm volatile (
+        \\vmxoff
+        ::: "cc");
 }
 
 /// Pause the CPU for a short period of time.

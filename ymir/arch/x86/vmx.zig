@@ -53,56 +53,22 @@ fn getVmcsRevisionId() u31 {
 
 /// Puts the logical processor in VMX operation with no VMCS loaded.
 pub fn vmxon(page_allocator: Allocator) !void {
+    // Set up VMXON region.
     const vmxon_region = try VmxonRegion.new(page_allocator);
     vmxon_region.vmcs_revision_id = getVmcsRevisionId();
     log.debug("VMCS revision ID: 0x{X:0>8}", .{vmxon_region.vmcs_revision_id});
-
     const vmxon_phys = mem.virt2phys(@intFromPtr(vmxon_region));
     log.debug("VMXON region physical address: 0x{X:0>16}", .{vmxon_phys});
 
     debugPrintVmxonValidity();
 
-    var rflags: u64 = undefined;
-    asm volatile (
-        \\clc
-        \\vmxon (%[vmxon_phys])
-        \\pushf
-        \\popq %[rflags]
-        : [rflags] "=r" (rflags),
-        : [vmxon_phys] "r" (&vmxon_phys),
-        : "cc", "memory"
-    );
-
-    // Check if VMXON succeeded.
-    const flags: am.FlagsRegister = @bitCast(rflags);
-    if (flags.cf) @panic("VMXON: VMCS pointer is invalid");
-    if (flags.zf) @panic("VMXON: Error during VMXON");
+    const rflags = am.vmxon(vmxon_phys);
+    if (rflags.cf) @panic("VMXON: VMCS pointer is invalid");
+    if (rflags.zf) @panic("VMXON: Error during VMXON");
 }
 
 /// Exit VMX operation.
-pub fn vmxoff() void {
-    asm volatile (
-        \\vmxoff
-        ::: "cc");
-}
-
-fn loadVmptr(vmcs_region: *align(4096) VmcsRegion) void {
-    const vmcs_region_phys = mem.virt2phys(@intFromPtr(vmcs_region));
-    var rflags: u64 = undefined;
-
-    asm volatile (
-        \\clc
-        \\vmptrld (%[vmcs_region])
-        \\pushf
-        \\popq %%rflags
-        : [rflags] "=r" (rflags),
-        : [vmcs_region] "r" (&vmcs_region_phys),
-    );
-
-    const flags: am.FlagsRegister = @bitCast(rflags);
-    if (flags.cf) @panic("VMPTRLD: VMCS pointer is invalid");
-    if (flags.zf) @panic("VMPTRLD: Error during VMPTRLD");
-}
+pub const vmxoff = am.vmxoff;
 
 fn debugPrintVmxonValidity() void {
     log.debug("VMX Validity", .{});
