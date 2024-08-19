@@ -69,12 +69,13 @@ fn getVmcsRevisionId() u31 {
 /// Puts the logical processor in VMX operation with no VMCS loaded.
 pub fn vmxon(page_allocator: Allocator) VmxError!void {
     // Set up VMXON region.
+    // TODO: should return allocater VMXON region.
     const vmxon_region = try VmxonRegion.new(page_allocator);
     vmxon_region.vmcs_revision_id = getVmcsRevisionId();
     log.debug("VMCS revision ID: 0x{X:0>8}", .{vmxon_region.vmcs_revision_id});
+
     const vmxon_phys = mem.virt2phys(@intFromPtr(vmxon_region));
     log.debug("VMXON region physical address: 0x{X:0>16}", .{vmxon_phys});
-
     debugPrintVmxonValidity();
 
     try am.vmxon(vmxon_phys);
@@ -94,6 +95,7 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
 /// TODO: This is a temporary implementation.
 pub fn setupVmcs(page_allocator: Allocator) VmxError!void {
     // Init VMCS structure.
+    // TODO: should return allocater VMCS region.
     const vmcs_region = try VmcsRegion.new(page_allocator);
     vmcs_region.vmcs_revision_id = getVmcsRevisionId();
 
