@@ -47,7 +47,7 @@ pub const guest_ldtr_base = encode(.guest_state, 9, .full, .natural);
 pub const guest_tr_base = encode(.guest_state, 10, .full, .natural);
 pub const guest_gdtr_base = encode(.guest_state, 11, .full, .natural);
 pub const guest_idtr_base = encode(.guest_state, 12, .full, .natural);
-pub const guest_dr4 = encode(.guest_state, 16, .full, .natural);
+pub const guest_dr7 = encode(.guest_state, 13, .full, .natural);
 pub const guest_rsp = encode(.guest_state, 14, .full, .natural);
 pub const guest_rip = encode(.guest_state, 15, .full, .natural);
 pub const guest_rflags = encode(.guest_state, 16, .full, .natural);
@@ -173,7 +173,7 @@ pub const control_vmentry_interrupt_information_field = encode(.control, 11, .fu
 pub const control_vmentry_exception_error_code = encode(.control, 12, .full, .dword);
 pub const control_vmentry_instruction_length = encode(.control, 13, .full, .dword);
 pub const control_tpr_threshold = encode(.control, 14, .full, .dword);
-pub const control_secondary_vmexec_controls = encode(.control, 15, .full, .dword);
+pub const control_secondary_procbased_vmexec_controls = encode(.control, 15, .full, .dword);
 pub const control_ple_gap = encode(.control, 16, .full, .dword);
 pub const control_ple_window = encode(.control, 17, .full, .dword);
 pub const control_instruction_timeouts = encode(.control, 18, .full, .dword);
@@ -319,6 +319,10 @@ pub const exec_control = struct {
         /// You MUST consult IA32_VMX_PINBASED_CTLS and IA32_VMX_TRUE_PINBASED_CTLS
         /// to determine how to set reserved bits.
         _reserved3: u24,
+
+        pub fn new() PinBasedExecutionControl {
+            return std.mem.zeroes(PinBasedExecutionControl);
+        }
     };
 
     /// Primary processor-based VM-execution controls.
@@ -386,12 +390,16 @@ pub const exec_control = struct {
         pause: bool,
         /// If set to true, secondary processor-based VM-execution controls are used.
         activate_secondary_controls: bool,
+
+        pub fn new() PrimaryProcessorBasedExecutionControl {
+            return std.mem.zeroes(PrimaryProcessorBasedExecutionControl);
+        }
     };
 
     /// Secondary processor-based VM-execution controls.
     /// Governs the handling of synchronous events (e.g., instructions).
     /// cf. SDM Vol3C 25.6.2.
-    pub const SecondaryProcessorBasedExecutionControl = packed struct(u64) {
+    pub const SecondaryProcessorBasedExecutionControl = packed struct(u32) {
         /// If set to true, the logical processor treats specially accesses to the page with APIC access address.
         virtualize_apic_accesses: bool,
         /// If set to true, EPT is enabled.
@@ -452,14 +460,16 @@ pub const exec_control = struct {
         ///
         enable_enclv: bool,
         /// Reserved.
+        /// You MUST consult IA32_VMX_PROCBASED_CTLS2 to determine how to set reserved bits.
         _reserved1: u1,
         /// Determines whether assertion of a bus lock cause VM exits.
         vmm_buslock_detect: bool,
         ///
         instruction_timeout: bool,
-        /// Reserved.
-        /// You MUST consult IA32_VMX_PROCBASED_CTLS2 to determine how to set reserved bits.
-        _reserved2: u32,
+
+        pub fn new() SecondaryProcessorBasedExecutionControl {
+            return std.mem.zeroes(SecondaryProcessorBasedExecutionControl);
+        }
     };
 
     /// Governs the handling of exceptions.
@@ -548,6 +558,10 @@ pub const exit_control = struct {
         save_perf_global_ctl: bool,
         /// If set to true, the secondary VM-exit controls are used.
         activate_secondary_controls: bool,
+
+        pub fn new() PrimaryExitControls {
+            return std.mem.zeroes(PrimaryExitControls);
+        }
     };
 
     /// Secondary VM-Exit Controls.
@@ -559,6 +573,10 @@ pub const exit_control = struct {
         prematurely_busy_shadow_stack: bool,
         /// Reserved.
         _reserved2: u60,
+
+        pub fn new() SecondaryExitControls {
+            return std.mem.zeroes(SecondaryExitControls);
+        }
     };
 };
 
@@ -605,6 +623,10 @@ pub const entry_control = struct {
         load_pkrs: bool,
         /// Reserved.
         _reserved4: u9,
+
+        pub fn new() EntryControls {
+            return std.mem.zeroes(EntryControls);
+        }
     };
 };
 

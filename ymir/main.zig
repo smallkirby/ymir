@@ -134,6 +134,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     log.info("Exiting VMX root operation...", .{});
     arch.vmx.vmxoff();
 
+    // Launch
+    try arch.vmx.launch();
+
     // EOL
     log.info("Reached EOL.", .{});
     while (true)

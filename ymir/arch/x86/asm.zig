@@ -200,6 +200,60 @@ pub fn cpuid(eax: u32) CpuidRegisters {
     };
 }
 
+pub fn readDebugRegister(dr: DebugRegister) u64 {
+    var ret: u64 = undefined;
+    switch (dr) {
+        .dr0 => asm volatile ("mov %%dr0, %[ret]"
+            : [ret] "=r" (ret),
+        ),
+        .dr1 => asm volatile ("mov %%dr1, %[ret]"
+            : [ret] "=r" (ret),
+        ),
+        .dr2 => asm volatile ("mov %%dr2, %[ret]"
+            : [ret] "=r" (ret),
+        ),
+        .dr3 => asm volatile ("mov %%dr3, %[ret]"
+            : [ret] "=r" (ret),
+        ),
+        .dr6 => asm volatile ("mov %%dr6, %[ret]"
+            : [ret] "=r" (ret),
+        ),
+        .dr7 => asm volatile ("mov %%dr7, %[ret]"
+            : [ret] "=r" (ret),
+        ),
+    }
+    return ret;
+}
+
+pub fn writeDebugRegister(dr: DebugRegister, value: u64) void {
+    switch (dr) {
+        .dr0 => asm volatile ("mov %[value], %%dr0"
+            :
+            : [value] "r" (value),
+        ),
+        .dr1 => asm volatile ("mov %[value], %%dr1"
+            :
+            : [value] "r" (value),
+        ),
+        .dr2 => asm volatile ("mov %[value], %%dr2"
+            :
+            : [value] "r" (value),
+        ),
+        .dr3 => asm volatile ("mov %[value], %%dr3"
+            :
+            : [value] "r" (value),
+        ),
+        .dr6 => asm volatile ("mov %[value], %%dr6"
+            :
+            : [value] "r" (value),
+        ),
+        .dr7 => asm volatile ("mov %[value], %%dr7"
+            :
+            : [value] "r" (value),
+        ),
+    }
+}
+
 pub fn readMsr(msr: Msr) u64 {
     var eax: u32 = undefined;
     var edx: u32 = undefined;
@@ -286,6 +340,19 @@ pub inline fn vmxoff() void {
         ::: "cc");
 }
 
+pub inline fn vmlaunch() VmxError!void {
+    var rflags: u64 = undefined;
+    asm volatile (
+        \\vmlaunch
+        \\pushf
+        \\popq %[rflags]
+        : [rflags] "=r" (rflags),
+        :
+        : "cc", "memory"
+    );
+    try vmxerr(rflags);
+}
+
 /// Pause the CPU for a short period of time.
 pub fn relax() void {
     asm volatile ("rep; nop");
@@ -294,8 +361,24 @@ pub fn relax() void {
 pub const Msr = enum(u32) {
     /// IA32_FEATURE_CONTROL MSR.
     feature_control = 0x003A,
+    /// IA32_SYSENTER_CS MSR. SDM Vol.3A Table 2-2.
+    sysenter_cs = 0x174,
+    /// IA32_SYSENTER_ESP MSR. SDM Vol.3A Table 2-2.
+    sysenter_esp = 0x175,
+    /// IA32_SYSENTER_EIP MSR. SDM Vol.3A Table 2-2.
+    sysenter_eip = 0x176,
+    /// IA32_DEBUGCTL MSR. SDM Vol.4 Table 2-2.
+    debugctl = 0x01D9,
     /// IA32_VMX_BASIC MSR.
     vmx_basic = 0x0480,
+    /// IA32_VMX_PINBASED_CTLS MSR.
+    vmx_pinbased_ctls = 0x0481,
+    /// IA32_VMX_PROCBASED_CTLS MSR.
+    vmx_procbased_ctls = 0x0482,
+    /// IA32_VMX_EXIT_CTLS MSR.
+    vmx_exit_ctls = 0x0483,
+    /// IA32_VMX_ENTRY_CTLS MSR.
+    vmx_entry_ctls = 0x0484,
     /// IA32_VMX_CR0_FIXED0 MSR.
     vmx_cr0_fixed0 = 0x0486,
     /// IA32_VMX_CR0_FIXED1 MSR.
@@ -304,6 +387,16 @@ pub const Msr = enum(u32) {
     vmx_cr4_fixed0 = 0x0488,
     /// IA32_VMX_CR4_FIXED1 MSR.
     vmx_cr4_fixed1 = 0x0489,
+    /// IA32_VMX_PROCBASED_CTLS2 MSR.
+    vmx_procbased_ctls2 = 0x048B,
+    /// IA32_VMX_TRUE_PINBASED_CTLS MSR.
+    vmx_true_pinbased_ctls = 0x048D,
+    /// IA32_VMX_TRUE_PROCBASED_CTLS MSR.
+    vmx_true_procbased_ctls = 0x048E,
+    /// IA32_VMX_TRUE_EXIT_CTLS MSR.
+    vmx_true_exit_ctls = 0x048F,
+    /// IA32_VMX_TRUE_ENTRY_CTLS MSR.
+    vmx_true_entry_ctls = 0x0490,
 };
 
 /// IA32_FEATURE_CONTROL MSR.
@@ -343,7 +436,11 @@ pub const MsrVmxBasic = packed struct(u64) {
     /// VMXON region size.
     vmxon_region_size: u16,
     /// Reserved.
-    _reserved: u16,
+    _reserved1: u7,
+    /// SDM Vol.3D Appendix A.5.
+    true_control: bool,
+    /// Reserved.
+    _reserved2: u8,
 };
 
 pub const FlagsRegister = packed struct(u64) {
@@ -490,4 +587,20 @@ pub const Cr4 = packed struct(u64) {
     pks: bool,
     /// Reserved.
     _reserved4: u39 = 0,
+};
+
+/// Debug register.
+pub const DebugRegister = enum {
+    /// DR0
+    dr0,
+    /// DR1
+    dr1,
+    /// DR2
+    dr2,
+    /// DR3
+    dr3,
+    /// DR6: Debug Status
+    dr6,
+    /// DR7: Debug Control
+    dr7,
 };
