@@ -127,6 +127,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try arch.vmx.vmxon(ymir.mem.page_allocator);
     log.info("Entered VMX root operation.", .{});
 
+    // Setup VMCS
+    try arch.vmx.setupVmcs(ymir.mem.page_allocator);
+
     // Exit VMX root operation.
     log.info("Exiting VMX root operation...", .{});
     arch.vmx.vmxoff();

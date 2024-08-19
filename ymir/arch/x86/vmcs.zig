@@ -1,24 +1,35 @@
 const std = @import("std");
 
 const am = @import("asm.zig");
+const vmx = @import("vmx.zig");
+const VmxError = vmx.VmxError;
+const err = vmx.err;
 
-pub fn vmread(field: ComponentEncoding) u64 {
+pub fn vmread(field: ComponentEncoding) VmxError!u64 {
     const field_u64: u32 = @bitCast(field);
-    return asm volatile (
+    var rflags: u64 = undefined;
+    const ret = asm volatile (
         \\vmread %[field], %[ret]
+        \\pushf
+        \\popq %[rflags]
         : [ret] "={rax}" (-> u64),
+          [rflags] "=r" (rflags),
         : [field] "r" (@as(u64, @intCast(field_u64))),
     );
+    try err(rflags);
+    return ret;
 }
 
-pub fn vmwrite(field: ComponentEncoding, value: u64) void {
+pub fn vmwrite(field: ComponentEncoding, value: u64) VmxError!void {
     const field_u64: u32 = @bitCast(field);
+    var rflags: u64 = undefined;
     asm volatile (
         \\vmwrite %[value], %[field]
-        :
+        : [rflags] "=r" (rflags),
         : [field] "r" (@as(u64, @intCast(field_u64))),
           [value] "r" (value),
     );
+    try err(rflags);
 }
 
 // === Guest State Area. cf. SDM Vol.3C 25.4, Appendix B. ================

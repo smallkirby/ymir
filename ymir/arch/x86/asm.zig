@@ -2,6 +2,9 @@
 
 const ymir = @import("ymir");
 const mem = ymir.mem;
+const vmx = @import("vmx.zig");
+const VmxError = vmx.VmxError;
+const vmxerr = vmx.err;
 
 pub inline fn inb(port: u16) u8 {
     return asm volatile (
@@ -82,24 +85,24 @@ pub inline fn hlt() void {
     asm volatile ("hlt");
 }
 
-pub inline fn loadCr0(cr0: u64) void {
+pub inline fn loadCr0(cr0: Cr0) void {
     asm volatile (
         \\mov %[cr0], %%cr0
         :
-        : [cr0] "r" (cr0),
+        : [cr0] "r" (@as(u64, @bitCast(cr0))),
     );
 }
 
-pub inline fn readCr0() u64 {
+pub inline fn readCr0() Cr0 {
     var cr0: u64 = undefined;
     asm volatile (
         \\mov %%cr0, %[cr0]
         : [cr0] "=r" (cr0),
     );
-    return cr0;
+    return @bitCast(cr0);
 }
 
-pub inline fn readCr2() u64 {
+pub inline fn readCr2() Cr2 {
     var cr2: u64 = undefined;
     asm volatile (
         \\mov %%cr2, %[cr2]
@@ -238,7 +241,7 @@ pub fn writeMsrVmxBasic(value: MsrVmxBasic) void {
     writeMsr(Msr.vmx_basic, @bitCast(value));
 }
 
-pub inline fn vmxon(vmxon_region: mem.Phys) FlagsRegister {
+pub inline fn vmxon(vmxon_region: mem.Phys) VmxError!void {
     var rflags: u64 = undefined;
     asm volatile (
         \\vmxon (%[vmxon_phys])
@@ -248,7 +251,33 @@ pub inline fn vmxon(vmxon_region: mem.Phys) FlagsRegister {
         : [vmxon_phys] "r" (&vmxon_region),
         : "cc", "memory"
     );
-    return @bitCast(rflags);
+    try vmxerr(rflags);
+}
+
+pub inline fn vmclear(vmcs_region: mem.Phys) VmxError!void {
+    var rflags: u64 = undefined;
+    asm volatile (
+        \\vmclear (%[vmcs_phys])
+        \\pushf
+        \\popq %[rflags]
+        : [rflags] "=r" (rflags),
+        : [vmcs_phys] "r" (&vmcs_region),
+        : "cc", "memory"
+    );
+    try vmxerr(rflags);
+}
+
+pub inline fn vmptrld(vmcs_region: mem.Phys) VmxError!void {
+    var rflags: u64 = undefined;
+    asm volatile (
+        \\vmptrld (%[vmcs_phys])
+        \\pushf
+        \\popq %[rflags]
+        : [rflags] "=r" (rflags),
+        : [vmcs_phys] "r" (&vmcs_region),
+        : "cc", "memory"
+    );
+    try vmxerr(rflags);
 }
 
 pub inline fn vmxoff() void {
@@ -370,6 +399,44 @@ pub const FlagsRegister = packed struct(u64) {
     _reserved: u32,
 };
 
+/// CR0 register.
+pub const Cr0 = packed struct(u64) {
+    /// Protected mode enable.
+    pe: bool,
+    /// Monitor co-processor.
+    mp: bool,
+    /// Emulation.
+    em: bool,
+    /// Task switched.
+    ts: bool,
+    /// Extension type.
+    et: bool,
+    /// Numeric error.
+    ne: bool,
+    /// Reserved.
+    _reserved1: u10 = 0,
+    /// Write protect.
+    wp: bool,
+    /// Reserved.
+    _reserved2: u1 = 0,
+    /// Alignment mask.
+    am: bool,
+    /// Reserved.
+    _reserved3: u10 = 0,
+    /// Not-Write Through.
+    nw: bool,
+    /// Cache disable.
+    cd: bool,
+    /// Paging.
+    pg: bool,
+    /// Reserved.
+    _reserved4: u32 = 0,
+};
+
+/// CR2 register. It contains VA of the last page fault.
+pub const Cr2 = u64;
+
+/// CR4 register.
 pub const Cr4 = packed struct(u64) {
     /// Virtual-8086 mode extensions.
     vme: bool,

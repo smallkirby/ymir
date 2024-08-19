@@ -9,6 +9,21 @@ const Phys = mem.Phys;
 const am = @import("asm.zig");
 const vmcs = @import("vmcs.zig");
 
+pub const VmxError = error{
+    /// VMCS pointer is invalid. No status available.
+    FailureInvalidVmcsPointer,
+    /// VMCS pointer is valid but the operation failed.
+    /// If a current VMCS is active, error status is stored in VM-instruction error field.
+    FailureStatusAvailable,
+    /// Failed to allocate memory.
+    OutOfMemory,
+};
+
+pub fn err(rflags: u64) VmxError!void {
+    const flags: am.FlagsRegister = @bitCast(rflags);
+    return if (flags.cf) VmxError.FailureInvalidVmcsPointer else if (flags.zf) VmxError.FailureStatusAvailable;
+}
+
 /// Enable VMX operations.
 pub fn enableVmx() void {
     // Adjust control registers.
@@ -52,7 +67,7 @@ fn getVmcsRevisionId() u31 {
 }
 
 /// Puts the logical processor in VMX operation with no VMCS loaded.
-pub fn vmxon(page_allocator: Allocator) !void {
+pub fn vmxon(page_allocator: Allocator) VmxError!void {
     // Set up VMXON region.
     const vmxon_region = try VmxonRegion.new(page_allocator);
     vmxon_region.vmcs_revision_id = getVmcsRevisionId();
@@ -62,13 +77,34 @@ pub fn vmxon(page_allocator: Allocator) !void {
 
     debugPrintVmxonValidity();
 
-    const rflags = am.vmxon(vmxon_phys);
-    if (rflags.cf) @panic("VMXON: VMCS pointer is invalid");
-    if (rflags.zf) @panic("VMXON: Error during VMXON");
+    try am.vmxon(vmxon_phys);
 }
 
 /// Exit VMX operation.
 pub const vmxoff = am.vmxoff;
+
+fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
+    // The VMCS becomes inactive and flushed to memory.
+    try am.vmclear(mem.virt2phys(@intFromPtr(vmcs_region)));
+    // Load and activate the VMCS.
+    try am.vmptrld(mem.virt2phys(@intFromPtr(vmcs_region)));
+}
+
+/// Set up VMCS for a logical processor.
+/// TODO: This is a temporary implementation.
+pub fn setupVmcs(page_allocator: Allocator) VmxError!void {
+    // Init VMCS structure.
+    const vmcs_region = try VmcsRegion.new(page_allocator);
+    vmcs_region.vmcs_revision_id = getVmcsRevisionId();
+
+    // Reset VMCS.
+    try resetVmcs(vmcs_region);
+
+    // Load guest state
+    try vmcs.vmwrite(vmcs.guest_cr0, @bitCast(am.readCr0()));
+    try vmcs.vmwrite(vmcs.guest_cr3, am.readCr3());
+    try vmcs.vmwrite(vmcs.guest_cr4, @bitCast(am.readCr4()));
+}
 
 fn debugPrintVmxonValidity() void {
     log.debug("VMX Validity", .{});
@@ -111,8 +147,8 @@ pub const VmxonRegion = packed struct {
     vmcs_revision_id: u31,
     zero: u1 = 0,
 
-    pub fn new(page_allocator: Allocator) !*align(4096) VmxonRegion {
-        const page = try page_allocator.alloc(u8, 4096);
+    pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmxonRegion {
+        const page = page_allocator.alloc(u8, 4096) catch return VmxError.OutOfMemory;
         if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
             return error.OutOfMemory;
         }
@@ -132,7 +168,7 @@ pub const VmcsRegion = packed struct {
     // VMCS data follows, but its exact layout is implementation-specific.
     // Use vmread/vmwrite with appropriate ComponentEncoding.
 
-    pub fn new(page_allocator: Allocator) !*align(4096) VmcsRegion {
+    pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmcsRegion {
         const page = try page_allocator.alloc(u8, 4096);
         if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
             return error.OutOfMemory;
