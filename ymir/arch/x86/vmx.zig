@@ -7,19 +7,13 @@ const mem = ymir.mem;
 const Phys = mem.Phys;
 
 const am = @import("asm.zig");
-const vmcs = @import("vmcs.zig");
+const vmcs = @import("vmx/vmcs.zig");
+const regs = @import("vmx/regs.zig");
 
-pub const VmxError = error{
-    /// VMCS pointer is invalid. No status available.
-    FailureInvalidVmcsPointer,
-    /// VMCS pointer is valid but the operation failed.
-    /// If a current VMCS is active, error status is stored in VM-instruction error field.
-    FailureStatusAvailable,
-    /// Failed to allocate memory.
-    OutOfMemory,
-};
+pub const VmxError = @import("vmx/error.zig").VmxError;
+pub const VmxInstructionError = @import("vmx/error.zig").VmxInstructionError;
 
-pub fn err(rflags: u64) VmxError!void {
+pub fn vmxtry(rflags: u64) VmxError!void {
     const flags: am.FlagsRegister = @bitCast(rflags);
     return if (flags.cf) VmxError.FailureInvalidVmcsPointer else if (flags.zf) VmxError.FailureStatusAvailable;
 }
@@ -44,6 +38,7 @@ pub fn enableVmx() void {
     am.loadCr4(cr4);
 }
 
+/// Adjust physical CPU's CR0 and CR4 registers.
 fn adjustControlRegisters() void {
     const vmx_cr0_fixed0: u32 = @truncate(am.readMsr(.vmx_cr0_fixed0));
     const vmx_cr0_fixed1: u32 = @truncate(am.readMsr(.vmx_cr0_fixed1));
@@ -61,6 +56,7 @@ fn adjustControlRegisters() void {
     am.loadCr4(@bitCast(cr4));
 }
 
+/// Read VMCS revision identifier.
 fn getVmcsRevisionId() u31 {
     const vmx_basic = am.readMsrVmxBasic();
     return vmx_basic.vmcs_revision_id;
@@ -99,79 +95,28 @@ pub fn setupVmcs(page_allocator: Allocator) VmxError!void {
     const vmcs_region = try VmcsRegion.new(page_allocator);
     vmcs_region.vmcs_revision_id = getVmcsRevisionId();
 
+    // TODO
+
     // Reset VMCS.
     try resetVmcs(vmcs_region);
+}
 
-    // Load guest state
-    try vmcs.vmwrite(vmcs.guest_cr0, @bitCast(am.readCr0()));
-    try vmcs.vmwrite(vmcs.guest_cr3, am.readCr3());
-    try vmcs.vmwrite(vmcs.guest_cr4, @bitCast(am.readCr4()));
-    try vmcs.vmwrite(vmcs.guest_dr7, am.readDebugRegister(.dr7));
-    try vmcs.vmwrite(vmcs.guest_rflags, @bitCast(am.readEflags()));
-    try vmcs.vmwrite(vmcs.guest_debugctl, am.readMsr(.debugctl));
-    try vmcs.vmwrite(vmcs.guest_sysenter_esp, 0xDEADBEEF00); // TODO
-    try vmcs.vmwrite(vmcs.guest_sysenter_eip, 0xCAFEBABE00); // TODO
-    try vmcs.vmwrite(vmcs.guest_fs_base, 0x0); // TODO
-    try vmcs.vmwrite(vmcs.guest_gs_base, 0x0); // TODO
-    try vmcs.vmwrite(vmcs.guest_vmcs_link_pointer, 0xFFFF_FFFF_FFFF_FFFF); // TODO
-    try vmcs.vmwrite(vmcs.host_rsp, 0xDEADBEEF00); // TODO
-    try vmcs.vmwrite(vmcs.host_rip, 0xCAFEBABE00); // TODO
-
-    // Set up VM-entry controls
-    var entry_controls = vmcs.entry_control.EntryControls.new();
-    entry_controls.ia32e_mode_guest = true;
-    var entry_controls_val: u32 = @bitCast(entry_controls);
-    const basic_msr = am.readMsrVmxBasic();
-    const entry_ctls_msr: u64 = if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls);
-    entry_controls_val |= @as(u32, @truncate(entry_ctls_msr)); // Mandatory 1
-    entry_controls_val &= @as(u32, @truncate(entry_ctls_msr >> 32)); // Mandatory 0
-    try vmcs.vmwrite(vmcs.control_vmentry_controls, entry_controls_val);
-
-    // Set up VM-entry controls
-    // TODO: make it function to adjust control values
-    var primary_exit_controls = vmcs.exit_control.PrimaryExitControls.new();
-    primary_exit_controls.activate_secondary_controls = false;
-    primary_exit_controls.host_addr_space_size = true;
-    var primary_exit_controls_val: u32 = @bitCast(primary_exit_controls);
-    const exit_ctls_msr: u64 = if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls);
-    primary_exit_controls_val |= @as(u32, @truncate(exit_ctls_msr)); // Mandatory 1
-    primary_exit_controls_val &= @as(u32, @truncate(exit_ctls_msr >> 32)); // Mandatory 0
-    try vmcs.vmwrite(vmcs.control_primary_vmexit_controls, primary_exit_controls_val);
-
-    // Set up pin-based controls
-    const pin_exec_controls = vmcs.exec_control.PinBasedExecutionControl.new();
-    var pin_exec_controls_val: u32 = @bitCast(pin_exec_controls);
-    const pin_exec_ctls_msr: u64 = if (basic_msr.true_control) am.readMsr(.vmx_true_pinbased_ctls) else am.readMsr(.vmx_pinbased_ctls);
-    pin_exec_controls_val |= @as(u32, @truncate(pin_exec_ctls_msr)); // Mandatory 1
-    pin_exec_controls_val &= @as(u32, @truncate(pin_exec_ctls_msr >> 32)); // Mandatory 0
-    try vmcs.vmwrite(vmcs.control_pinbased_vmexec_controls, pin_exec_controls_val);
-
-    // Set up primary processor-based controls
-    var primary_proc_exec_controls = vmcs.exec_control.PrimaryProcessorBasedExecutionControl.new();
-    primary_proc_exec_controls.use_msr_bitmap = false;
-    primary_proc_exec_controls.activate_secondary_controls = true;
-    var primary_proc_exec_controls_val: u32 = @bitCast(primary_proc_exec_controls);
-    const primary_proc_exec_ctls_msr: u64 = if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls);
-    primary_proc_exec_controls_val |= @as(u32, @truncate(primary_proc_exec_ctls_msr)); // Mandatory 1
-    primary_proc_exec_controls_val &= @as(u32, @truncate(primary_proc_exec_ctls_msr >> 32)); // Mandatory 0
-    try vmcs.vmwrite(vmcs.control_procbased_vmexec_controls, primary_proc_exec_controls_val);
-
-    // Set up secondary processor-based controls
-    var secondary_proc_exec_controls = vmcs.exec_control.SecondaryProcessorBasedExecutionControl.new();
-    secondary_proc_exec_controls.rdtscp = true;
-    secondary_proc_exec_controls.enable_xsaves_xrstors = true;
-    secondary_proc_exec_controls.enable_invpcid = true;
-    var secondary_proc_exec_controls_val: u32 = @bitCast(secondary_proc_exec_controls);
-    const secondary_proc_exec_ctls_msr = am.readMsr(.vmx_procbased_ctls2);
-    secondary_proc_exec_controls_val |= @as(u32, @truncate(secondary_proc_exec_ctls_msr)); // Mandatory 1
-    secondary_proc_exec_controls_val &= @as(u32, @truncate(secondary_proc_exec_ctls_msr >> 32)); // Mandatory 0
-    try vmcs.vmwrite(vmcs.control_secondary_procbased_vmexec_controls, secondary_proc_exec_controls_val);
+fn adjustRegisterMandatoryBits(control: anytype, mask: u64) u32 {
+    var ret: u32 = @bitCast(control);
+    ret |= @as(u32, @truncate(mask)); // Mandatory 1
+    ret &= @as(u32, @truncate(mask >> 32)); // Mandatory 0
+    return ret;
 }
 
 // TODO: template
 pub fn launch() VmxError!void {
     // Launch VM.
     try am.vmlaunch();
+}
+
+/// Read error reason from the current logical processor's VMCS.
+pub fn getErrorReason() VmxError!VmxInstructionError {
+    return @enumFromInt(try vmcs.vmread(vmcs.ro_vminstruction_error));
 }
 
 fn debugPrintVmxonValidity() void {
@@ -248,4 +193,6 @@ pub const VmcsRegion = packed struct {
 
 test {
     std.testing.refAllDeclsRecursive(@This());
+
+    std.testing.refAllDeclsRecursive(@import("vmx/vmcs.zig"));
 }

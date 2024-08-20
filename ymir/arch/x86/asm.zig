@@ -4,7 +4,7 @@ const ymir = @import("ymir");
 const mem = ymir.mem;
 const vmx = @import("vmx.zig");
 const VmxError = vmx.VmxError;
-const vmxerr = vmx.err;
+const vmxerr = vmx.vmxtry;
 
 pub inline fn inb(port: u16) u8 {
     return asm volatile (

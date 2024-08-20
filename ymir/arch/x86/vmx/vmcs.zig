@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const am = @import("asm.zig");
-const vmx = @import("vmx.zig");
+const am = @import("../asm.zig");
+const vmx = @import("../vmx.zig");
 const VmxError = vmx.VmxError;
-const err = vmx.err;
+const err = vmx.vmxtry;
 
 pub fn vmread(field: ComponentEncoding) VmxError!u64 {
     const field_u64: u32 = @bitCast(field);

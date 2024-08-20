@@ -130,12 +130,18 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Setup VMCS
     try arch.vmx.setupVmcs(ymir.mem.page_allocator);
 
+    // Launch
+    arch.vmx.launch() catch |err| switch (err) {
+        error.FailureStatusAvailable => {
+            log.err("VMLAUNCH failed: error={?}", .{try arch.vmx.getErrorReason()});
+            return err;
+        },
+        else => return err,
+    };
+
     // Exit VMX root operation.
     log.info("Exiting VMX root operation...", .{});
     arch.vmx.vmxoff();
-
-    // Launch
-    try arch.vmx.launch();
 
     // EOL
     log.info("Reached EOL.", .{});

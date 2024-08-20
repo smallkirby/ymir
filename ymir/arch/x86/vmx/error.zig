@@ -28,3 +28,13 @@ pub const VmxInstructionError = enum(u8) {
     vmentry_events_blocked = 26,
     invalid_invept = 28,
 };
+
+pub const VmxError = error{
+    /// VMCS pointer is invalid. No status available.
+    FailureInvalidVmcsPointer,
+    /// VMCS pointer is valid but the operation failed.
+    /// If a current VMCS is active, error status is stored in VM-instruction error field.
+    FailureStatusAvailable,
+    /// Failed to allocate memory.
+    OutOfMemory,
+};

@@ -96,5 +96,4 @@ pub fn getFeatureInformation() cpuid.CpuidInformation {
 test {
     const testing = @import("std").testing;
     testing.refAllDeclsRecursive(@This());
-    testing.refAllDeclsRecursive(@import("vmcs.zig"));
 }
