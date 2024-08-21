@@ -95,17 +95,71 @@ pub fn setupVmcs(page_allocator: Allocator) VmxError!void {
     const vmcs_region = try VmcsRegion.new(page_allocator);
     vmcs_region.vmcs_revision_id = getVmcsRevisionId();
 
-    // TODO
-
     // Reset VMCS.
     try resetVmcs(vmcs_region);
+
+    // Init fields.
+    try setupExecCtrls();
+    try setupExitCtrls();
+    try setupEntryCtrls();
+
+    // TODO
 }
 
-fn adjustRegisterMandatoryBits(control: anytype, mask: u64) u32 {
+/// Set up VM-Execution control fields.
+/// cf. SDM Vol.3C 27.2.1.1, Appendix A.3.
+fn setupExecCtrls() VmxError!void {
+    const basic_msr = am.readMsrVmxBasic();
+
+    // Pin-based VM-Execution control.
+    const pin_exec_ctrl = try vmcs.exec_control.PinBasedExecutionControl.get();
+    try adjustRegMandatoryBits(
+        pin_exec_ctrl,
+        if (basic_msr.true_control) am.readMsr(.vmx_true_pinbased_ctls) else am.readMsr(.vmx_pinbased_ctls),
+    ).load();
+
+    // Primary Processor-based VM-Execution control.
+    const ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
+    try adjustRegMandatoryBits(
+        ppb_exec_ctrl,
+        if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
+    ).load();
+
+    // CR-3 target.
+    try vmcs.vmwrite(vmcs.control_cr3_target_count, 0);
+}
+
+/// Set up VM-Exit control fields.
+/// cf. SDM Vol.3C 27.2.1.2.
+fn setupExitCtrls() VmxError!void {
+    const basic_msr = am.readMsrVmxBasic();
+
+    // VM-Exit control.
+    const exit_ctrl = try vmcs.exit_control.PrimaryExitControls.get();
+    try adjustRegMandatoryBits(
+        exit_ctrl,
+        if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls),
+    ).load();
+}
+
+/// Set up VM-Entry control fields.
+/// cf. SDM Vol.3C 27.2.1.3.
+fn setupEntryCtrls() VmxError!void {
+    const basic_msr = am.readMsrVmxBasic();
+
+    // VM-Entry control.
+    const entry_ctrl = try vmcs.entry_control.EntryControls.get();
+    try adjustRegMandatoryBits(
+        entry_ctrl,
+        if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
+    ).load();
+}
+
+fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
     var ret: u32 = @bitCast(control);
     ret |= @as(u32, @truncate(mask)); // Mandatory 1
     ret &= @as(u32, @truncate(mask >> 32)); // Mandatory 0
-    return ret;
+    return @bitCast(ret);
 }
 
 // TODO: template

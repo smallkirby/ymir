@@ -2,6 +2,7 @@ const std = @import("std");
 
 const am = @import("../asm.zig");
 const vmx = @import("../vmx.zig");
+const vmcs = @import("vmcs.zig");
 const VmxError = vmx.VmxError;
 const err = vmx.vmxtry;
 
@@ -323,6 +324,16 @@ pub const exec_control = struct {
         pub fn new() PinBasedExecutionControl {
             return std.mem.zeroes(PinBasedExecutionControl);
         }
+
+        pub fn load(self: PinBasedExecutionControl) VmxError!void {
+            const val: u32 = @bitCast(self);
+            try vmcs.vmwrite(vmcs.control_pinbased_vmexec_controls, val);
+        }
+
+        pub fn get() VmxError!PinBasedExecutionControl {
+            const val: u32 = @truncate(try vmcs.vmread(vmcs.control_pinbased_vmexec_controls));
+            return @bitCast(val);
+        }
     };
 
     /// Primary processor-based VM-execution controls.
@@ -393,6 +404,16 @@ pub const exec_control = struct {
 
         pub fn new() PrimaryProcessorBasedExecutionControl {
             return std.mem.zeroes(PrimaryProcessorBasedExecutionControl);
+        }
+
+        pub fn load(self: PrimaryProcessorBasedExecutionControl) VmxError!void {
+            const val: u32 = @bitCast(self);
+            try vmcs.vmwrite(vmcs.control_procbased_vmexec_controls, val);
+        }
+
+        pub fn get() VmxError!PrimaryProcessorBasedExecutionControl {
+            const val: u32 = @truncate(try vmcs.vmread(vmcs.control_procbased_vmexec_controls));
+            return @bitCast(val);
         }
     };
 
@@ -562,6 +583,16 @@ pub const exit_control = struct {
         pub fn new() PrimaryExitControls {
             return std.mem.zeroes(PrimaryExitControls);
         }
+
+        pub fn load(self: PrimaryExitControls) VmxError!void {
+            const val: u32 = @bitCast(self);
+            try vmcs.vmwrite(vmcs.control_primary_vmexit_controls, val);
+        }
+
+        pub fn get() VmxError!PrimaryExitControls {
+            const val: u32 = @truncate(try vmcs.vmread(vmcs.control_primary_vmexit_controls));
+            return @bitCast(val);
+        }
     };
 
     /// Secondary VM-Exit Controls.
@@ -626,6 +657,16 @@ pub const entry_control = struct {
 
         pub fn new() EntryControls {
             return std.mem.zeroes(EntryControls);
+        }
+
+        pub fn load(self: EntryControls) VmxError!void {
+            const val: u32 = @bitCast(self);
+            try vmcs.vmwrite(vmcs.control_vmentry_controls, val);
+        }
+
+        pub fn get() VmxError!EntryControls {
+            const val: u32 = @truncate(try vmcs.vmread(vmcs.control_vmentry_controls));
+            return @bitCast(val);
         }
     };
 };
