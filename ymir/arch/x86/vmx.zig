@@ -102,6 +102,7 @@ pub fn setupVmcs(page_allocator: Allocator) VmxError!void {
     try setupExecCtrls();
     try setupExitCtrls();
     try setupEntryCtrls();
+    try setupHostState();
 
     // TODO
 }
@@ -135,7 +136,8 @@ fn setupExitCtrls() VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // VM-Exit control.
-    const exit_ctrl = try vmcs.exit_control.PrimaryExitControls.get();
+    var exit_ctrl = try vmcs.exit_control.PrimaryExitControls.get();
+    exit_ctrl.host_addr_space_size = true;
     try adjustRegMandatoryBits(
         exit_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls),
@@ -153,6 +155,36 @@ fn setupEntryCtrls() VmxError!void {
         entry_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
     ).load();
+}
+
+/// Set up host state.
+/// cf. SDM Vol.3C 27.2.2.
+fn setupHostState() VmxError!void {
+    // Control registers.
+    var crs = try regs.ControlRegisters.get(.host);
+    crs.cr0 = @bitCast(am.readCr0());
+    crs.cr3 = @bitCast(am.readCr3());
+    crs.cr4 = @bitCast(am.readCr4());
+    try crs.load(.host);
+
+    // General registers.
+    try vmcs.vmwrite(vmcs.host_rip, @intFromPtr(&vmexitHandler));
+
+    // Segment registers.
+    try vmcs.vmwrite(vmcs.host_cs_selector, 1 << 3); // TODO
+    try vmcs.vmwrite(vmcs.host_ss_selector, 1 << 3); // TODO
+    try vmcs.vmwrite(vmcs.host_ds_selector, 1 << 3); // TODO
+    try vmcs.vmwrite(vmcs.host_es_selector, 1 << 3); // TODO
+    try vmcs.vmwrite(vmcs.host_fs_selector, 1 << 3); // TODO
+    try vmcs.vmwrite(vmcs.host_gs_selector, 1 << 3); // TODO
+    try vmcs.vmwrite(vmcs.host_tr_selector, 1 << 3); // TODO
+}
+
+/// TODO: temporary
+fn vmexitHandler() callconv(.Naked) noreturn {
+    while (true) {
+        am.hlt();
+    }
 }
 
 fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
