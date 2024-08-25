@@ -10,9 +10,15 @@ const am = @import("asm.zig");
 const vmcs = @import("vmx/vmcs.zig");
 const regs = @import("vmx/regs.zig");
 
-pub const VmxError = @import("vmx/error.zig").VmxError;
-pub const VmxInstructionError = @import("vmx/error.zig").VmxInstructionError;
+const vmwrite = vmcs.vmwrite;
+const vmread = vmcs.vmread;
 
+const vmx_error = @import("vmx/error.zig");
+pub const VmxError = vmx_error.VmxError;
+pub const ExitInformation = vmx_error.ExitInformation;
+pub const InstructionError = vmx_error.InstructionError;
+
+/// Read RFLAGS and checks if a VMX instruction has failed.
 pub fn vmxtry(rflags: u64) VmxError!void {
     const flags: am.FlagsRegister = @bitCast(rflags);
     return if (flags.cf) VmxError.FailureInvalidVmcsPointer else if (flags.zf) VmxError.FailureStatusAvailable;
@@ -80,6 +86,8 @@ pub fn vmxon(page_allocator: Allocator) VmxError!void {
 /// Exit VMX operation.
 pub const vmxoff = am.vmxoff;
 
+/// Clear and reset VMCS.
+/// After this operation, the VMCS becomes active and current logical processor.
 fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
     // The VMCS becomes inactive and flushed to memory.
     try am.vmclear(mem.virt2phys(@intFromPtr(vmcs_region)));
@@ -103,8 +111,16 @@ pub fn setupVmcs(page_allocator: Allocator) VmxError!void {
     try setupExitCtrls();
     try setupEntryCtrls();
     try setupHostState();
+    try setupGuestState();
+}
 
-    // TODO
+/// TODO: temporary
+export fn guestDebugHandler() callconv(.Naked) noreturn {
+    while (true)
+        asm volatile (
+            \\cli
+            \\nop
+        );
 }
 
 /// Set up VM-Execution control fields.
@@ -120,14 +136,12 @@ fn setupExecCtrls() VmxError!void {
     ).load();
 
     // Primary Processor-based VM-Execution control.
-    const ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
+    var ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
+    ppb_exec_ctrl.hlt = true; // exit on halt
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
     ).load();
-
-    // CR-3 target.
-    try vmcs.vmwrite(vmcs.control_cr3_target_count, 0);
 }
 
 /// Set up VM-Exit control fields.
@@ -150,7 +164,10 @@ fn setupEntryCtrls() VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // VM-Entry control.
-    const entry_ctrl = try vmcs.entry_control.EntryControls.get();
+    var entry_ctrl = try vmcs.entry_control.EntryControls.get();
+    entry_ctrl.ia32e_mode_guest = true;
+    entry_ctrl.load_ia32_efer = true;
+    entry_ctrl.load_ia32_pat = true;
     try adjustRegMandatoryBits(
         entry_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
@@ -161,30 +178,187 @@ fn setupEntryCtrls() VmxError!void {
 /// cf. SDM Vol.3C 27.2.2.
 fn setupHostState() VmxError!void {
     // Control registers.
-    var crs = try regs.ControlRegisters.get(.host);
-    crs.cr0 = @bitCast(am.readCr0());
-    crs.cr3 = @bitCast(am.readCr3());
-    crs.cr4 = @bitCast(am.readCr4());
-    try crs.load(.host);
+    try vmwrite(vmcs.Host.cr0, am.readCr0());
+    try vmwrite(vmcs.Host.cr3, am.readCr3());
+    try vmwrite(vmcs.Host.cr4, am.readCr4());
 
     // General registers.
-    try vmcs.vmwrite(vmcs.host_rip, @intFromPtr(&vmexitHandler));
+    try vmwrite(vmcs.Host.rip, &vmexitBootstrapHandler);
+    try vmwrite(vmcs.Host.rsp, @intFromPtr(&debug_temp_stack) + debug_temp_stack_size);
 
     // Segment registers.
-    try vmcs.vmwrite(vmcs.host_cs_selector, 1 << 3); // TODO
-    try vmcs.vmwrite(vmcs.host_ss_selector, 1 << 3); // TODO
-    try vmcs.vmwrite(vmcs.host_ds_selector, 1 << 3); // TODO
-    try vmcs.vmwrite(vmcs.host_es_selector, 1 << 3); // TODO
-    try vmcs.vmwrite(vmcs.host_fs_selector, 1 << 3); // TODO
-    try vmcs.vmwrite(vmcs.host_gs_selector, 1 << 3); // TODO
-    try vmcs.vmwrite(vmcs.host_tr_selector, 1 << 3); // TODO
+    try vmwrite(vmcs.Host.cs_sel, am.readSegSelector(.cs));
+    try vmwrite(vmcs.Host.ss_sel, am.readSegSelector(.ss));
+    try vmwrite(vmcs.Host.ds_sel, am.readSegSelector(.ds));
+    try vmwrite(vmcs.Host.es_sel, am.readSegSelector(.es));
+    try vmwrite(vmcs.Host.fs_sel, am.readSegSelector(.fs));
+    try vmwrite(vmcs.Host.gs_sel, am.readSegSelector(.gs));
+    try vmwrite(vmcs.Host.tr_sel, 1 << 3); // TODO: Host TR selector is now 0. We have to set it up first.
+    try vmwrite(vmcs.Host.gs_base, am.readMsr(.gs_base));
+    try vmwrite(vmcs.Host.fs_base, am.readMsr(.fs_base));
+    try vmwrite(vmcs.Host.tr_base, 0); // TODO
+    try vmwrite(vmcs.Host.gdtr_base, am.sgdt().base);
+    try vmwrite(vmcs.Host.idtr_base, am.sidt().base);
+
+    // MSR.
+    try vmwrite(vmcs.Host.efer, am.readMsr(.efer));
 }
 
-/// TODO: temporary
-fn vmexitHandler() callconv(.Naked) noreturn {
-    while (true) {
-        am.hlt();
+fn setupGuestState() VmxError!void {
+    const entry_ctrl = try vmcs.entry_control.EntryControls.get();
+
+    // Control registers.
+    const cr0 = am.readCr0();
+    const cr3 = am.readCr3();
+    const cr4 = am.readCr4();
+    try vmwrite(vmcs.Guest.cr0, cr0);
+    try vmwrite(vmcs.Guest.cr3, cr3);
+    try vmwrite(vmcs.Guest.cr4, cr4);
+
+    // Segment registers.
+    {
+        try vmwrite(vmcs.Guest.cs_base, 0);
+        try vmwrite(vmcs.Guest.ss_base, 0);
+        try vmwrite(vmcs.Guest.ds_base, 0);
+        try vmwrite(vmcs.Guest.es_base, 0);
+        try vmwrite(vmcs.Guest.fs_base, 0);
+        try vmwrite(vmcs.Guest.gs_base, 0);
+        try vmwrite(vmcs.Guest.tr_base, 0);
+        try vmwrite(vmcs.Guest.gdtr_base, am.sgdt().base);
+        try vmwrite(vmcs.Guest.idtr_base, am.sidt().base);
+        try vmwrite(vmcs.Guest.ldtr_base, 0);
+
+        try vmwrite(vmcs.Guest.cs_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.Guest.ss_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.Guest.ds_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.Guest.es_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.Guest.fs_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.Guest.gs_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.Guest.tr_limit, @as(u64, std.math.maxInt(u16))); // TODO
+        try vmwrite(vmcs.Guest.ldtr_limit, @as(u64, std.math.maxInt(u16))); // TODO
+        try vmwrite(vmcs.Guest.idtr_limit, am.sidt().limit);
+        try vmwrite(vmcs.Guest.gdtr_limit, am.sgdt().limit);
+
+        const cs_right = vmcs.SegmentRights{
+            .type = .CodeERA,
+            .s = .CodeOrData,
+            .dpl = 0,
+            .g = .KByte,
+            .long = true,
+            .db = 0,
+        };
+        const ds_right = vmcs.SegmentRights{
+            .type = .DataRWA,
+            .s = .CodeOrData,
+            .dpl = 0,
+            .g = .KByte,
+            .long = false,
+            .db = 1,
+        };
+        const tr_right = vmcs.SegmentRights{
+            .type = .CodeERA,
+            .s = .System,
+            .dpl = 0,
+            .g = .Byte,
+            .long = false,
+            .db = 0,
+        };
+        const ldtr_right = vmcs.SegmentRights{
+            .type = .DataRW, // XXX: DataRWE?
+            .s = .System,
+            .dpl = 0,
+            .g = .Byte,
+            .long = false,
+            .db = 0,
+        };
+        try vmwrite(vmcs.Guest.cs_rights, cs_right);
+        try vmwrite(vmcs.Guest.ss_rights, ds_right);
+        try vmwrite(vmcs.Guest.ds_rights, ds_right);
+        try vmwrite(vmcs.Guest.es_rights, ds_right);
+        try vmwrite(vmcs.Guest.fs_rights, ds_right);
+        try vmwrite(vmcs.Guest.gs_rights, ds_right);
+        try vmwrite(vmcs.Guest.tr_rights, tr_right);
+        try vmwrite(vmcs.Guest.ldtr_rights, ldtr_right);
+
+        try vmwrite(vmcs.Guest.cs_sel, am.readSegSelector(.cs));
+        try vmwrite(vmcs.Guest.ss_sel, am.readSegSelector(.ss));
+        try vmwrite(vmcs.Guest.ds_sel, am.readSegSelector(.ds));
+        try vmwrite(vmcs.Guest.es_sel, am.readSegSelector(.es));
+        try vmwrite(vmcs.Guest.fs_sel, am.readSegSelector(.fs));
+        try vmwrite(vmcs.Guest.gs_sel, am.readSegSelector(.gs));
+        try vmwrite(vmcs.Guest.tr_sel, am.readSegSelector(.tr));
+        try vmwrite(vmcs.Guest.ldtr_sel, am.readSegSelector(.ldtr));
+
+        try vmwrite(vmcs.Guest.fs_base, am.readMsr(.fs_base));
+        try vmwrite(vmcs.Guest.gs_base, am.readMsr(.gs_base));
     }
+
+    // General registers.
+    try vmwrite(vmcs.Guest.rip, @intFromPtr(&guestDebugHandler));
+    try vmwrite(vmcs.Guest.rsp, 0xDEAD0000); // TODO
+    try vmwrite(vmcs.Guest.rflags, am.readEflags());
+
+    // MSR
+    try vmwrite(vmcs.Guest.sysenter_cs, am.readMsr(.sysenter_cs));
+    try vmwrite(vmcs.Guest.sysenter_esp, am.readMsr(.sysenter_esp));
+    try vmwrite(vmcs.Guest.sysenter_eip, am.readMsr(.sysenter_eip));
+    const efer = am.readMsr(.efer);
+    try vmwrite(vmcs.Guest.efer, efer);
+    const pat = am.readMsr(.pat);
+    try vmwrite(vmcs.Guest.pat, pat);
+
+    // Other crucial fields.
+    try vmwrite(vmcs.Guest.vmcs_link_pointer, std.math.maxInt(u64));
+
+    // Guest register state partial checks.
+    if (cr0.pg and !cr0.pe) @panic("CR0: PE must be set when PG is set");
+    if (cr4.cet and !cr0.wp) @panic("CR0: WP must be set when CR4.CET is set");
+    if (entry_ctrl.ia32e_mode_guest and !(cr0.pg and cr4.pae)) @panic("CR0: PG and CR4.PAE must be set when IA-32e mode is enabled");
+    if (!entry_ctrl.ia32e_mode_guest and cr4.pcide) @panic("CR4: PCIDE must be unset when IA-32e mode is disabled");
+    if (cr3 >> 46 != 0) @panic("CR3: Reserved bits must be zero");
+    if (entry_ctrl.load_debug_controls) @panic("Unsupported guest state: load debug controls.");
+    if (entry_ctrl.load_cet_state) @panic("Unsupported guest state: load CET state.");
+    if (entry_ctrl.load_perf_global_ctrl) @panic("Unsupported guest state: load perf global ctrl.");
+    if (entry_ctrl.load_ia32_efer) {
+        const lma = (efer >> 10) & 1 != 0;
+        const lme = (efer >> 8) & 1 != 0;
+        if (lma != entry_ctrl.ia32e_mode_guest) @panic("EFER and IA-32e mode mismatch");
+        if (cr0.pg and (lma != lme)) @panic("EFER.LME must be identical to EFER.LMA when CR0.PG is set");
+    }
+
+    const rflags: am.FlagsRegister = @bitCast(try vmcs.vmread(vmcs.Guest.rflags));
+    if (rflags._reserved != 0 or rflags._reserved2 != 0 or rflags._reserved3 != 0 or rflags._reserved4 != 0) @panic("RFLAGS: Reserved bits must be zero");
+    if (rflags._reserved1 != 1) @panic("RFLAGS: Reserved bit 1 must be one");
+    if (entry_ctrl.ia32e_mode_guest and rflags.vm) @panic("RFLAGS: VM must be clear when IA-32e mode is enabled");
+    const intr_info = try vmread(vmcs.Ctrl.vmentry_interrupt_information_field);
+    if (((intr_info >> 31) & 1 != 0) and !rflags.ief) @panic("RFLAGS: IF must be set when valid bit in VM-entry interruption-information field is set.");
+
+    // Guest non-register state partial checks.
+    const activity_state = try vmcs.vmread(vmcs.Guest.activity_state);
+    if (activity_state != 0) @panic("Unsupported activity state.");
+    const intr_state = try vmcs.vmread(vmcs.Guest.interrupt_status);
+    if ((intr_state >> 5) != 0) @panic("Unsupported interruptability state.");
+}
+
+/// TODO: Size of temporary stack for VM-exit handler.
+const debug_temp_stack_size: usize = 4096;
+/// TODO: Temporary stack for VM-exit handler.
+var debug_temp_stack: [debug_temp_stack_size + 0x30]u8 align(0x10) = [_]u8{0} ** (debug_temp_stack_size + 0x30);
+
+/// TODO: temporary
+fn vmexitBootstrapHandler() callconv(.Naked) noreturn {
+    asm volatile (
+        \\call vmexitHandler
+    );
+}
+
+export fn vmexitHandler() noreturn {
+    log.debug("[VMEXIT handler]", .{});
+    const reason = getExitReason() catch unreachable;
+    log.debug("   VMEXIT reason: {?}", .{reason});
+
+    while (true)
+        am.hlt();
 }
 
 fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
@@ -197,12 +371,19 @@ fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
 // TODO: template
 pub fn launch() VmxError!void {
     // Launch VM.
+    // TODO: save current register state.
     try am.vmlaunch();
+    // TODO: restore register state.
 }
 
-/// Read error reason from the current logical processor's VMCS.
-pub fn getErrorReason() VmxError!VmxInstructionError {
-    return @enumFromInt(try vmcs.vmread(vmcs.ro_vminstruction_error));
+/// Get a instruction error number from VMCS.
+pub fn getInstError() VmxError!InstructionError {
+    return @enumFromInt(@as(u32, @truncate(try vmread(vmcs.Ro.vminstruction_error))));
+}
+
+/// Get a VM-exit reason from VMCS.
+pub fn getExitReason() VmxError!ExitInformation {
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_reason))));
 }
 
 fn debugPrintVmxonValidity() void {

@@ -102,7 +102,7 @@ pub const SegmentDescriptor = packed struct(u64) {
     /// Segment present.
     present: bool = true,
     limit_high: u4,
-    /// Available for use by system software. Not used by Zakuro-OS.
+    /// Available for use by system software.
     avl: u1 = 0,
     /// 64-bit code segment.
     /// If set to true, the code segment contains native 64-bit code.
@@ -147,19 +147,19 @@ pub const SegmentDescriptor = packed struct(u64) {
     }
 };
 
-const DescriptorType = enum(u1) {
+pub const DescriptorType = enum(u1) {
     /// System Descriptor.
     System = 0,
     /// Application Descriptor.
     CodeOrData = 1,
 };
 
-const Granularity = enum(u1) {
+pub const Granularity = enum(u1) {
     Byte = 0,
     KByte = 1,
 };
 
-const SegmentType = enum(u4) {
+pub const SegmentType = enum(u4) {
     // R: Read-Only
     // W: Write
     // A: Accessed

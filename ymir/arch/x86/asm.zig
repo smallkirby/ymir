@@ -120,12 +120,10 @@ pub inline fn loadCr3(cr3: u64) void {
 }
 
 pub inline fn readCr3() u64 {
-    var cr3: u64 = undefined;
-    asm volatile (
+    return asm volatile (
         \\mov %%cr3, %[cr3]
-        : [cr3] "=r" (cr3),
+        : [cr3] "=r" (-> u64),
     );
-    return cr3;
 }
 
 pub inline fn loadCr4(cr4: Cr4) void {
@@ -146,13 +144,11 @@ pub inline fn readCr4() Cr4 {
 }
 
 pub inline fn readEflags() FlagsRegister {
-    var eflags: u64 = undefined;
-    asm volatile (
+    return @bitCast(asm volatile (
         \\pushfq
         \\pop %[eflags]
-        : [eflags] "=r" (eflags),
-    );
-    return @bitCast(eflags);
+        : [eflags] "=r" (-> u64),
+    ));
 }
 
 pub inline fn writeEflags(eflags: FlagsRegister) void {
@@ -161,6 +157,89 @@ pub inline fn writeEflags(eflags: FlagsRegister) void {
         \\popfq
         :
         : [eflags] "r" (@as(u64, @bitCast(eflags))),
+    );
+}
+
+const Segment = enum {
+    cs,
+    ss,
+    ds,
+    es,
+    fs,
+    gs,
+    tr,
+    ldtr,
+};
+
+pub inline fn readSegSelector(segment: Segment) u16 {
+    return switch (segment) {
+        .cs => asm volatile ("mov %%cs, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .ss => asm volatile ("mov %%ss, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .ds => asm volatile ("mov %%ds, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .es => asm volatile ("mov %%es, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .fs => asm volatile ("mov %%fs, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .gs => asm volatile ("mov %%gs, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .tr => asm volatile ("str %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .ldtr => asm volatile ("sldt %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+    };
+}
+
+pub inline fn readSegLimit(selector: u32) u32 {
+    return asm volatile (
+        \\lsl %[selector], %[ret]
+        : [ret] "=r" (-> u32),
+        : [selector] "r" (selector),
+    );
+}
+
+const SgdtRet = packed struct {
+    limit: u16,
+    base: u64,
+};
+
+pub inline fn sgdt() SgdtRet {
+    var gdtr: SgdtRet = undefined;
+    asm volatile (
+        \\sgdt %[ret]
+        : [ret] "=m" (gdtr),
+    );
+    return gdtr;
+}
+
+const SidtRet = packed struct {
+    limit: u16,
+    base: u64,
+};
+
+pub inline fn sidt() SidtRet {
+    var idtr: SidtRet = undefined;
+    asm volatile (
+        \\sidt %[ret]
+        : [ret] "=m" (idtr),
+    );
+    return idtr;
+}
+
+inline fn readDr7() u64 {
+    return asm volatile (
+        \\mov %%dr7, %[dr7]
+        : [dr7] "=r" (-> u64),
     );
 }
 
@@ -358,6 +437,7 @@ pub fn relax() void {
     asm volatile ("rep; nop");
 }
 
+/// MSR addresses.
 pub const Msr = enum(u32) {
     /// IA32_FEATURE_CONTROL MSR.
     feature_control = 0x003A,
@@ -367,6 +447,8 @@ pub const Msr = enum(u32) {
     sysenter_esp = 0x175,
     /// IA32_SYSENTER_EIP MSR. SDM Vol.3A Table 2-2.
     sysenter_eip = 0x176,
+    /// IA32_PAT MSR.
+    pat = 0x277,
     /// IA32_DEBUGCTL MSR. SDM Vol.4 Table 2-2.
     debugctl = 0x01D9,
     /// IA32_VMX_BASIC MSR.
@@ -379,6 +461,8 @@ pub const Msr = enum(u32) {
     vmx_exit_ctls = 0x0483,
     /// IA32_VMX_ENTRY_CTLS MSR.
     vmx_entry_ctls = 0x0484,
+    /// IA32_VMX_MISC MSR.
+    vmx_misc = 0x0485,
     /// IA32_VMX_CR0_FIXED0 MSR.
     vmx_cr0_fixed0 = 0x0486,
     /// IA32_VMX_CR0_FIXED1 MSR.
@@ -397,6 +481,13 @@ pub const Msr = enum(u32) {
     vmx_true_exit_ctls = 0x048F,
     /// IA32_VMX_TRUE_ENTRY_CTLS MSR.
     vmx_true_entry_ctls = 0x0490,
+
+    /// IA32_FS_BASE MSR.
+    fs_base = 0xC0000100,
+    /// IA32_GS_BASE MSR.
+    gs_base = 0xC0000101,
+    /// IA32_EFER MSR.
+    efer = 0xC0000080,
 };
 
 /// IA32_FEATURE_CONTROL MSR.
@@ -428,6 +519,7 @@ pub const MsrFeatureControl = packed struct(u64) {
     _reserved4: u43,
 };
 
+/// IA32_VMX_BASIC MSR.
 pub const MsrVmxBasic = packed struct(u64) {
     /// VMCS revision identifier.
     vmcs_revision_id: u31,
@@ -443,19 +535,20 @@ pub const MsrVmxBasic = packed struct(u64) {
     _reserved2: u8,
 };
 
+/// EFLAGS register.
 pub const FlagsRegister = packed struct(u64) {
     /// Carry flag.
     cf: bool,
-    /// Reserved.
-    _reserved1: u1,
+    /// Reserved. Must be 1.
+    _reserved1: u1 = 1,
     /// Parity flag.
     pf: bool,
-    /// Reserved.
-    _reserved2: u1,
+    /// Reserved. Must be 0.
+    _reserved2: u1 = 0,
     /// Auxiliary carry flag.
     af: bool,
-    /// Reserved.
-    _reserved3: u1,
+    /// Reserved. Must be 0.
+    _reserved3: u1 = 0,
     /// Zero flag.
     zf: bool,
     /// Sign flag.
@@ -472,8 +565,8 @@ pub const FlagsRegister = packed struct(u64) {
     iopl: u2,
     /// Nested task flag.
     nt: bool,
-    /// Reserved.
-    md: bool,
+    /// Reserved. Must be 0.
+    md: u1 = 0,
     /// Resume flag.
     rf: bool,
     /// Virtual 8086 mode flag.
@@ -492,8 +585,8 @@ pub const FlagsRegister = packed struct(u64) {
     aes: bool,
     /// Alternate instruction set enabled.
     ai: bool,
-    /// Reserved.
-    _reserved: u32,
+    /// Reserved. Must be 0.
+    _reserved: u32 = 0,
 };
 
 /// CR0 register.
@@ -531,7 +624,7 @@ pub const Cr0 = packed struct(u64) {
 };
 
 /// CR2 register. It contains VA of the last page fault.
-pub const Cr2 = u64;
+pub const Cr2 = ymir.mem.Virt;
 
 /// CR4 register.
 pub const Cr4 = packed struct(u64) {
