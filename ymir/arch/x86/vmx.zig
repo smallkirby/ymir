@@ -25,6 +25,7 @@ pub fn vmxtry(rflags: u64) VmxError!void {
 }
 
 /// Virtual logical CPU.
+/// TODO: must be per-CPU variable. Currently, it only supports single CPU.
 pub const Vcpu = struct {
     const Self = @This();
 
@@ -32,6 +33,10 @@ pub const Vcpu = struct {
     vmxon_region: *VmxonRegion,
     /// VMCS region.
     vmcs_region: *VmcsRegion,
+    /// The first VM-entry has been done.
+    launch_done: bool = false,
+    /// Saved guest registers.
+    guest_regs: GuestRegisters = undefined,
 
     pub fn new() Self {
         return Self{
@@ -65,12 +70,116 @@ pub const Vcpu = struct {
         try setupGuestState();
     }
 
-    // TODO: template
-    pub fn launch(_: *Self) VmxError!void {
-        // Launch VM.
-        // TODO: save current register state.
-        try am.vmlaunch();
-        // TODO: restore register state.
+    // Enter VMX non-root operation.
+    pub fn vmentry(self: *Self) VmxError!void {
+        if (self.launch_done) {
+            @panic("VMRESUME not implemented yet");
+        } else {
+            self.launch_done = true;
+            self.asmVmEntry();
+        }
+
+        log.debug("[VM-EXIT]", .{});
+        log.debug("RAX: 0x{X:0>16}", .{self.guest_regs.rax});
+        log.debug("RBX: 0x{X:0>16}", .{self.guest_regs.rbx});
+        log.debug("R15: 0x{X:0>16}", .{self.guest_regs.r15});
+    }
+
+    /// VMLAUNCH or VMRESUME.
+    /// The function is designed to return to the caller as a normal function via asmVmExit().
+    fn asmVmEntry(self: *Self) void {
+        // Save callee saved registers.
+        asm volatile (
+            \\mov %%rsp, %%rbp
+            \\push %%r15
+            \\push %%r14
+            \\push %%r13
+            \\push %%r12
+            \\push %%rbx
+        );
+
+        // Push arguments and set host stack
+        asm volatile (
+            \\push %[self]
+            \\mov %%rsp, %%rdi
+            \\call setHostStack
+            :
+            : [self] "r" (self),
+        );
+
+        // TODO: Set guest registers here.
+
+        // VMLAUNCH
+        asm volatile (
+            \\vmlaunch
+            ::: "cc", "memory");
+    }
+
+    fn asmVmExit() callconv(.Naked) noreturn {
+        asm volatile (
+            \\push %%rax
+            \\movq 8(%%rsp), %%rax
+        );
+
+        // Save guest registers.
+        asm volatile (std.fmt.comptimePrint(
+                \\pop {[rax]}(%%rax)
+                \\add $8, %%rsp
+                \\mov %%rcx, {[rcx]}(%%rax)
+                \\mov %%rdx, {[rdx]}(%%rax)
+                \\mov %%rbx, {[rbx]}(%%rax)
+                \\mov %%rsi, {[rsi]}(%%rax)
+                \\mov %%rdi, {[rdi]}(%%rax)
+                \\mov %%rbp, {[rbp]}(%%rax)
+                \\mov %%r8, {[r8]}(%%rax)
+                \\mov %%r9, {[r9]}(%%rax)
+                \\mov %%r10, {[r10]}(%%rax)
+                \\mov %%r11, {[r11]}(%%rax)
+                \\mov %%r12, {[r12]}(%%rax)
+                \\mov %%r13, {[r13]}(%%rax)
+                \\mov %%r14, {[r14]}(%%rax)
+                \\mov %%r15, {[r15]}(%%rax)
+            ,
+                .{
+                    .rax = @offsetOf(GuestRegisters, "rax"),
+                    .rcx = @offsetOf(GuestRegisters, "rcx"),
+                    .rdx = @offsetOf(GuestRegisters, "rdx"),
+                    .rbx = @offsetOf(GuestRegisters, "rbx"),
+                    .rsi = @offsetOf(GuestRegisters, "rsi"),
+                    .rdi = @offsetOf(GuestRegisters, "rdi"),
+                    .rbp = @offsetOf(GuestRegisters, "rbp"),
+                    .r8 = @offsetOf(GuestRegisters, "r8"),
+                    .r9 = @offsetOf(GuestRegisters, "r9"),
+                    .r10 = @offsetOf(GuestRegisters, "r10"),
+                    .r11 = @offsetOf(GuestRegisters, "r11"),
+                    .r12 = @offsetOf(GuestRegisters, "r12"),
+                    .r13 = @offsetOf(GuestRegisters, "r13"),
+                    .r14 = @offsetOf(GuestRegisters, "r14"),
+                    .r15 = @offsetOf(GuestRegisters, "r15"),
+                },
+            ));
+
+        // Restore callee saved registers.
+        asm volatile (
+            \\pop %%rbx
+            \\pop %%r12
+            \\pop %%r13
+            \\pop %%r14
+            \\pop %%r15
+        );
+
+        // Epilogue.
+        // This function itself is naked, but asmVmEntry() has prologue.
+        // So we have to pop the pushed frame pointer here.
+        asm volatile (
+            \\pop %%rax
+            \\pop %%rbp
+        );
+
+        // Return to caller of asmVmEntry()
+        asm volatile (
+            \\ret
+        );
     }
 
     /// Exit VMX operation.
@@ -155,7 +264,10 @@ export fn guestDebugHandler() callconv(.Naked) noreturn {
     while (true)
         asm volatile (
             \\cli
-            \\nop
+            \\mov $0xDEADBEEF, %%rax
+            \\mov $0x12345678, %%rbx
+            \\mov $0xCAFEBABE, %%r15
+            \\hlt
         );
 }
 
@@ -219,7 +331,7 @@ fn setupHostState() VmxError!void {
     try vmwrite(vmcs.Host.cr4, am.readCr4());
 
     // General registers.
-    try vmwrite(vmcs.Host.rip, &vmexitBootstrapHandler);
+    try vmwrite(vmcs.Host.rip, &Vcpu.asmVmExit);
     try vmwrite(vmcs.Host.rsp, @intFromPtr(&debug_temp_stack) + debug_temp_stack_size);
 
     // Segment registers.
@@ -388,6 +500,12 @@ fn vmexitBootstrapHandler() callconv(.Naked) noreturn {
     );
 }
 
+/// Set host stack pointer.
+/// This function is called directly from assembly.
+export fn setHostStack(rsp: u64) callconv(.C) void {
+    vmcs.vmwrite(vmcs.Host.rsp, rsp) catch {};
+}
+
 export fn vmexitHandler() noreturn {
     log.debug("[VMEXIT handler]", .{});
     const reason = getExitReason() catch unreachable;
@@ -457,6 +575,24 @@ const VmcsRegion = packed struct {
         const ptr: [*]u8 = @ptrCast(self);
         page_allocator.free(ptr[0..4096]);
     }
+};
+
+const GuestRegisters = packed struct {
+    rax: u64,
+    rcx: u64,
+    rdx: u64,
+    rbx: u64,
+    rbp: u64,
+    rsi: u64,
+    rdi: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
 };
 
 test {

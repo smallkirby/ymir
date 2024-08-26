@@ -419,19 +419,6 @@ pub inline fn vmxoff() void {
         ::: "cc");
 }
 
-pub inline fn vmlaunch() VmxError!void {
-    var rflags: u64 = undefined;
-    asm volatile (
-        \\vmlaunch
-        \\pushf
-        \\popq %[rflags]
-        : [rflags] "=r" (rflags),
-        :
-        : "cc", "memory"
-    );
-    try vmxerr(rflags);
-}
-
 /// Pause the CPU for a short period of time.
 pub fn relax() void {
     asm volatile ("rep; nop");
