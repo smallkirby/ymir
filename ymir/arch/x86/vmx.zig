@@ -24,6 +24,61 @@ pub fn vmxtry(rflags: u64) VmxError!void {
     return if (flags.cf) VmxError.FailureInvalidVmcsPointer else if (flags.zf) VmxError.FailureStatusAvailable;
 }
 
+/// Virtual logical CPU.
+pub const Vcpu = struct {
+    const Self = @This();
+
+    /// VMXON region.
+    vmxon_region: *VmxonRegion,
+    /// VMCS region.
+    vmcs_region: *VmcsRegion,
+
+    pub fn new() Self {
+        return Self{
+            .vmxon_region = undefined,
+            .vmcs_region = undefined,
+        };
+    }
+
+    /// Enter VMX root operation and allocate VMCS region for this LP.
+    pub fn init(self: *Self, page_allocator: Allocator) VmxError!void {
+        // Enter VMX root operation.
+        self.vmxon_region = try vmxon(page_allocator);
+
+        // Set up VMCS region.
+        const vmcs_region = try VmcsRegion.new(page_allocator);
+        vmcs_region.vmcs_revision_id = getVmcsRevisionId();
+        self.vmcs_region = vmcs_region;
+    }
+
+    /// Set up VMCS for a logical processor.
+    /// TODO: This is a temporary implementation.
+    pub fn setupVmcs(self: *Self) VmxError!void {
+        // Reset VMCS.
+        try resetVmcs(self.vmcs_region);
+
+        // Init fields.
+        try setupExecCtrls();
+        try setupExitCtrls();
+        try setupEntryCtrls();
+        try setupHostState();
+        try setupGuestState();
+    }
+
+    // TODO: template
+    pub fn launch(_: *Self) VmxError!void {
+        // Launch VM.
+        // TODO: save current register state.
+        try am.vmlaunch();
+        // TODO: restore register state.
+    }
+
+    /// Exit VMX operation.
+    pub fn vmxoff(_: *Self) void {
+        am.vmxoff();
+    }
+};
+
 /// Enable VMX operations.
 pub fn enableVmx() void {
     // Adjust control registers.
@@ -69,22 +124,22 @@ fn getVmcsRevisionId() u31 {
 }
 
 /// Puts the logical processor in VMX operation with no VMCS loaded.
-pub fn vmxon(page_allocator: Allocator) VmxError!void {
+fn vmxon(page_allocator: Allocator) VmxError!*VmxonRegion {
     // Set up VMXON region.
-    // TODO: should return allocater VMXON region.
     const vmxon_region = try VmxonRegion.new(page_allocator);
     vmxon_region.vmcs_revision_id = getVmcsRevisionId();
     log.debug("VMCS revision ID: 0x{X:0>8}", .{vmxon_region.vmcs_revision_id});
 
     const vmxon_phys = mem.virt2phys(@intFromPtr(vmxon_region));
     log.debug("VMXON region physical address: 0x{X:0>16}", .{vmxon_phys});
-    debugPrintVmxonValidity();
 
-    try am.vmxon(vmxon_phys);
+    am.vmxon(vmxon_phys) catch |err| {
+        vmxon_region.deinit(page_allocator);
+        return err;
+    };
+
+    return vmxon_region;
 }
-
-/// Exit VMX operation.
-pub const vmxoff = am.vmxoff;
 
 /// Clear and reset VMCS.
 /// After this operation, the VMCS becomes active and current logical processor.
@@ -93,25 +148,6 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
     try am.vmclear(mem.virt2phys(@intFromPtr(vmcs_region)));
     // Load and activate the VMCS.
     try am.vmptrld(mem.virt2phys(@intFromPtr(vmcs_region)));
-}
-
-/// Set up VMCS for a logical processor.
-/// TODO: This is a temporary implementation.
-pub fn setupVmcs(page_allocator: Allocator) VmxError!void {
-    // Init VMCS structure.
-    // TODO: should return allocater VMCS region.
-    const vmcs_region = try VmcsRegion.new(page_allocator);
-    vmcs_region.vmcs_revision_id = getVmcsRevisionId();
-
-    // Reset VMCS.
-    try resetVmcs(vmcs_region);
-
-    // Init fields.
-    try setupExecCtrls();
-    try setupExitCtrls();
-    try setupEntryCtrls();
-    try setupHostState();
-    try setupGuestState();
 }
 
 /// TODO: temporary
@@ -368,14 +404,6 @@ fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
     return @bitCast(ret);
 }
 
-// TODO: template
-pub fn launch() VmxError!void {
-    // Launch VM.
-    // TODO: save current register state.
-    try am.vmlaunch();
-    // TODO: restore register state.
-}
-
 /// Get a instruction error number from VMCS.
 pub fn getInstError() VmxError!InstructionError {
     return @enumFromInt(@as(u32, @truncate(try vmread(vmcs.Ro.vminstruction_error))));
@@ -386,44 +414,7 @@ pub fn getExitReason() VmxError!ExitInformation {
     return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_reason))));
 }
 
-fn debugPrintVmxonValidity() void {
-    log.debug("VMX Validity", .{});
-
-    const cpuid_feature = ymir.arch.getFeatureInformation();
-    if (cpuid_feature.ecx.vmx) {
-        log.debug("\t\tVMX is supported.", .{});
-    } else @panic("\t\tVMX in CPUID not set");
-
-    const feature_control = am.readMsrFeatureControl();
-    if (feature_control.vmx_outside_smx) {
-        log.debug("\t\tVMX outside SMX is enabled.", .{});
-    } else @panic("\t\tVMX outside SMX is not enabled");
-    if (feature_control.lock) {
-        log.debug("\t\tIA32_FEATURE_CONTROL is locked.", .{});
-    } else @panic("\t\tIA32_FEATURE_CONTROL is not locked");
-
-    const vmx_basic = am.readMsrVmxBasic();
-    log.debug("\t\tVMXON region size: 0x{X}", .{vmx_basic.vmxon_region_size});
-
-    const vmx_cr0_fixed0: u32 = @truncate(am.readMsr(.vmx_cr0_fixed0));
-    const vmx_cr0_fixed1: u32 = @truncate(am.readMsr(.vmx_cr0_fixed1));
-    const vmx_cr4_fixed0: u32 = @truncate(am.readMsr(.vmx_cr4_fixed0));
-    const vmx_cr4_fixed1: u32 = @truncate(am.readMsr(.vmx_cr4_fixed1));
-    const cr0 = am.readCr0();
-    const cr4 = am.readCr4();
-    log.debug("\t\tCR0    : {b:0>32}", .{@as(u64, @bitCast(cr0))});
-    log.debug("\t\tMask 0 : {b:0>32}", .{vmx_cr0_fixed1});
-    log.debug("\t\tMask 1 : {b:0>32}", .{vmx_cr0_fixed0});
-    log.debug("\t\tCR4    : {b:0>32}", .{@as(u64, @bitCast(cr4))});
-    log.debug("\t\tMask 0 : {b:0>32}", .{vmx_cr4_fixed1});
-    log.debug("\t\tMask 1 : {b:0>32}", .{vmx_cr4_fixed0});
-
-    if (cr4.vmxe) {
-        log.debug("\t\tVMXE bit is set.", .{});
-    } else @panic("\t\tVMXE bit is not set");
-}
-
-pub const VmxonRegion = packed struct {
+const VmxonRegion = packed struct {
     vmcs_revision_id: u31,
     zero: u1 = 0,
 
@@ -435,9 +426,14 @@ pub const VmxonRegion = packed struct {
         @memset(page, 0);
         return @alignCast(@ptrCast(page.ptr));
     }
+
+    pub fn deinit(self: *VmxonRegion, page_allocator: Allocator) void {
+        const ptr: [*]u8 = @ptrCast(self);
+        page_allocator.free(ptr[0..4096]);
+    }
 };
 
-pub const VmcsRegion = packed struct {
+const VmcsRegion = packed struct {
     /// VMCS revision identifier.
     vmcs_revision_id: u31,
     /// Must be zero.
@@ -455,6 +451,11 @@ pub const VmcsRegion = packed struct {
         }
         @memset(page, 0);
         return @alignCast(@ptrCast(page.ptr));
+    }
+
+    pub fn deinit(self: *VmcsRegion, page_allocator: Allocator) void {
+        const ptr: [*]u8 = @ptrCast(self);
+        page_allocator.free(ptr[0..4096]);
     }
 };
 

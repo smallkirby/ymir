@@ -11,6 +11,7 @@ const idefs = @import("interrupts.zig");
 const serial = ymir.serial;
 const klog = ymir.klog;
 const arch = ymir.arch;
+const vmx = ymir.vmx;
 const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
 
 pub const panic = @import("panic.zig").panic_fn;
@@ -120,21 +121,22 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     if (!feature.ecx.vmx) @panic("VMX is not supported.");
 
     // Enable VMX.
-    arch.vmx.enableVmx();
+    vmx.enableVmx();
     log.info("Enabled VMX.", .{});
 
     // Enter VMX root operation.
-    try arch.vmx.vmxon(ymir.mem.page_allocator);
+    var vcpu = vmx.Vcpu.new();
+    try vcpu.init(ymir.mem.page_allocator);
     log.info("Entered VMX root operation.", .{});
 
     // Setup VMCS
-    try arch.vmx.setupVmcs(ymir.mem.page_allocator);
+    try vcpu.setupVmcs();
 
     // Launch
     log.info("Entering VMX non-root operation...", .{});
-    arch.vmx.launch() catch |err| switch (err) {
+    vcpu.launch() catch |err| switch (err) {
         error.FailureStatusAvailable => {
-            log.err("VMLAUNCH failed: error={?}", .{try arch.vmx.getInstError()});
+            log.err("VMLAUNCH failed: error={?}", .{try vmx.getInstError()});
             return err;
         },
         else => return err,
@@ -142,7 +144,7 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
 
     // Exit VMX root operation.
     log.info("Exiting VMX root operation...", .{});
-    arch.vmx.vmxoff();
+    vcpu.vmxoff();
 
     // EOL
     log.info("Reached EOL.", .{});

@@ -5,7 +5,6 @@ pub const intr = @import("interrupt.zig");
 pub const page = @import("page.zig");
 pub const pic = @import("pic.zig");
 pub const serial = @import("serial.zig");
-pub const vmx = @import("vmx.zig");
 
 const cpuid = @import("cpuid.zig");
 const am = @import("asm.zig");
