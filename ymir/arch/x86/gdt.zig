@@ -2,6 +2,7 @@ const am = @import("asm.zig");
 
 /// Maximum number of GDT entries.
 const max_num_gdt = 0x10;
+
 /// Global Descriptor Table.
 var gdt: [max_num_gdt]SegmentDescriptor align(16) = [_]SegmentDescriptor{
     SegmentDescriptor.new_null(),
@@ -22,9 +23,12 @@ pub const null_desc_index: u16 = 0x00;
 pub const kernel_ds_index: u16 = 0x01;
 /// Index of the kernel code segment.
 pub const kernel_cs_index: u16 = 0x02;
+/// Index of the kernel TSS.
+pub const kernel_tss_index: u16 = 0x03;
 
 /// Initialize the GDT.
 pub fn init() void {
+    // Init GDT.
     gdtr.base = &gdt;
 
     gdt[null_desc_index] = SegmentDescriptor.new_null();
@@ -42,6 +46,12 @@ pub fn init() void {
         0,
         .KByte,
     );
+    gdt[kernel_tss_index] = SegmentDescriptor.newTss(
+        0,
+        0,
+        0,
+        .KByte,
+    );
 
     am.lgdt(@intFromPtr(&gdtr));
 
@@ -50,6 +60,7 @@ pub fn init() void {
     // To flush the changes, we need to set segment registers.
     loadKernelDs();
     loadKernelCs();
+    loadKernelTss();
 }
 
 /// Load the kernel data segment selector.
@@ -84,6 +95,17 @@ fn loadKernelCs() void {
         \\
         :
         : [kernel_cs] "n" (@as(u32, kernel_cs_index << 3)),
+    );
+}
+
+/// Load the kernel TSS selector to TR.
+/// Not used in Ymir.
+fn loadKernelTss() void {
+    asm volatile (
+        \\mov %[kernel_tss], %%di
+        \\ltr %%di
+        :
+        : [kernel_tss] "n" (@as(u32, kernel_tss_index << 3)),
     );
 }
 
@@ -145,10 +167,35 @@ pub const SegmentDescriptor = packed struct(u64) {
             .base_high = @truncate(base >> 24),
         };
     }
+
+    /// Create a new TSS descriptor.
+    pub fn newTss(
+        base: u32,
+        limit: u20,
+        dpl: u2,
+        granularity: Granularity,
+    ) SegmentDescriptor {
+        const segment_type: SegmentType = @enumFromInt(9); // TSS64 not busy
+        return SegmentDescriptor{
+            .limit_low = @truncate(limit),
+            .base_low = @truncate(base),
+            .segment_type = segment_type,
+            .desc_type = .System,
+            .dpl = dpl,
+            .present = true,
+            .limit_high = @truncate(limit >> 16),
+            .avl = 0,
+            .long = false,
+            .db = 0,
+            .granularity = granularity,
+            .base_high = @truncate(base >> 24),
+        };
+    }
 };
 
 pub const DescriptorType = enum(u1) {
     /// System Descriptor.
+    /// Must be System for TSS.
     System = 0,
     /// Application Descriptor.
     CodeOrData = 1,

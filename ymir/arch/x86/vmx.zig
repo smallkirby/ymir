@@ -83,6 +83,7 @@ pub const Vcpu = struct {
         log.debug("RAX: 0x{X:0>16}", .{self.guest_regs.rax});
         log.debug("RBX: 0x{X:0>16}", .{self.guest_regs.rbx});
         log.debug("R15: 0x{X:0>16}", .{self.guest_regs.r15});
+        log.debug("REASON: {?}", .{try getExitReason()});
     }
 
     /// VMLAUNCH or VMRESUME.
@@ -341,10 +342,10 @@ fn setupHostState() VmxError!void {
     try vmwrite(vmcs.Host.es_sel, am.readSegSelector(.es));
     try vmwrite(vmcs.Host.fs_sel, am.readSegSelector(.fs));
     try vmwrite(vmcs.Host.gs_sel, am.readSegSelector(.gs));
-    try vmwrite(vmcs.Host.tr_sel, 1 << 3); // TODO: Host TR selector is now 0. We have to set it up first.
+    try vmwrite(vmcs.Host.tr_sel, am.readSegSelector(.tr));
     try vmwrite(vmcs.Host.gs_base, am.readMsr(.gs_base));
     try vmwrite(vmcs.Host.fs_base, am.readMsr(.fs_base));
-    try vmwrite(vmcs.Host.tr_base, 0); // TODO
+    try vmwrite(vmcs.Host.tr_base, 0); // Not used in Ymir.
     try vmwrite(vmcs.Host.gdtr_base, am.sgdt().base);
     try vmwrite(vmcs.Host.idtr_base, am.sidt().base);
 
@@ -382,8 +383,8 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.es_limit, @as(u64, std.math.maxInt(u32)));
         try vmwrite(vmcs.Guest.fs_limit, @as(u64, std.math.maxInt(u32)));
         try vmwrite(vmcs.Guest.gs_limit, @as(u64, std.math.maxInt(u32)));
-        try vmwrite(vmcs.Guest.tr_limit, @as(u64, std.math.maxInt(u16))); // TODO
-        try vmwrite(vmcs.Guest.ldtr_limit, @as(u64, std.math.maxInt(u16))); // TODO
+        try vmwrite(vmcs.Guest.tr_limit, 0);
+        try vmwrite(vmcs.Guest.ldtr_limit, 0);
         try vmwrite(vmcs.Guest.idtr_limit, am.sidt().limit);
         try vmwrite(vmcs.Guest.gdtr_limit, am.sgdt().limit);
 
@@ -410,14 +411,16 @@ fn setupGuestState() VmxError!void {
             .g = .Byte,
             .long = false,
             .db = 0,
+            .unusable = false,
         };
         const ldtr_right = vmcs.SegmentRights{
-            .type = .DataRW, // XXX: DataRWE?
+            .type = .DataRW,
             .s = .System,
             .dpl = 0,
             .g = .Byte,
             .long = false,
             .db = 0,
+            .unusable = true,
         };
         try vmwrite(vmcs.Guest.cs_rights, cs_right);
         try vmwrite(vmcs.Guest.ss_rights, ds_right);
@@ -435,7 +438,7 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.fs_sel, am.readSegSelector(.fs));
         try vmwrite(vmcs.Guest.gs_sel, am.readSegSelector(.gs));
         try vmwrite(vmcs.Guest.tr_sel, am.readSegSelector(.tr));
-        try vmwrite(vmcs.Guest.ldtr_sel, am.readSegSelector(.ldtr));
+        try vmwrite(vmcs.Guest.ldtr_sel, am.readSegSelector(.ldtr)); // Not used in Ymir.
 
         try vmwrite(vmcs.Guest.fs_base, am.readMsr(.fs_base));
         try vmwrite(vmcs.Guest.gs_base, am.readMsr(.gs_base));
