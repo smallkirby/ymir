@@ -18,6 +18,11 @@ pub const VmxError = vmx_error.VmxError;
 pub const ExitInformation = vmx_error.ExitInformation;
 pub const InstructionError = vmx_error.InstructionError;
 
+/// Size of VM-exit trampoline stack.
+const vmexit_stack_size: usize = 4096;
+/// VM-exit trampoline stack.
+var vmexit_stack: [vmexit_stack_size + 0x30]u8 align(0x10) = [_]u8{0} ** (vmexit_stack_size + 0x30);
+
 /// Read RFLAGS and checks if a VMX instruction has failed.
 pub fn vmxtry(rflags: u64) VmxError!void {
     const flags: am.FlagsRegister = @bitCast(rflags);
@@ -407,7 +412,7 @@ fn setupHostState() VmxError!void {
 
     // General registers.
     try vmwrite(vmcs.Host.rip, &Vcpu.asmVmExit);
-    try vmwrite(vmcs.Host.rsp, @intFromPtr(&debug_temp_stack) + debug_temp_stack_size);
+    try vmwrite(vmcs.Host.rsp, @intFromPtr(&vmexit_stack) + vmexit_stack_size);
 
     // Segment registers.
     try vmwrite(vmcs.Host.cs_sel, am.readSegSelector(.cs));
@@ -563,18 +568,6 @@ fn setupGuestState() VmxError!void {
     if (activity_state != 0) @panic("Unsupported activity state.");
     const intr_state = try vmcs.vmread(vmcs.Guest.interrupt_status);
     if ((intr_state >> 5) != 0) @panic("Unsupported interruptability state.");
-}
-
-/// TODO: Size of temporary stack for VM-exit handler.
-const debug_temp_stack_size: usize = 4096;
-/// TODO: Temporary stack for VM-exit handler.
-var debug_temp_stack: [debug_temp_stack_size + 0x30]u8 align(0x10) = [_]u8{0} ** (debug_temp_stack_size + 0x30);
-
-/// TODO: temporary
-fn vmexitBootstrapHandler() callconv(.Naked) noreturn {
-    asm volatile (
-        \\call vmexitHandler
-    );
 }
 
 /// Set host stack pointer.
