@@ -490,7 +490,6 @@ fn setupGuestState() VmxError!void {
             .g = .Byte,
             .long = false,
             .db = 0,
-            .unusable = false,
         };
         const ldtr_right = vmcs.SegmentRights{
             .type = .DataRW,
@@ -499,7 +498,6 @@ fn setupGuestState() VmxError!void {
             .g = .Byte,
             .long = false,
             .db = 0,
-            .unusable = true,
         };
         try vmwrite(vmcs.Guest.cs_rights, cs_right);
         try vmwrite(vmcs.Guest.ss_rights, ds_right);
