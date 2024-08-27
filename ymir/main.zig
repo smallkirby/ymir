@@ -134,7 +134,7 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
 
     // Launch
     log.info("Entering VMX non-root operation...", .{});
-    vcpu.vmentry() catch |err| switch (err) {
+    vcpu.loop() catch |err| switch (err) {
         error.FailureStatusAvailable => {
             log.err("VMLAUNCH failed: error={?}", .{try vmx.getInstError()});
             return err;

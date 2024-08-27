@@ -70,13 +70,19 @@ pub const Vcpu = struct {
         try setupGuestState();
     }
 
+    // Start executing vCPU.
+    pub fn loop(self: *Self) VmxError!void {
+        while (true) {
+            try self.vmentry();
+        }
+    }
+
     // Enter VMX non-root operation.
-    pub fn vmentry(self: *Self) VmxError!void {
-        if (self.launch_done) {
-            @panic("VMRESUME not implemented yet");
-        } else {
+    fn vmentry(self: *Self) VmxError!void {
+        self.asmVmEntry();
+
+        if (!self.launch_done) {
             self.launch_done = true;
-            self.asmVmEntry();
         }
 
         log.debug("[VM-EXIT]", .{});
@@ -88,10 +94,14 @@ pub const Vcpu = struct {
 
     /// VMLAUNCH or VMRESUME.
     /// The function is designed to return to the caller as a normal function via asmVmExit().
-    fn asmVmEntry(self: *Self) void {
+    fn asmVmEntry(self: *Self) callconv(.SysV) void {
+        // Prologue pushes rbp and rax here.
+        //  push %%rbp
+        //  mov %%rsp, %%rbp
+        //  sub $0x10, %%rsp
+
         // Save callee saved registers.
         asm volatile (
-            \\mov %%rsp, %%rbp
             \\push %%r15
             \\push %%r14
             \\push %%r13
@@ -99,24 +109,81 @@ pub const Vcpu = struct {
             \\push %%rbx
         );
 
-        // Push arguments and set host stack
+        // Save a pointer to guest registers
         asm volatile (
-            \\push %[self]
-            \\mov %%rsp, %%rdi
-            \\call setHostStack
+            \\push %[guest_regs]
             :
-            : [self] "r" (self),
+            : [guest_regs] "{rcx}" (&self.guest_regs),
         );
 
-        // TODO: Set guest registers here.
-
-        // VMLAUNCH
+        // Set host stack
         asm volatile (
-            \\vmlaunch
+            \\push %%rdi
+            \\lea 8(%%rsp), %%rdi
+            \\call setHostStack
+            \\pop %%rdi
+        );
+
+        // Determine VMLAUNCH or VMRESUME.
+        asm volatile (
+            \\testb $1, %[launch_done]
+            :
+            : [launch_done] "{rdx}" (self.launch_done),
+        );
+
+        // Restore guest registers.
+        asm volatile (std.fmt.comptimePrint(
+                \\mov %%rdi, %%rax
+                \\mov {[rcx]}(%%rax), %%rcx
+                \\mov {[rdx]}(%%rax), %%rdx
+                \\mov {[rbx]}(%%rax), %%rbx
+                \\mov {[rsi]}(%%rax), %%rsi
+                \\mov {[rdi]}(%%rax), %%rdi
+                \\mov {[rbp]}(%%rax), %%rbp
+                \\mov {[r8]}(%%rax), %%r8
+                \\mov {[r9]}(%%rax), %%r9
+                \\mov {[r10]}(%%rax), %%r10
+                \\mov {[r11]}(%%rax), %%r11
+                \\mov {[r12]}(%%rax), %%r12
+                \\mov {[r13]}(%%rax), %%r13
+                \\mov {[r14]}(%%rax), %%r14
+                \\mov {[r15]}(%%rax), %%r15
+                \\mov {[rax]}(%%rax), %%rax
+            , .{
+                .rax = @offsetOf(GuestRegisters, "rax"),
+                .rcx = @offsetOf(GuestRegisters, "rcx"),
+                .rdx = @offsetOf(GuestRegisters, "rdx"),
+                .rbx = @offsetOf(GuestRegisters, "rbx"),
+                .rsi = @offsetOf(GuestRegisters, "rsi"),
+                .rdi = @offsetOf(GuestRegisters, "rdi"),
+                .rbp = @offsetOf(GuestRegisters, "rbp"),
+                .r8 = @offsetOf(GuestRegisters, "r8"),
+                .r9 = @offsetOf(GuestRegisters, "r9"),
+                .r10 = @offsetOf(GuestRegisters, "r10"),
+                .r11 = @offsetOf(GuestRegisters, "r11"),
+                .r12 = @offsetOf(GuestRegisters, "r12"),
+                .r13 = @offsetOf(GuestRegisters, "r13"),
+                .r14 = @offsetOf(GuestRegisters, "r14"),
+                .r15 = @offsetOf(GuestRegisters, "r15"),
+            }));
+
+        // VMLAUNCH or VMRESUME.
+        asm volatile (
+            \\jz asmVmLaunch
+            \\jmp asmVmResume
             ::: "cc", "memory");
     }
 
+    export fn asmVmResume() callconv(.Naked) noreturn {
+        asm volatile ("vmresume");
+    }
+
+    export fn asmVmLaunch() callconv(.Naked) noreturn {
+        asm volatile ("vmlaunch");
+    }
+
     fn asmVmExit() callconv(.Naked) noreturn {
+        // Save guest RAX, get &guest_regs
         asm volatile (
             \\push %%rax
             \\movq 8(%%rsp), %%rax
@@ -124,8 +191,12 @@ pub const Vcpu = struct {
 
         // Save guest registers.
         asm volatile (std.fmt.comptimePrint(
+                \\
+                // Save pushed RAX.
                 \\pop {[rax]}(%%rax)
-                \\add $8, %%rsp
+                // Discard pushed &guest_regs.
+                \\add $0x8, %%rsp
+                // Save guest registers.
                 \\mov %%rcx, {[rcx]}(%%rax)
                 \\mov %%rdx, {[rdx]}(%%rax)
                 \\mov %%rbx, {[rbx]}(%%rax)
@@ -173,7 +244,10 @@ pub const Vcpu = struct {
         // This function itself is naked, but asmVmEntry() has prologue.
         // So we have to pop the pushed frame pointer here.
         asm volatile (
-            \\pop %%rax
+            \\
+            // Discard stack frame of asmVmEntry()
+            \\add $0x10, %%rsp
+            // Pop saved rbp
             \\pop %%rbp
         );
 
