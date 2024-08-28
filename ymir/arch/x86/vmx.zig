@@ -7,8 +7,10 @@ const mem = ymir.mem;
 const Phys = mem.Phys;
 
 const am = @import("asm.zig");
+const serial = @import("serial.zig");
 const vmcs = @import("vmx/vmcs.zig");
 const regs = @import("vmx/regs.zig");
+const ext = @import("vmx/exit.zig");
 
 const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
@@ -79,6 +81,7 @@ pub const Vcpu = struct {
     pub fn loop(self: *Self) VmxError!void {
         while (true) {
             try self.vmentry();
+            try self.handleExit(try getExitReason());
         }
     }
 
@@ -89,12 +92,22 @@ pub const Vcpu = struct {
         if (!self.launch_done) {
             self.launch_done = true;
         }
+    }
 
-        log.debug("[VM-EXIT]", .{});
-        log.debug("RAX: 0x{X:0>16}", .{self.guest_regs.rax});
-        log.debug("RBX: 0x{X:0>16}", .{self.guest_regs.rbx});
-        log.debug("R15: 0x{X:0>16}", .{self.guest_regs.r15});
-        log.debug("REASON: {?}", .{try getExitReason()});
+    /// Handle the VM-exit.
+    fn handleExit(_: *Self, exit_info: ExitInformation) VmxError!void {
+        switch (exit_info.basic_reason) {
+            else => {
+                log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
+                @panic("Aborting Ymir...");
+            },
+        }
+    }
+
+    /// Increment RIP by the length of the current instruction.
+    fn stepNextInst(_: *Self) VmxError!void {
+        const rip = try vmread(vmcs.Guest.rip);
+        try vmwrite(vmcs.Guest.rip, rip + try vmread(vmcs.Ro.vmexit_instruction_length));
     }
 
     /// VMLAUNCH or VMRESUME.
@@ -339,16 +352,22 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
     try am.vmptrld(mem.virt2phys(@intFromPtr(vmcs_region)));
 }
 
+/// TODO: temporal: Size of guest stack.
+const guest_stack_size: usize = 4096;
+/// TODO: temporal: Guest stack.
+var guest_stack: [guest_stack_size + 0x30]u8 align(0x10) = [_]u8{0} ** (guest_stack_size + 0x30);
+
 /// TODO: temporary
 export fn guestDebugHandler() callconv(.Naked) noreturn {
-    while (true)
-        asm volatile (
-            \\cli
-            \\mov $0xDEADBEEF, %%rax
-            \\mov $0x12345678, %%rbx
-            \\mov $0xCAFEBABE, %%r15
-            \\hlt
-        );
+    asm volatile (
+        \\call guestDebugHandler2
+    );
+
+    while (true) am.hlt();
+}
+
+export fn guestDebugHandler2() void {
+    log.debug("THIS IS GUEST!", .{});
 }
 
 /// Set up VM-Execution control fields.
@@ -364,8 +383,7 @@ fn setupExecCtrls() VmxError!void {
     ).load();
 
     // Primary Processor-based VM-Execution control.
-    var ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
-    ppb_exec_ctrl.hlt = true; // exit on halt
+    const ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
@@ -454,7 +472,7 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.tr_base, 0);
         try vmwrite(vmcs.Guest.gdtr_base, am.sgdt().base);
         try vmwrite(vmcs.Guest.idtr_base, am.sidt().base);
-        try vmwrite(vmcs.Guest.ldtr_base, 0);
+        try vmwrite(vmcs.Guest.ldtr_base, 0xDEAD00); // Marker to indicate the guest.
 
         try vmwrite(vmcs.Guest.cs_limit, @as(u64, std.math.maxInt(u32)));
         try vmwrite(vmcs.Guest.ss_limit, @as(u64, std.math.maxInt(u32)));
@@ -523,7 +541,7 @@ fn setupGuestState() VmxError!void {
 
     // General registers.
     try vmwrite(vmcs.Guest.rip, @intFromPtr(&guestDebugHandler));
-    try vmwrite(vmcs.Guest.rsp, 0xDEAD0000); // TODO
+    try vmwrite(vmcs.Guest.rsp, @intFromPtr(&guest_stack));
     try vmwrite(vmcs.Guest.rflags, am.readEflags());
 
     // MSR

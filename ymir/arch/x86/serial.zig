@@ -92,6 +92,23 @@ pub fn enableInterrupt(port: Ports) void {
     am.outb(0b0000_0001, p + UartOffset.IER); // Receive data available interrupt
 }
 
+/// Check if the given port is holding a transmitter buffer of any ports.
+pub fn isTxHoldingReg(port: u16) bool {
+    const base = port - UartOffset.LSR;
+    inline for (@typeInfo(Ports).Enum.fields) |field| {
+        if (field.value == base) return true;
+    }
+    return false;
+}
+
+/// Check if the given port is any of serial ports.
+pub fn isSerialPort(port: u16) bool {
+    inline for (@typeInfo(Ports).Enum.fields) |field| {
+        if (field.value == port) return true;
+    }
+    return false;
+}
+
 fn writeByte(byte: u8, port: Ports) void {
     // wait until the transmitter holding buffer is empty
     while (am.inb(@intFromEnum(port) + UartOffset.LSR) & 0b0010_0000 == 0) {
