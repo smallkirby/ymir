@@ -11,6 +11,7 @@ const serial = @import("serial.zig");
 const vmcs = @import("vmx/vmcs.zig");
 const regs = @import("vmx/regs.zig");
 const ext = @import("vmx/exit.zig");
+const ept = @import("vmx/ept.zig");
 
 const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
@@ -44,6 +45,8 @@ pub const Vcpu = struct {
     launch_done: bool = false,
     /// Saved guest registers.
     guest_regs: GuestRegisters = undefined,
+    /// EPT pointer.
+    eptp: ept.Eptp = undefined,
 
     pub fn new() Self {
         return Self{
@@ -77,20 +80,48 @@ pub const Vcpu = struct {
         try setupGuestState();
     }
 
-    // Start executing vCPU.
+    /// Start executing vCPU.
     pub fn loop(self: *Self) VmxError!void {
         while (true) {
-            try self.vmentry();
+            self.vmentry() catch |err| {
+                log.err("VM-entry failed: {?}", .{err});
+                if (err == VmxError.FailureStatusAvailable) {
+                    const inst_err = getInstError() catch unreachable;
+                    log.err("VM Instruction error: {?}", .{inst_err});
+                }
+                @panic("Aborting Ymir...");
+            };
             try self.handleExit(try getExitReason());
         }
     }
 
+    /// TODO
+    pub fn initGuestPage(self: *Self, page_allocator: Allocator) !void {
+        const lv4tbl = try ept.initEpt(
+            0,
+            0,
+            (0x400 << 9) * 0x200,
+            page_allocator,
+        ); // TODO
+        const eptp = ept.Eptp.new(lv4tbl);
+        self.eptp = eptp;
+
+        try vmwrite(vmcs.Ctrl.eptp, eptp);
+    }
+
     // Enter VMX non-root operation.
     fn vmentry(self: *Self) VmxError!void {
-        self.asmVmEntry();
+        const success = self.asmVmEntry() == 0;
 
-        if (!self.launch_done) {
+        if (!self.launch_done and success) {
             self.launch_done = true;
+        }
+
+        if (success) {
+            return;
+        } else {
+            const inst_err = vmcs.vmread(vmcs.Ro.vminstruction_error) catch unreachable;
+            return if (inst_err != 0) VmxError.FailureStatusAvailable else VmxError.FailureInvalidVmcsPointer;
         }
     }
 
@@ -112,7 +143,8 @@ pub const Vcpu = struct {
 
     /// VMLAUNCH or VMRESUME.
     /// The function is designed to return to the caller as a normal function via asmVmExit().
-    fn asmVmEntry(self: *Self) callconv(.SysV) void {
+    /// Returns 0 if succeeded, 1 if failed.
+    fn asmVmEntry(self: *Self) callconv(.SysV) u8 {
         // Prologue pushes rbp and rax here.
         //  push %%rbp
         //  mov %%rsp, %%rbp
@@ -187,17 +219,45 @@ pub const Vcpu = struct {
 
         // VMLAUNCH or VMRESUME.
         asm volatile (
-            \\jz asmVmLaunch
-            \\jmp asmVmResume
+            \\jz .L_vmlaunch
+            \\vmresume
+            \\.L_vmlaunch:
+            \\vmlaunch
             ::: "cc", "memory");
-    }
 
-    export fn asmVmResume() callconv(.Naked) noreturn {
-        asm volatile ("vmresume");
-    }
+        // Failed to launch.
 
-    export fn asmVmLaunch() callconv(.Naked) noreturn {
-        asm volatile ("vmlaunch");
+        // Set return value to 1.
+        asm volatile (
+            \\mov $1, %%al
+        );
+
+        // Restore callee saved registers.
+        asm volatile (
+            \\add $0x8, %%rsp
+            \\pop %%rbx
+            \\pop %%r12
+            \\pop %%r13
+            \\pop %%r14
+            \\pop %%r15
+        );
+
+        // Epilogue.
+        asm volatile (
+            \\
+            // Discard stack frame of asmVmEntry()
+            \\add $0x10, %%rsp
+            // Pop saved rbp
+            \\pop %%rbp
+        );
+
+        // Return to caller of asmVmEntry()
+        asm volatile (
+            \\ret
+        );
+
+        // Just to suppress the warning.
+        return 0;
     }
 
     fn asmVmExit() callconv(.Naked) noreturn {
@@ -271,6 +331,7 @@ pub const Vcpu = struct {
 
         // Return to caller of asmVmEntry()
         asm volatile (
+            \\mov $0, %%rax
             \\ret
         );
     }
@@ -383,10 +444,19 @@ fn setupExecCtrls() VmxError!void {
     ).load();
 
     // Primary Processor-based VM-Execution control.
-    const ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
+    var ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
+    ppb_exec_ctrl.activate_secondary_controls = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
+    ).load();
+
+    // Secondary Processor-based VM-Execution control.
+    var ppb_exec_ctrl2 = try vmcs.exec_control.SecondaryProcessorBasedExecutionControl.get();
+    ppb_exec_ctrl2.ept = true;
+    try adjustRegMandatoryBits(
+        ppb_exec_ctrl2,
+        am.readMsr(.vmx_procbased_ctls2),
     ).load();
 }
 

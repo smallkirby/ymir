@@ -132,6 +132,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Setup VMCS
     try vcpu.setupVmcs();
 
+    // TODO
+    try vcpu.initGuestPage(ymir.mem.page_allocator);
+
     // Launch
     log.info("Entering VMX non-root operation...", .{});
     vcpu.loop() catch |err| switch (err) {

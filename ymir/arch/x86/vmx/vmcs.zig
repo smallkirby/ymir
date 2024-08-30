@@ -534,6 +534,16 @@ pub const exec_control = struct {
         pub fn new() SecondaryProcessorBasedExecutionControl {
             return std.mem.zeroes(SecondaryProcessorBasedExecutionControl);
         }
+
+        pub fn load(self: SecondaryProcessorBasedExecutionControl) VmxError!void {
+            const val: u32 = @bitCast(self);
+            try vmcs.vmwrite(vmcs.Ctrl.secondary_procbased_vmexec_controls, val);
+        }
+
+        pub fn get() VmxError!SecondaryProcessorBasedExecutionControl {
+            const val: u32 = @truncate(try vmcs.vmread(vmcs.Ctrl.secondary_procbased_vmexec_controls));
+            return @bitCast(val);
+        }
     };
 
     /// Governs the handling of exceptions.
