@@ -39,10 +39,13 @@ const num_table_entries: usize = 512;
 
 /// Init guest EPT.
 pub fn initEpt(
+    /// Guest physical address to map.
     guest_start: Phys,
+    /// Host physical address to map.
     host_start: Phys,
+    /// Size in bytes of the memory region to map.
     size: usize,
-    /// Page allocator that returns physical pages.
+    /// Page allocator.
     page_allocator: Allocator,
 ) ![]Lv4EptEntry {
     if (size & page_mask_2mb != 0) {

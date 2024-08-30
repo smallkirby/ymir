@@ -39,3 +39,45 @@ pub const QualIo = packed struct(u64) {
         imm = 1,
     };
 };
+
+/// Exit qualification for EPT violations.
+/// cf. SDM Vol.3C Table 28-7.
+pub const QualEptViolation = packed struct(u64) {
+    /// The violation was data read.
+    read: bool,
+    /// The violation was data write.
+    write: bool,
+    /// The violation was instruction fetch.
+    fetch: bool,
+    /// The page is readable.
+    readable: bool,
+    /// The page is writable.
+    writable: bool,
+    /// The page is executable.
+    executable: bool,
+    /// The page is executable for user-mode linear addresses.
+    /// Undefined if "mode-based execute control" is 0.
+    executable_user: bool,
+    /// Guest linear-address field is valid.
+    valid_linear: bool,
+    /// The violation occurred during a guest page table walk.
+    during_walk: bool,
+    ///
+    linear_user: bool,
+    ///
+    rw: bool,
+    ///
+    exec_disabled: bool,
+    ///
+    nmi_unblocking: bool,
+    ///
+    shadow_stack: bool,
+    ///
+    b60: bool,
+    ///
+    verification: bool,
+    ///
+    trace: bool,
+    /// Reserved.
+    reserved: u47,
+};

@@ -128,6 +128,11 @@ pub const Vcpu = struct {
     /// Handle the VM-exit.
     fn handleExit(_: *Self, exit_info: ExitInformation) VmxError!void {
         switch (exit_info.basic_reason) {
+            .ept => {
+                const qual = try getExitQual(ext.QualEptViolation);
+                log.err("EPT violation: {?}", .{qual});
+                @panic("Aborting Ymir...");
+            },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
                 @panic("Aborting Ymir...");
@@ -686,6 +691,11 @@ pub fn getInstError() VmxError!InstructionError {
 /// Get a VM-exit reason from VMCS.
 pub fn getExitReason() VmxError!ExitInformation {
     return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_reason))));
+}
+
+/// Get a VM-exit qualification from VMCS.
+fn getExitQual(T: anytype) VmxError!T {
+    return @bitCast(@as(u64, try vmread(vmcs.Ro.exit_qual)));
 }
 
 const VmxonRegion = packed struct {
