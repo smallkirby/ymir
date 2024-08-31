@@ -132,8 +132,16 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Setup VMCS
     try vcpu.setupVmcs();
 
+    // Allocate guest pages.
+    const guest_memory_size = 0x100_000 * 100; // 100MB
+    const guest_pages = ymir.mem.page_allocator_instance.allocPages(
+        guest_memory_size,
+        0x100_000 * 2, // 2MB
+    ) orelse return error.OutOfMemory;
+    log.info("Guest memory allocated @ host:{X:0>16} size:{X:0>16}", .{ @intFromPtr(guest_pages.ptr), guest_memory_size });
+
     // TODO
-    try vcpu.initGuestPage(ymir.mem.page_allocator);
+    try vcpu.initGuestPage(guest_pages, ymir.mem.page_allocator);
 
     // Launch
     log.info("Entering VMX non-root operation...", .{});

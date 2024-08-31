@@ -96,13 +96,13 @@ pub const Vcpu = struct {
     }
 
     /// TODO
-    pub fn initGuestPage(self: *Self, page_allocator: Allocator) !void {
+    pub fn initGuestPage(self: *Self, host_pages: []u8, page_allocator: Allocator) !void {
         const lv4tbl = try ept.initEpt(
             0,
-            0,
-            (0x400 << 9) * 0x200,
+            @intFromPtr(host_pages.ptr),
+            host_pages.len,
             page_allocator,
-        ); // TODO
+        );
         const eptp = ept.Eptp.new(lv4tbl);
         self.eptp = eptp;
 

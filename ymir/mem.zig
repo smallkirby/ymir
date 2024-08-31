@@ -16,7 +16,7 @@ pub const general_allocator = Allocator{
 };
 
 const pa = @import("mem/PageAllocator.zig");
-var page_allocator_instance = pa.PageAllocator.newUninit();
+pub var page_allocator_instance = pa.PageAllocator.newUninit();
 
 const BinAllocator = @import("mem/BinAllocator.zig");
 var bin_allocator_instance = BinAllocator.newUninit();

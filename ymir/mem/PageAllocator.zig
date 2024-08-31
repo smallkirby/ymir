@@ -155,6 +155,36 @@ pub const PageAllocator = struct {
             .unused => self.bitmap[line_index] &= ~(@as(MapLineType, 1) << bit_index),
         }
     }
+
+    /// Allocate physically contiguous and aligned pages.
+    pub fn allocPages(self: *PageAllocator, num_pages: usize, align_size: usize) ?[]u8 {
+        self.lock.lockDisableIrq();
+        defer self.lock.unlockEnableIrq();
+
+        if (align_size % arch.page_size != 0) {
+            log.err("Invalid alignment size: {}", .{align_size});
+            return null;
+        }
+
+        const num_frames = (num_pages + arch.page_size - 1) / arch.page_size;
+        const align_frame = (align_size + arch.page_size - 1) / arch.page_size;
+        var start_frame = align_frame;
+
+        while (true) {
+            var i: usize = 0;
+            while (i < num_frames) : (i += 1) {
+                if (start_frame + i >= self.frame_end) return null;
+                if (self.get(start_frame + i) == .used) break;
+            }
+            if (i == num_frames) {
+                self.markAllocated(start_frame, num_frames);
+                const virt_addr: [*]u8 = @ptrFromInt(p2v(frame2phys(start_frame)));
+                return virt_addr[0 .. num_pages * arch.page_size];
+            }
+
+            start_frame += align_frame;
+        }
+    }
 };
 
 fn allocate(ctx: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
