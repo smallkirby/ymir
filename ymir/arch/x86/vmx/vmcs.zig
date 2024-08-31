@@ -750,6 +750,20 @@ pub const SegmentRights = packed struct(u32) {
     unusable: bool = false,
     /// Reserved.
     _reserved2: u15 = 0,
+
+    pub fn from(val: anytype) SegmentRights {
+        return @bitCast(@as(u32, @truncate(val)));
+    }
+};
+
+pub const SegmentSelector = packed struct(u16) {
+    rpl: u2,
+    ti: u1,
+    index: u13,
+
+    pub fn from(val: anytype) SegmentSelector {
+        return @bitCast(@as(u16, @truncate(val)));
+    }
 };
 
 test {

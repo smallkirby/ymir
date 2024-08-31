@@ -5,6 +5,8 @@ const Allocator = std.mem.Allocator;
 const ymir = @import("ymir");
 const mem = ymir.mem;
 const Phys = mem.Phys;
+const linux = ymir.linux;
+const BootParams = linux.boot.BootParams;
 
 const am = @import("asm.zig");
 const serial = @import("serial.zig");
@@ -15,6 +17,7 @@ const ept = @import("vmx/ept.zig");
 
 const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
+const isCanonical = @import("page.zig").isCanonical;
 
 const vmx_error = @import("vmx/error.zig");
 pub const VmxError = vmx_error.VmxError;
@@ -82,6 +85,12 @@ pub const Vcpu = struct {
 
     /// Start executing vCPU.
     pub fn loop(self: *Self) VmxError!void {
+        try partialCheckGuest();
+
+        log.info("=== Entering guest ===", .{});
+        log.info("RIP: 0x{X:0>16}", .{try vmread(vmcs.Guest.rip)});
+        log.info("RSP: 0x{X:0>16}", .{try vmread(vmcs.Guest.rsp)});
+
         while (true) {
             self.vmentry() catch |err| {
                 log.err("VM-entry failed: {?}", .{err});
@@ -99,7 +108,7 @@ pub const Vcpu = struct {
     pub fn initGuestPage(self: *Self, host_pages: []u8, page_allocator: Allocator) !void {
         const lv4tbl = try ept.initEpt(
             0,
-            @intFromPtr(host_pages.ptr),
+            ymir.mem.virt2phys(@intFromPtr(host_pages.ptr)),
             host_pages.len,
             page_allocator,
         );
@@ -107,6 +116,61 @@ pub const Vcpu = struct {
         self.eptp = eptp;
 
         try vmwrite(vmcs.Ctrl.eptp, eptp);
+    }
+
+    /// Load a protected kernel image and cmdline to the guest physical memory.
+    /// TODO: This should not belong to Vcpu.
+    pub fn loadKernel(_: *Self, kernel: []u8, guest_mem: []u8) VmxError!void {
+        if (kernel.len >= guest_mem.len) {
+            return VmxError.OutOfMemory;
+        }
+
+        var boot_params = BootParams.from_bytes(kernel);
+
+        // Setup necessary fields
+        boot_params.hdr.type_of_loader = 0xFF;
+        boot_params.hdr.ext_loader_ver = 0;
+        boot_params.hdr.loadflags.LOADED_HIGH = true; // load kernel at 0x10_0000
+        boot_params.hdr.loadflags.CAN_USE_HEAP = true; // use memory 0..BOOTPARAM as heap
+        boot_params.hdr.heap_end_ptr = linux.layout.bootparam - 0x200;
+        boot_params.hdr.loadflags.KEEP_SEGMENTS = true; // for 32-bit boot protocol
+        boot_params.hdr.cmd_line_ptr = linux.layout.cmdline;
+        boot_params.hdr.vid_mode = 0xFFFF; // VGA
+
+        // Setup E820 map
+        boot_params.add_e820_entry(0, linux.layout.kernel_base, .RAM);
+        boot_params.add_e820_entry(
+            linux.layout.kernel_base,
+            guest_mem.len - linux.layout.kernel_base,
+            .RAM,
+        );
+
+        // Setup cmdline
+        const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + boot_params.hdr.cmdline_size];
+        const cmdline_val = "console=ttyS0";
+        @memset(cmdline, 0);
+        @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
+
+        // Copy boot_params
+        load_image(guest_mem, std.mem.asBytes(&boot_params), linux.layout.bootparam);
+
+        // Load protected-mode kernel code
+        const code_offset = boot_params.hdr.get_protected_code_offset();
+        const code_size = kernel.len - code_offset;
+        load_image(
+            guest_mem,
+            kernel[code_offset .. code_offset + code_size],
+            linux.layout.kernel_base,
+        );
+
+        // Set registers
+        try vmwrite(vmcs.Guest.rflags, 0x2); // TODO
+        try vmwrite(vmcs.Guest.rip, linux.layout.kernel_base);
+        try vmwrite(vmcs.Guest.rsp, linux.layout.bootparam);
+    }
+
+    fn load_image(memory: []u8, image: []u8, addr: usize) void {
+        @memcpy(memory[addr .. addr + image.len], image);
     }
 
     // Enter VMX non-root operation.
@@ -459,10 +523,13 @@ fn setupExecCtrls() VmxError!void {
     // Secondary Processor-based VM-Execution control.
     var ppb_exec_ctrl2 = try vmcs.exec_control.SecondaryProcessorBasedExecutionControl.get();
     ppb_exec_ctrl2.ept = true;
+    ppb_exec_ctrl2.unrestricted_guest = true; // TODO: should we enable this?
     try adjustRegMandatoryBits(
         ppb_exec_ctrl2,
         am.readMsr(.vmx_procbased_ctls2),
     ).load();
+
+    try vmwrite(vmcs.Ctrl.cr3_target_count, 0);
 }
 
 /// Set up VM-Exit control fields.
@@ -477,6 +544,9 @@ fn setupExitCtrls() VmxError!void {
         exit_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls),
     ).load();
+
+    try vmwrite(vmcs.Ctrl.vmexit_msr_load_count, 0);
+    try vmwrite(vmcs.Ctrl.vmexit_msr_store_count, 0);
 }
 
 /// Set up VM-Entry control fields.
@@ -486,13 +556,13 @@ fn setupEntryCtrls() VmxError!void {
 
     // VM-Entry control.
     var entry_ctrl = try vmcs.entry_control.EntryControls.get();
-    entry_ctrl.ia32e_mode_guest = true;
-    entry_ctrl.load_ia32_efer = true;
-    entry_ctrl.load_ia32_pat = true;
+    entry_ctrl.ia32e_mode_guest = false;
     try adjustRegMandatoryBits(
         entry_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
     ).load();
+
+    try vmwrite(vmcs.Ctrl.vmentry_msr_load_count, 0);
 }
 
 /// Set up host state.
@@ -526,18 +596,20 @@ fn setupHostState() VmxError!void {
 }
 
 fn setupGuestState() VmxError!void {
-    const entry_ctrl = try vmcs.entry_control.EntryControls.get();
-
     // Control registers.
-    const cr0 = am.readCr0();
-    const cr3 = am.readCr3();
-    const cr4 = am.readCr4();
+    var cr0 = std.mem.zeroes(am.Cr0);
+    cr0.pe = true; // Protected-mode
+    cr0.ne = true; // Numeric error
+    cr0.et = true; // Extension type
+    var cr4: am.Cr4 = @bitCast(try vmread(vmcs.Guest.cr4));
+    cr4.pae = false;
+    cr4.vmxe = true; // TODO: Should we expose this bit to guest?? (this is requirement for successful VM-entry)
     try vmwrite(vmcs.Guest.cr0, cr0);
-    try vmwrite(vmcs.Guest.cr3, cr3);
     try vmwrite(vmcs.Guest.cr4, cr4);
 
     // Segment registers.
     {
+        // Base
         try vmwrite(vmcs.Guest.cs_base, 0);
         try vmwrite(vmcs.Guest.ss_base, 0);
         try vmwrite(vmcs.Guest.ds_base, 0);
@@ -549,6 +621,7 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.idtr_base, am.sidt().base);
         try vmwrite(vmcs.Guest.ldtr_base, 0xDEAD00); // Marker to indicate the guest.
 
+        // Limit
         try vmwrite(vmcs.Guest.cs_limit, @as(u64, std.math.maxInt(u32)));
         try vmwrite(vmcs.Guest.ss_limit, @as(u64, std.math.maxInt(u32)));
         try vmwrite(vmcs.Guest.ds_limit, @as(u64, std.math.maxInt(u32)));
@@ -560,13 +633,14 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.idtr_limit, am.sidt().limit);
         try vmwrite(vmcs.Guest.gdtr_limit, am.sgdt().limit);
 
+        // Access Rights
         const cs_right = vmcs.SegmentRights{
             .type = .CodeERA,
             .s = .CodeOrData,
             .dpl = 0,
             .g = .KByte,
-            .long = true,
-            .db = 0,
+            .long = false,
+            .db = 1,
         };
         const ds_right = vmcs.SegmentRights{
             .type = .DataRWA,
@@ -601,64 +675,228 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.tr_rights, tr_right);
         try vmwrite(vmcs.Guest.ldtr_rights, ldtr_right);
 
-        try vmwrite(vmcs.Guest.cs_sel, am.readSegSelector(.cs));
-        try vmwrite(vmcs.Guest.ss_sel, am.readSegSelector(.ss));
-        try vmwrite(vmcs.Guest.ds_sel, am.readSegSelector(.ds));
-        try vmwrite(vmcs.Guest.es_sel, am.readSegSelector(.es));
-        try vmwrite(vmcs.Guest.fs_sel, am.readSegSelector(.fs));
-        try vmwrite(vmcs.Guest.gs_sel, am.readSegSelector(.gs));
-        try vmwrite(vmcs.Guest.tr_sel, am.readSegSelector(.tr));
-        try vmwrite(vmcs.Guest.ldtr_sel, am.readSegSelector(.ldtr)); // Not used in Ymir.
+        // Selector
+        try vmwrite(vmcs.Guest.cs_sel, 0);
+        try vmwrite(vmcs.Guest.ss_sel, 0);
+        try vmwrite(vmcs.Guest.ds_sel, 0);
+        try vmwrite(vmcs.Guest.es_sel, 0);
+        try vmwrite(vmcs.Guest.fs_sel, 0);
+        try vmwrite(vmcs.Guest.gs_sel, 0);
+        try vmwrite(vmcs.Guest.tr_sel, 0);
+        try vmwrite(vmcs.Guest.ldtr_sel, 0); // Not used in Ymir.
 
+        // FS/GS base
         try vmwrite(vmcs.Guest.fs_base, am.readMsr(.fs_base));
         try vmwrite(vmcs.Guest.gs_base, am.readMsr(.gs_base));
     }
 
-    // General registers.
-    try vmwrite(vmcs.Guest.rip, @intFromPtr(&guestDebugHandler));
-    try vmwrite(vmcs.Guest.rsp, @intFromPtr(&guest_stack));
-    try vmwrite(vmcs.Guest.rflags, am.readEflags());
-
     // MSR
-    try vmwrite(vmcs.Guest.sysenter_cs, am.readMsr(.sysenter_cs));
-    try vmwrite(vmcs.Guest.sysenter_esp, am.readMsr(.sysenter_esp));
-    try vmwrite(vmcs.Guest.sysenter_eip, am.readMsr(.sysenter_eip));
-    const efer = am.readMsr(.efer);
-    try vmwrite(vmcs.Guest.efer, efer);
-    const pat = am.readMsr(.pat);
-    try vmwrite(vmcs.Guest.pat, pat);
+    try vmwrite(vmcs.Guest.sysenter_cs, 0);
+    try vmwrite(vmcs.Guest.sysenter_esp, 0);
+    try vmwrite(vmcs.Guest.sysenter_eip, 0);
 
     // Other crucial fields.
     try vmwrite(vmcs.Guest.vmcs_link_pointer, std.math.maxInt(u64));
+}
 
-    // Guest register state partial checks.
+/// Partially checks the validity of guest state.
+fn partialCheckGuest() VmxError!void {
+    const cr0: am.Cr0 = @bitCast(try vmcs.vmread(vmcs.Guest.cr0));
+    const cr3 = try vmcs.vmread(vmcs.Guest.cr3);
+    const cr4: am.Cr4 = @bitCast(try vmcs.vmread(vmcs.Guest.cr4));
+    const entry_ctrl = try vmcs.entry_control.EntryControls.get();
+    const exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
+    const exec_ctrl2 = try vmcs.exec_control.SecondaryProcessorBasedExecutionControl.get();
+    const efer: am.Efer = @bitCast(try vmcs.vmread(vmcs.Guest.efer));
+
+    // == Checks on Guest Control Registers, Debug Registers, and MSRs.
+    // cf. SDM Vol 3C 27.3.1.1.
+    {
+        const vmx_cr0_fixed0: u32 = @truncate(am.readMsr(.vmx_cr0_fixed0));
+        const vmx_cr0_fixed1: u32 = @truncate(am.readMsr(.vmx_cr0_fixed1));
+        const vmx_cr4_fixed0: u32 = @truncate(am.readMsr(.vmx_cr4_fixed0));
+        const vmx_cr4_fixed1: u32 = @truncate(am.readMsr(.vmx_cr4_fixed1));
+        if (!(exec_ctrl.activate_secondary_controls and exec_ctrl2.unrestricted_guest)) {
+            if (@as(u64, @bitCast(cr0)) & vmx_cr0_fixed0 != vmx_cr0_fixed0) @panic("CR0: Fixed0 bits must be 1");
+            if (@as(u64, @bitCast(cr0)) & ~vmx_cr0_fixed1 != 0) @panic("CR0: Fixed1 bits must be 0");
+        }
+        if (@as(u64, @bitCast(cr4)) & vmx_cr4_fixed0 != vmx_cr4_fixed0) @panic("CR4: Fixed0 bits must be 1");
+        if (@as(u64, @bitCast(cr4)) & ~vmx_cr4_fixed1 != 0) @panic("CR4: Fixed1 bits must be 0");
+    }
     if (cr0.pg and !cr0.pe) @panic("CR0: PE must be set when PG is set");
+    // TODO: CR4 field must not set any bit to a value not supported in VMX operation.
     if (cr4.cet and !cr0.wp) @panic("CR0: WP must be set when CR4.CET is set");
+    // TODO: If "load debug controls" is 1, bits reserved in IA32_DEBUGCTL MSR must be 0.
     if (entry_ctrl.ia32e_mode_guest and !(cr0.pg and cr4.pae)) @panic("CR0: PG and CR4.PAE must be set when IA-32e mode is enabled");
     if (!entry_ctrl.ia32e_mode_guest and cr4.pcide) @panic("CR4: PCIDE must be unset when IA-32e mode is disabled");
     if (cr3 >> 46 != 0) @panic("CR3: Reserved bits must be zero");
-    if (entry_ctrl.load_debug_controls) @panic("Unsupported guest state: load debug controls.");
-    if (entry_ctrl.load_cet_state) @panic("Unsupported guest state: load CET state.");
-    if (entry_ctrl.load_perf_global_ctrl) @panic("Unsupported guest state: load perf global ctrl.");
-    if (entry_ctrl.load_ia32_efer) {
-        const lma = (efer >> 10) & 1 != 0;
-        const lme = (efer >> 8) & 1 != 0;
-        if (lma != entry_ctrl.ia32e_mode_guest) @panic("EFER and IA-32e mode mismatch");
-        if (cr0.pg and (lma != lme)) @panic("EFER.LME must be identical to EFER.LMA when CR0.PG is set");
+    if (!isCanonical(try vmcs.vmread(vmcs.Guest.sysenter_esp))) @panic("IA32_SYSENTER_ESP must be canonical");
+    if (!isCanonical(try vmcs.vmread(vmcs.Guest.sysenter_eip))) @panic("IA32_SYSENTER_EIP must be canonical");
+    if (entry_ctrl.load_cet_state) @panic("Unimplemented: Load CET state");
+    if (entry_ctrl.load_debug_controls) @panic("Unimplemented: Load debug controls.");
+    if (entry_ctrl.load_perf_global_ctrl) @panic("Unimplemented: Load perf global ctrl.");
+    if (entry_ctrl.load_ia32_pat) {
+        const pat = try vmcs.vmread(vmcs.Guest.pat);
+        for (0..8) |i| {
+            const iu6: u6 = @truncate(i);
+            const val = (pat >> (iu6 * 3));
+            if (val != 0 and val != 1 and val != 4 and val != 6 and val != 7) @panic("PAT: invalid value");
+        }
     }
+    if (entry_ctrl.load_ia32_efer) {
+        // TODO: Bits reserved in IA32_EFER_MSR must be 0.
+        if (efer.lma != entry_ctrl.ia32e_mode_guest) @panic("EFER and IA-32e mode mismatch");
+        if (cr0.pg and (efer.lma != efer.lme)) @panic("EFER.LME must be identical to EFER.LMA when CR0.PG is set");
+    }
+    if (entry_ctrl.load_ia32_bndcfgs) @panic("Unimplemented: Load IA32_BNDCFGS");
+    if (entry_ctrl.load_rtit_ctl) @panic("Unimplemented: Load RTIT control");
+    if (entry_ctrl.load_guest_lbr_ctl) @panic("Unimplemented: Load guest LBR control");
+    if (entry_ctrl.load_pkrs) @panic("Unimplemented: Load PKRS");
+    if (entry_ctrl.load_uinv) @panic("Unimplemented: Load UINV");
 
+    // == Checks on Guest Segment Registers.
+    // cf. SDM Vol 3C 28.3.1.2.
+    // Selector.
+    const cs_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.cs_sel));
+    const tr_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.tr_sel));
+    const ldtr_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ldtr_sel));
+    const ss_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ss_sel));
+    if (tr_sel.ti != 0) @panic("TR.sel: TI flag must be 0");
+    {
+        const ldtr_ar: vmcs.SegmentRights = @bitCast(@as(u32, @truncate(try vmcs.vmread(vmcs.Guest.ldtr_rights))));
+        if (!ldtr_ar.unusable and ldtr_sel.ti != 0) @panic("LDTR.sel: TI flag must be 0");
+    }
+    if (cs_sel.rpl != ss_sel.rpl) @panic("CS.sel.RPL must be equal to SS.sel.RPL");
+
+    // Base.
+    if (!isCanonical(try vmcs.vmread(vmcs.Guest.tr_base))) @panic("TR.base must be canonical");
+    if (!isCanonical(try vmcs.vmread(vmcs.Guest.fs_base))) @panic("FS.base must be canonical");
+    if (!isCanonical(try vmcs.vmread(vmcs.Guest.gs_base))) @panic("GS.base must be canonical");
+    if (!isCanonical(try vmcs.vmread(vmcs.Guest.ldtr_base))) @panic("LDTR.base must be canonical");
+    if ((try vmcs.vmread(vmcs.Guest.cs_base)) >> 32 != 0) @panic("CS.base[63:32] must be zero");
+    if ((try vmcs.vmread(vmcs.Guest.ss_base)) >> 32 != 0) @panic("SS.base[63:32] must be zero");
+    if ((try vmcs.vmread(vmcs.Guest.ds_base)) >> 32 != 0) @panic("DS.base[63:32] must be zero");
+    if ((try vmcs.vmread(vmcs.Guest.es_base)) >> 32 != 0) @panic("ES.base[63:32] must be zero");
+
+    // Access Rights.
+    const cs_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.cs_rights));
+    const ss_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.ss_rights));
+    const ds_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.ds_rights));
+    const es_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.es_rights));
+    const fs_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.fs_rights));
+    const gs_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.gs_rights));
+    const ds_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ds_sel));
+    const es_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.es_sel));
+    const fs_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.fs_sel));
+    const gs_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.gs_sel));
+    const cs_limit = try vmcs.vmread(vmcs.Guest.cs_limit);
+    const ss_limit = try vmcs.vmread(vmcs.Guest.ss_limit);
+    const ds_limit = try vmcs.vmread(vmcs.Guest.ds_limit);
+    const es_limit = try vmcs.vmread(vmcs.Guest.es_limit);
+    const fs_limit = try vmcs.vmread(vmcs.Guest.fs_limit);
+    const gs_limit = try vmcs.vmread(vmcs.Guest.gs_limit);
+    //  type
+    if (cs_ar.type != .CodeEA and cs_ar.type != .CodeERA and cs_ar.type != .CodeECA and cs_ar.type != .CodeERCA) @panic("CS.rights: Invalid value");
+    if (!ss_ar.unusable and (ss_ar.type != .DataRWA and ss_ar.type != .DataRWAE)) @panic("SS.rights: Invalid value");
+    if (!ds_ar.unusable and @intFromEnum(ds_ar.type) & 1 == 0) @panic("DS.rights: Invalid value (accessed)");
+    if (!es_ar.unusable and @intFromEnum(es_ar.type) & 1 == 0) @panic("ES.rights: Invalid value (accessed)");
+    if (!fs_ar.unusable and @intFromEnum(fs_ar.type) & 1 == 0) @panic("FS.rights: Invalid value (accessed)");
+    if (!gs_ar.unusable and @intFromEnum(gs_ar.type) & 1 == 0) @panic("GS.rights: Invalid value (accessed)");
+    if (!ds_ar.unusable and (@intFromEnum(ds_ar.type) & 0b1000 != 0 and @intFromEnum(ds_ar.type) & 0b10 == 0)) @panic("DS.rights: Invalid value (code)");
+    if (!es_ar.unusable and (@intFromEnum(es_ar.type) & 0b1000 != 0 and @intFromEnum(es_ar.type) & 0b10 == 0)) @panic("ES.rights: Invalid value (code)");
+    if (!fs_ar.unusable and (@intFromEnum(fs_ar.type) & 0b1000 != 0 and @intFromEnum(fs_ar.type) & 0b10 == 0)) @panic("FS.rights: Invalid value (code)");
+    if (!gs_ar.unusable and (@intFromEnum(gs_ar.type) & 0b1000 != 0 and @intFromEnum(gs_ar.type) & 0b10 == 0)) @panic("GS.rights: Invalid value (code)");
+    //  s
+    if (cs_ar.s != .CodeOrData) @panic("CS.rights: Invalid value (code)");
+    if (!ss_ar.unusable and ss_ar.s != .CodeOrData) @panic("SS.rights: Invalid value (code)");
+    if (!ds_ar.unusable and ds_ar.s != .CodeOrData) @panic("DS.rights: Invalid value (code)");
+    if (!es_ar.unusable and es_ar.s != .CodeOrData) @panic("ES.rights: Invalid value (code)");
+    if (!fs_ar.unusable and fs_ar.s != .CodeOrData) @panic("FS.rights: Invalid value (code)");
+    if (!gs_ar.unusable and gs_ar.s != .CodeOrData) @panic("GS.rights: Invalid value (code)");
+    // DPL
+    if (cs_ar.type == .DataRWA and cs_ar.dpl != 0) @panic("CS.rights: Invalid value (DPL)");
+    if ((cs_ar.type == .CodeEA or cs_ar.type == .CodeERA) and cs_ar.dpl != ss_ar.dpl) @panic("CS.rights: Invalid value (DPL)");
+    if ((cs_ar.type == .CodeECA or cs_ar.type == .CodeERCA) and cs_ar.dpl > ss_ar.dpl) @panic("CS.rights: Invalid value (DPL)");
+    if (ss_ar.dpl != ss_sel.rpl) @panic("SS.rights: DPL must be equal to RPL");
+    // TODO: The DPL of SS must be 0 either if ...
+    if (ds_ar.dpl < ds_sel.rpl) @panic("DS.rights: Invalid value (DPL)");
+    if (es_ar.dpl < es_sel.rpl) @panic("ES.rights: Invalid value (DPL)");
+    if (fs_ar.dpl < fs_sel.rpl) @panic("FS.rights: Invalid value (DPL)");
+    if (gs_ar.dpl < gs_sel.rpl) @panic("GS.rights: Invalid value (DPL)");
+    // P
+    if (!cs_ar.p) @panic("CS.rights: P must be set");
+    if (!ss_ar.unusable and !ss_ar.p) @panic("SS.rights: P must be set");
+    if (!ds_ar.unusable and !ds_ar.p) @panic("DS.rights: P must be set");
+    if (!es_ar.unusable and !es_ar.p) @panic("ES.rights: P must be set");
+    if (!fs_ar.unusable and !fs_ar.p) @panic("FS.rights: P must be set");
+    if (!gs_ar.unusable and !gs_ar.p) @panic("GS.rights: P must be set");
+    // TODO: Reserved bits must be zero.
+    // D/B
+    if ((entry_ctrl.ia32e_mode_guest and cs_ar.long) and cs_ar.db != 0) @panic("CS.rights: D/B must be zero when IA-32e mode is enabled");
+    // G.
+    if (cs_limit & 0xFFF != 0xFFF and cs_ar.g != .Byte) @panic("CS.rights: G must be clear when CS.limit is not page-aligned");
+    if (!ss_ar.unusable and ss_limit & 0xFFF != 0xFFF and ss_ar.g != .Byte) @panic("SS.rights: G must be clear when SS.limit is not page-aligned");
+    if (!ds_ar.unusable and ds_limit & 0xFFF != 0xFFF and ds_ar.g != .Byte) @panic("DS.rights: G must be clear when DS.limit is not page-aligned");
+    if (!es_ar.unusable and es_limit & 0xFFF != 0xFFF and es_ar.g != .Byte) @panic("ES.rights: G must be clear when ES.limit is not page-aligned");
+    if (!fs_ar.unusable and fs_limit & 0xFFF != 0xFFF and fs_ar.g != .Byte) @panic("FS.rights: G must be clear when FS.limit is not page-aligned");
+    if (!gs_ar.unusable and gs_limit & 0xFFF != 0xFFF and gs_ar.g != .Byte) @panic("GS.rights: G must be clear when GS.limit is not page-aligned");
+    if (cs_limit >> 20 != 0 and cs_ar.g != .KByte) @panic("CS.rights: G must be set.");
+    if (!ss_ar.unusable and ss_limit >> 20 != 0 and ss_ar.g != .KByte) @panic("SS.rights: G must be set.");
+    if (!ds_ar.unusable and ds_limit >> 20 != 0 and ds_ar.g != .KByte) @panic("DS.rights: G must be set.");
+    if (!es_ar.unusable and es_limit >> 20 != 0 and es_ar.g != .KByte) @panic("ES.rights: G must be set.");
+    if (!fs_ar.unusable and fs_limit >> 20 != 0 and fs_ar.g != .KByte) @panic("FS.rights: G must be set.");
+    if (!gs_ar.unusable and gs_limit >> 20 != 0 and gs_ar.g != .KByte) @panic("GS.rights: G must be set.");
+    // TODO: Reserved bits must be zero.
+
+    // TODO: TR
+    // TODO: LDTR
+
+    // == Checks on Guest Descriptor-Table Registers.
+    // cf. SDM Vol 3C 27.3.1.3.
+    if (!isCanonical(try vmcs.vmread(vmcs.Guest.gdtr_base))) @panic("GDTR.base must be canonical");
+    if (!isCanonical(try vmcs.vmread(vmcs.Guest.idtr_base))) @panic("IDTR.base must be canonical");
+    if (try vmcs.vmread(vmcs.Guest.gdtr_limit) >> 16 != 0) @panic("GDTR.limit[15:0] must be zero");
+    if (try vmcs.vmread(vmcs.Guest.idtr_limit) >> 16 != 0) @panic("IDTR.limit[15:0] must be zero");
+
+    // == Checks on Guest RIP, RFLAGS, and SSP
+    // cf. SDM Vol 3C 27.3.1.4.
+    const rip = try vmcs.vmread(vmcs.Guest.rip);
+    const intr_info = try vmread(vmcs.Ctrl.vmentry_interrupt_information_field);
     const rflags: am.FlagsRegister = @bitCast(try vmcs.vmread(vmcs.Guest.rflags));
+
+    if ((entry_ctrl.ia32e_mode_guest or cs_ar.long) and (rip >> 32) != 0) @panic("RIP: Upper address must be all zeros");
+    // TODO: If the processor supports N < 64 linear-address bits, ...
+
     if (rflags._reserved != 0 or rflags._reserved2 != 0 or rflags._reserved3 != 0 or rflags._reserved4 != 0) @panic("RFLAGS: Reserved bits must be zero");
     if (rflags._reserved1 != 1) @panic("RFLAGS: Reserved bit 1 must be one");
-    if (entry_ctrl.ia32e_mode_guest and rflags.vm) @panic("RFLAGS: VM must be clear when IA-32e mode is enabled");
-    const intr_info = try vmread(vmcs.Ctrl.vmentry_interrupt_information_field);
+    if ((entry_ctrl.ia32e_mode_guest or !cr0.pe) and rflags.vm) @panic("RFLAGS: VM must be clear when IA-32e mode is enabled");
     if (((intr_info >> 31) & 1 != 0) and !rflags.ief) @panic("RFLAGS: IF must be set when valid bit in VM-entry interruption-information field is set.");
 
-    // Guest non-register state partial checks.
+    // == Checks on Guest Non-Register State.
+    // cf. SDM Vol 3C 27.3.1.5.
+    // Activity state.
     const activity_state = try vmcs.vmread(vmcs.Guest.activity_state);
     if (activity_state != 0) @panic("Unsupported activity state.");
     const intr_state = try vmcs.vmread(vmcs.Guest.interrupt_status);
     if ((intr_state >> 5) != 0) @panic("Unsupported interruptability state.");
+    // TODO: other checks
+
+    // Interruptibility state.
+    // TODO
+
+    // Pending debug exceptions.
+    // TODO
+
+    // VMCS link pointer.
+    if (try vmcs.vmread(vmcs.Guest.vmcs_link_pointer) != std.math.maxInt(u64)) @panic("Unsupported VMCS link pointer other than FFFFFFFF_FFFFFFFFh");
+
+    // == Checks on Guest Page-Directory-Pointer-Table Entries.
+    // cf. SDM Vol 3C 27.3.1.6.
+    const is_pae_paging = (cr0.pg and cr4.pae and !entry_ctrl.ia32e_mode_guest); // When PAE paging, CR3 references level-4 table.
+    if (is_pae_paging) {
+        // TODO
+        @panic("Unimplemented: PAE paging");
+    }
 }
 
 /// Set host stack pointer.

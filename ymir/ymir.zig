@@ -1,6 +1,7 @@
 pub const serial = @import("serial.zig");
 pub const arch = @import("arch.zig").impl;
 pub const klog = @import("log.zig");
+pub const linux = @import("linux.zig");
 pub const mem = @import("mem.zig");
 pub const spin = @import("spin.zig");
 pub const vmx = @import("vmx.zig").impl;

@@ -144,7 +144,14 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     ) orelse return error.OutOfMemory;
     log.info("Guest pages allocated at host memory @{X:0>16} (0x{X}-bytes)", .{ @intFromPtr(guest_pages.ptr), guest_memory_size });
 
-    // TODO
+    // Load guest kernel
+    const guest_kernel = b: {
+        const ptr: [*]u8 = @ptrFromInt(ymir.mem.phys2virt(@intFromPtr(guest_info.guest_image)));
+        break :b ptr[0..guest_info.guest_size];
+    };
+    try vcpu.loadKernel(guest_kernel, guest_pages);
+
+    // Initialize EPT.
     try vcpu.initGuestPage(guest_pages, ymir.mem.page_allocator);
 
     // Launch
