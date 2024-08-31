@@ -59,6 +59,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
         return error.InvalidBootInfo;
     };
 
+    // Copy guest info into Ymir's stack sice it becomes inaccessible soon.
+    const guest_info = boot_info.guest_info;
+
     // Initialize GDT.
     // It switches GDT from the one prepared by surtr to the ymir GDT.
     arch.gdt.init();
@@ -133,12 +136,13 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try vcpu.setupVmcs();
 
     // Allocate guest pages.
+    log.info("Guest kernel image @ {X:0>16} (0x{X}-bytes)", .{ @intFromPtr(guest_info.guest_image), guest_info.guest_size });
     const guest_memory_size = 0x100_000 * 100; // 100MB
     const guest_pages = ymir.mem.page_allocator_instance.allocPages(
         guest_memory_size,
         0x100_000 * 2, // 2MB
     ) orelse return error.OutOfMemory;
-    log.info("Guest memory allocated @ host:{X:0>16} size:{X:0>16}", .{ @intFromPtr(guest_pages.ptr), guest_memory_size });
+    log.info("Guest pages allocated at host memory @{X:0>16} (0x{X}-bytes)", .{ @intFromPtr(guest_pages.ptr), guest_memory_size });
 
     // TODO
     try vcpu.initGuestPage(guest_pages, ymir.mem.page_allocator);

@@ -206,6 +206,48 @@ pub fn main() uefi.Status {
     // Enable NX-bit.
     arch.enableNxBit();
 
+    // Get guest kernel image info.
+    var guest: *uefi.protocol.File = undefined;
+    status = root_dir.open(
+        &guest,
+        &toUcs2("bzImage"),
+        uefi.protocol.File.efi_file_mode_read,
+        uefi.protocol.File.efi_file_read_only,
+    );
+    if (status != .Success) {
+        log.err("Failed to open guest kernel file.", .{});
+        return status;
+    }
+    log.info("Opened guest kernel file.", .{});
+
+    const guest_info_buffer_size: usize = @sizeOf(uefi.FileInfo) + 0x100;
+    var guest_info_actual_size = guest_info_buffer_size;
+    var guest_info_buffer: [guest_info_buffer_size]u8 align(@alignOf(uefi.FileInfo)) = undefined;
+    status = guest.getInfo(&uefi.FileInfo.guid, &guest_info_actual_size, &guest_info_buffer);
+    if (status != .Success) {
+        log.err("Failed to get guest kernel file info.", .{});
+        return status;
+    }
+    const guest_info: *const uefi.FileInfo = @alignCast(@ptrCast(&guest_info_buffer));
+    log.info("Guest kernel size: {X} bytes", .{guest_info.file_size});
+
+    // Load guest kernel image.
+    var guest_start: u64 align(4096) = undefined;
+    const guest_size_pages = (guest_info.file_size + 4095) / 4096;
+    status = boot_service.allocatePages(.AllocateAnyPages, .LoaderData, guest_size_pages, @ptrCast(&guest_start));
+    if (status != .Success) {
+        log.err("Failed to allocate memory for guest kernel image.", .{});
+        return status;
+    }
+    var guest_size = guest_info.file_size;
+
+    status = guest.read(&guest_size, @ptrFromInt(guest_start));
+    if (status != .Success) {
+        log.err("Failed to read guest kernel image.", .{});
+        return status;
+    }
+    log.info("Loaded guest kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ guest_start, guest_start + guest_size });
+
     // Clean up memory.
     status = boot_service.freePool(header_buffer);
     if (status != .Success) {
@@ -283,6 +325,10 @@ pub fn main() uefi.Status {
     const boot_info = defs.BootInfo{
         .magic = defs.surtr_magic,
         .memory_map = map,
+        .guest_info = .{
+            .guest_image = @ptrFromInt(guest_start),
+            .guest_size = guest_size,
+        },
     };
     kernel_entry(boot_info);
 
