@@ -60,8 +60,8 @@ pub fn initEpt(
 
     for (0..size / page_size_2mb) |i| {
         try map2m(
-            guest_start + page_size_4k * i,
-            host_start + page_size_4k * i,
+            guest_start + page_size_2mb * i,
+            host_start + page_size_2mb * i,
             lv4_tbl,
             page_allocator,
         );
