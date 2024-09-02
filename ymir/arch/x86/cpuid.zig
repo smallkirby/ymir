@@ -83,3 +83,9 @@ pub const FeatureInformationEdx = packed struct(u32) {
     _reserved_2: bool = false,
     pbe: bool = false,
 };
+
+const FeatureInfoEbx = packed struct(u32) {
+    clflush_line: u16,
+    num_ids: u8,
+    initial_apic_id: u8,
+};

@@ -14,6 +14,9 @@ const vmcs = @import("vmx/vmcs.zig");
 const regs = @import("vmx/regs.zig");
 const ext = @import("vmx/exit.zig");
 const ept = @import("vmx/ept.zig");
+const cpuid = @import("vmx/cpuid.zig");
+const msr = @import("vmx/msr.zig");
+const cr = @import("vmx/cr.zig");
 
 const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
@@ -46,10 +49,14 @@ pub const Vcpu = struct {
     vmcs_region: *VmcsRegion,
     /// The first VM-entry has been done.
     launch_done: bool = false,
+    /// IA-32e mode (long mode) is enabled.
+    ia32_enabled: bool = false,
     /// Saved guest registers.
     guest_regs: GuestRegisters = undefined,
     /// EPT pointer.
     eptp: ept.Eptp = undefined,
+    /// Guest memory.
+    guest_mem: []u8 = undefined,
 
     pub fn new() Self {
         return Self{
@@ -85,13 +92,8 @@ pub const Vcpu = struct {
 
     /// Start executing vCPU.
     pub fn loop(self: *Self) VmxError!void {
-        try partialCheckGuest();
-
-        log.info("=== Entering guest ===", .{});
-        log.info("RIP: 0x{X:0>16}", .{try vmread(vmcs.Guest.rip)});
-        log.info("RSP: 0x{X:0>16}", .{try vmread(vmcs.Guest.rsp)});
-
         while (true) {
+            try partialCheckGuest();
             self.vmentry() catch |err| {
                 log.err("VM-entry failed: {?}", .{err});
                 if (err == VmxError.FailureStatusAvailable) {
@@ -116,11 +118,12 @@ pub const Vcpu = struct {
         self.eptp = eptp;
 
         try vmwrite(vmcs.Ctrl.eptp, eptp);
+
+        self.guest_mem = host_pages;
     }
 
     /// Load a protected kernel image and cmdline to the guest physical memory.
-    /// TODO: This should not belong to Vcpu.
-    pub fn loadKernel(_: *Self, kernel: []u8, guest_mem: []u8) VmxError!void {
+    pub fn loadKernel(self: *Self, kernel: []u8, guest_mem: []u8) VmxError!void {
         if (kernel.len >= guest_mem.len) {
             return VmxError.OutOfMemory;
         }
@@ -133,9 +136,9 @@ pub const Vcpu = struct {
         boot_params.hdr.loadflags.LOADED_HIGH = true; // load kernel at 0x10_0000
         boot_params.hdr.loadflags.CAN_USE_HEAP = true; // use memory 0..BOOTPARAM as heap
         boot_params.hdr.heap_end_ptr = linux.layout.bootparam - 0x200;
-        boot_params.hdr.loadflags.KEEP_SEGMENTS = true; // for 32-bit boot protocol
+        boot_params.hdr.loadflags.KEEP_SEGMENTS = true; // we set CS/DS/SS/ES to flag segments with a base of 0.
         boot_params.hdr.cmd_line_ptr = linux.layout.cmdline;
-        boot_params.hdr.vid_mode = 0xFFFF; // VGA
+        boot_params.hdr.vid_mode = 0xFFFF; // VGA (normal)
 
         // Setup E820 map
         boot_params.add_e820_entry(0, linux.layout.kernel_base, .RAM);
@@ -152,24 +155,28 @@ pub const Vcpu = struct {
         @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
 
         // Copy boot_params
-        load_image(guest_mem, std.mem.asBytes(&boot_params), linux.layout.bootparam);
+        loadImage(guest_mem, std.mem.asBytes(&boot_params), linux.layout.bootparam);
 
         // Load protected-mode kernel code
         const code_offset = boot_params.hdr.get_protected_code_offset();
         const code_size = kernel.len - code_offset;
-        load_image(
+        loadImage(
             guest_mem,
             kernel[code_offset .. code_offset + code_size],
             linux.layout.kernel_base,
         );
+        log.debug("Guest kernel code offset: 0x{X:0>16}", .{code_offset});
+        if (linux.layout.kernel_base + code_size > guest_mem.len) {
+            return VmxError.OutOfMemory;
+        }
 
         // Set registers
         try vmwrite(vmcs.Guest.rflags, 0x2); // TODO
         try vmwrite(vmcs.Guest.rip, linux.layout.kernel_base);
-        try vmwrite(vmcs.Guest.rsp, linux.layout.bootparam);
+        self.guest_regs.rsi = linux.layout.bootparam;
     }
 
-    fn load_image(memory: []u8, image: []u8, addr: usize) void {
+    fn loadImage(memory: []u8, image: []u8, addr: usize) void {
         @memcpy(memory[addr .. addr + image.len], image);
     }
 
@@ -190,18 +197,80 @@ pub const Vcpu = struct {
     }
 
     /// Handle the VM-exit.
-    fn handleExit(_: *Self, exit_info: ExitInformation) VmxError!void {
+    fn handleExit(self: *Self, exit_info: ExitInformation) VmxError!void {
+        log.debug("VM-exit: reason={?}", .{exit_info.basic_reason});
         switch (exit_info.basic_reason) {
+            .io => {
+                const qual = try getExitQual(ext.QualIo);
+                log.debug("I/O instruction: {?}", .{qual});
+                unreachable;
+            },
+            .cr => {
+                const qual = try getExitQual(ext.QualCr);
+                try cr.handleAccessCr(self, qual);
+                try self.stepNextInst();
+            },
             .ept => {
                 const qual = try getExitQual(ext.QualEptViolation);
                 log.err("EPT violation: {?}", .{qual});
-                @panic("Aborting Ymir...");
+                self.abort();
+            },
+            .cpuid => {
+                try cpuid.handleCpuidExit(self);
+                try self.stepNextInst();
+            },
+            .rdmsr => {
+                try msr.handleRdmsrExit(self);
+                try self.stepNextInst();
+            },
+            .wrmsr => {
+                try msr.handleWrmsrExit(self);
+                try self.stepNextInst();
             },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
-                @panic("Aborting Ymir...");
+                self.abort();
             },
         }
+    }
+
+    fn abort(self: *Self) noreturn {
+        @setCold(true);
+
+        log.err("=== vCPU Information ===", .{});
+        log.err("[Guest State]", .{});
+        log.err("RIP: 0x{X:0>16}", .{vmread(vmcs.Guest.rip) catch unreachable});
+        log.err("RSP: 0x{X:0>16}", .{vmread(vmcs.Guest.rsp) catch unreachable});
+        log.err("RAX: 0x{X:0>16}", .{self.guest_regs.rax});
+        log.err("RBX: 0x{X:0>16}", .{self.guest_regs.rbx});
+        log.err("RCX: 0x{X:0>16}", .{self.guest_regs.rcx});
+        log.err("RDX: 0x{X:0>16}", .{self.guest_regs.rdx});
+        log.err("RSI: 0x{X:0>16}", .{self.guest_regs.rsi});
+        log.err("RDI: 0x{X:0>16}", .{self.guest_regs.rdi});
+        log.err("RBP: 0x{X:0>16}", .{self.guest_regs.rbp});
+        log.err("R8 : 0x{X:0>16}", .{self.guest_regs.r8});
+        log.err("R9 : 0x{X:0>16}", .{self.guest_regs.r9});
+        log.err("R10: 0x{X:0>16}", .{self.guest_regs.r10});
+        log.err("R11: 0x{X:0>16}", .{self.guest_regs.r11});
+        log.err("R12: 0x{X:0>16}", .{self.guest_regs.r12});
+        log.err("R13: 0x{X:0>16}", .{self.guest_regs.r13});
+        log.err("R14: 0x{X:0>16}", .{self.guest_regs.r14});
+        log.err("R15: 0x{X:0>16}", .{self.guest_regs.r15});
+        log.err("CR0: 0x{X:0>16}", .{vmread(vmcs.Guest.cr0) catch unreachable});
+        log.err("CR3: 0x{X:0>16}", .{vmread(vmcs.Guest.cr3) catch unreachable});
+        log.err("CR4: 0x{X:0>16}", .{vmread(vmcs.Guest.cr4) catch unreachable});
+        log.err("EFER:0x{X:0>16}", .{vmread(vmcs.Guest.efer) catch unreachable});
+        log.err(
+            "CS : 0x{X:0>4} 0x{X:0>16} 0x{X:0>8}",
+            .{
+                vmread(vmcs.Guest.cs_sel) catch unreachable,
+                vmread(vmcs.Guest.cs_base) catch unreachable,
+                vmread(vmcs.Guest.cs_limit) catch unreachable,
+            },
+        );
+        log.err("Offset of guest memory: 0x{X:0>16}", .{@intFromPtr(self.guest_mem.ptr)});
+
+        unreachable;
     }
 
     /// Increment RIP by the length of the current instruction.
@@ -417,12 +486,12 @@ pub fn enableVmx() void {
     adjustControlRegisters();
 
     // Check VMXON is allowed outside SMX.
-    var msr = am.readMsrFeatureControl();
-    if (!msr.vmx_outside_smx) {
+    var msr_fctl = am.readMsrFeatureControl();
+    if (!msr_fctl.vmx_outside_smx) {
         // Enable VMX outside SMX.
-        if (msr.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
-        msr.vmx_outside_smx = true;
-        am.writeMsrFeatureControl(msr);
+        if (msr_fctl.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
+        msr_fctl.vmx_outside_smx = true;
+        am.writeMsrFeatureControl(msr_fctl);
     }
 
     // Set VMXE bit in CR4.
@@ -515,6 +584,8 @@ fn setupExecCtrls() VmxError!void {
     // Primary Processor-based VM-Execution control.
     var ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
     ppb_exec_ctrl.activate_secondary_controls = true;
+    ppb_exec_ctrl.unconditional_io = true;
+    ppb_exec_ctrl.hlt = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
@@ -529,6 +600,10 @@ fn setupExecCtrls() VmxError!void {
         am.readMsr(.vmx_procbased_ctls2),
     ).load();
 
+    // Exit on access to CR0/CR4.
+    try vmwrite(vmcs.Ctrl.cr0_mask, std.math.maxInt(u64));
+    try vmwrite(vmcs.Ctrl.cr4_mask, std.math.maxInt(u64));
+
     try vmwrite(vmcs.Ctrl.cr3_target_count, 0);
 }
 
@@ -540,6 +615,8 @@ fn setupExitCtrls() VmxError!void {
     // VM-Exit control.
     var exit_ctrl = try vmcs.exit_control.PrimaryExitControls.get();
     exit_ctrl.host_addr_space_size = true;
+    exit_ctrl.load_ia32_efer = true;
+    exit_ctrl.save_ia32_efer = true;
     try adjustRegMandatoryBits(
         exit_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls),
@@ -557,6 +634,7 @@ fn setupEntryCtrls() VmxError!void {
     // VM-Entry control.
     var entry_ctrl = try vmcs.entry_control.EntryControls.get();
     entry_ctrl.ia32e_mode_guest = false;
+    entry_ctrl.load_ia32_efer = true;
     try adjustRegMandatoryBits(
         entry_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
@@ -601,6 +679,7 @@ fn setupGuestState() VmxError!void {
     cr0.pe = true; // Protected-mode
     cr0.ne = true; // Numeric error
     cr0.et = true; // Extension type
+    cr0.pg = false; // Paging
     var cr4: am.Cr4 = @bitCast(try vmread(vmcs.Guest.cr4));
     cr4.pae = false;
     cr4.vmxe = true; // TODO: Should we expose this bit to guest?? (this is requirement for successful VM-entry)
@@ -617,8 +696,8 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.fs_base, 0);
         try vmwrite(vmcs.Guest.gs_base, 0);
         try vmwrite(vmcs.Guest.tr_base, 0);
-        try vmwrite(vmcs.Guest.gdtr_base, am.sgdt().base);
-        try vmwrite(vmcs.Guest.idtr_base, am.sidt().base);
+        try vmwrite(vmcs.Guest.gdtr_base, 0);
+        try vmwrite(vmcs.Guest.idtr_base, 0);
         try vmwrite(vmcs.Guest.ldtr_base, 0xDEAD00); // Marker to indicate the guest.
 
         // Limit
@@ -630,8 +709,8 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.gs_limit, @as(u64, std.math.maxInt(u32)));
         try vmwrite(vmcs.Guest.tr_limit, 0);
         try vmwrite(vmcs.Guest.ldtr_limit, 0);
-        try vmwrite(vmcs.Guest.idtr_limit, am.sidt().limit);
-        try vmwrite(vmcs.Guest.gdtr_limit, am.sgdt().limit);
+        try vmwrite(vmcs.Guest.idtr_limit, 0);
+        try vmwrite(vmcs.Guest.gdtr_limit, 0);
 
         // Access Rights
         const cs_right = vmcs.SegmentRights{
@@ -683,17 +762,18 @@ fn setupGuestState() VmxError!void {
         try vmwrite(vmcs.Guest.fs_sel, 0);
         try vmwrite(vmcs.Guest.gs_sel, 0);
         try vmwrite(vmcs.Guest.tr_sel, 0);
-        try vmwrite(vmcs.Guest.ldtr_sel, 0); // Not used in Ymir.
+        try vmwrite(vmcs.Guest.ldtr_sel, 0);
 
         // FS/GS base
-        try vmwrite(vmcs.Guest.fs_base, am.readMsr(.fs_base));
-        try vmwrite(vmcs.Guest.gs_base, am.readMsr(.gs_base));
+        try vmwrite(vmcs.Guest.fs_base, 0);
+        try vmwrite(vmcs.Guest.gs_base, 0);
     }
 
     // MSR
     try vmwrite(vmcs.Guest.sysenter_cs, 0);
     try vmwrite(vmcs.Guest.sysenter_esp, 0);
     try vmwrite(vmcs.Guest.sysenter_eip, 0);
+    try vmwrite(vmcs.Guest.efer, 0);
 
     // Other crucial fields.
     try vmwrite(vmcs.Guest.vmcs_link_pointer, std.math.maxInt(u64));
@@ -712,10 +792,10 @@ fn partialCheckGuest() VmxError!void {
     // == Checks on Guest Control Registers, Debug Registers, and MSRs.
     // cf. SDM Vol 3C 27.3.1.1.
     {
-        const vmx_cr0_fixed0: u32 = @truncate(am.readMsr(.vmx_cr0_fixed0));
-        const vmx_cr0_fixed1: u32 = @truncate(am.readMsr(.vmx_cr0_fixed1));
-        const vmx_cr4_fixed0: u32 = @truncate(am.readMsr(.vmx_cr4_fixed0));
-        const vmx_cr4_fixed1: u32 = @truncate(am.readMsr(.vmx_cr4_fixed1));
+        const vmx_cr0_fixed0 = am.readMsr(.vmx_cr0_fixed0);
+        const vmx_cr0_fixed1 = am.readMsr(.vmx_cr0_fixed1);
+        const vmx_cr4_fixed0 = am.readMsr(.vmx_cr4_fixed0);
+        const vmx_cr4_fixed1 = am.readMsr(.vmx_cr4_fixed1);
         if (!(exec_ctrl.activate_secondary_controls and exec_ctrl2.unrestricted_guest)) {
             if (@as(u64, @bitCast(cr0)) & vmx_cr0_fixed0 != vmx_cr0_fixed0) @panic("CR0: Fixed0 bits must be 1");
             if (@as(u64, @bitCast(cr0)) & ~vmx_cr0_fixed1 != 0) @panic("CR0: Fixed1 bits must be 0");

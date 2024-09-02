@@ -279,6 +279,37 @@ pub fn cpuid(eax: u32) CpuidRegisters {
     };
 }
 
+pub fn cpuidEcx(eax: u32, subEcx: u32) CpuidRegisters {
+    var eax_ret: u32 = undefined;
+    var ebx: u32 = undefined;
+    var ecx: u32 = undefined;
+    var edx: u32 = undefined;
+
+    asm volatile (
+        \\mov %[eax], %%eax
+        \\mov %[subEcx], %%ecx
+        \\cpuid
+        \\mov %%eax, %[eax_ret]
+        \\mov %%ebx, %[ebx]
+        \\mov %%ecx, %[ecx]
+        \\mov %%edx, %[edx]
+        : [eax_ret] "=r" (eax_ret),
+          [ebx] "=r" (ebx),
+          [ecx] "=r" (ecx),
+          [edx] "=r" (edx),
+        : [eax] "r" (eax),
+          [subEcx] "r" (subEcx),
+        : "rax", "rbx", "rcx", "rdx"
+    );
+
+    return .{
+        .eax = eax_ret,
+        .ebx = ebx,
+        .ecx = ecx,
+        .edx = edx,
+    };
+}
+
 pub fn readDebugRegister(dr: DebugRegister) u64 {
     var ret: u64 = undefined;
     switch (dr) {
@@ -434,6 +465,8 @@ pub const Msr = enum(u32) {
     sysenter_esp = 0x175,
     /// IA32_SYSENTER_EIP MSR. SDM Vol.3A Table 2-2.
     sysenter_eip = 0x176,
+    /// IA32_MISC_ENABLE MSR.
+    misc_enable = 0x1A0,
     /// IA32_PAT MSR.
     pat = 0x277,
     /// IA32_DEBUGCTL MSR. SDM Vol.4 Table 2-2.
