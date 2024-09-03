@@ -9,6 +9,7 @@ const linux = ymir.linux;
 const BootParams = linux.boot.BootParams;
 
 const am = @import("asm.zig");
+const apic = @import("apic.zig");
 const serial = @import("serial.zig");
 const vmcs = @import("vmx/vmcs.zig");
 const regs = @import("vmx/regs.zig");
@@ -43,6 +44,8 @@ pub fn vmxtry(rflags: u64) VmxError!void {
 pub const Vcpu = struct {
     const Self = @This();
 
+    /// ID of the logical processor.
+    id: usize = 0,
     /// VMXON region.
     vmxon_region: *VmxonRegion,
     /// VMCS region.
@@ -55,18 +58,19 @@ pub const Vcpu = struct {
     guest_regs: GuestRegisters = undefined,
     /// EPT pointer.
     eptp: ept.Eptp = undefined,
-    /// Guest memory.
-    guest_mem: []u8 = undefined,
 
     pub fn new() Self {
+        const id = apic.getLapicId();
+
         return Self{
+            .id = id,
             .vmxon_region = undefined,
             .vmcs_region = undefined,
         };
     }
 
     /// Enter VMX root operation and allocate VMCS region for this LP.
-    pub fn init(self: *Self, page_allocator: Allocator) VmxError!void {
+    pub fn virtualize(self: *Self, page_allocator: Allocator) VmxError!void {
         // Enter VMX root operation.
         self.vmxon_region = try vmxon(page_allocator);
 
@@ -87,7 +91,7 @@ pub const Vcpu = struct {
         try setupExitCtrls();
         try setupEntryCtrls();
         try setupHostState();
-        try setupGuestState();
+        try setupGuestState(self);
     }
 
     /// Start executing vCPU.
@@ -107,10 +111,10 @@ pub const Vcpu = struct {
     }
 
     /// TODO
-    pub fn initGuestPage(self: *Self, host_pages: []u8, page_allocator: Allocator) !void {
+    pub fn initGuestMap(self: *Self, host_pages: []u8, page_allocator: Allocator) !void {
         const lv4tbl = try ept.initEpt(
             0,
-            ymir.mem.virt2phys(@intFromPtr(host_pages.ptr)),
+            ymir.mem.virt2phys(host_pages.ptr),
             host_pages.len,
             page_allocator,
         );
@@ -118,66 +122,6 @@ pub const Vcpu = struct {
         self.eptp = eptp;
 
         try vmwrite(vmcs.Ctrl.eptp, eptp);
-
-        self.guest_mem = host_pages;
-    }
-
-    /// Load a protected kernel image and cmdline to the guest physical memory.
-    pub fn loadKernel(self: *Self, kernel: []u8, guest_mem: []u8) VmxError!void {
-        if (kernel.len >= guest_mem.len) {
-            return VmxError.OutOfMemory;
-        }
-
-        var boot_params = BootParams.from_bytes(kernel);
-
-        // Setup necessary fields
-        boot_params.hdr.type_of_loader = 0xFF;
-        boot_params.hdr.ext_loader_ver = 0;
-        boot_params.hdr.loadflags.LOADED_HIGH = true; // load kernel at 0x10_0000
-        boot_params.hdr.loadflags.CAN_USE_HEAP = true; // use memory 0..BOOTPARAM as heap
-        boot_params.hdr.heap_end_ptr = linux.layout.bootparam - 0x200;
-        boot_params.hdr.loadflags.KEEP_SEGMENTS = true; // we set CS/DS/SS/ES to flag segments with a base of 0.
-        boot_params.hdr.cmd_line_ptr = linux.layout.cmdline;
-        boot_params.hdr.vid_mode = 0xFFFF; // VGA (normal)
-
-        // Setup E820 map
-        boot_params.add_e820_entry(0, linux.layout.kernel_base, .RAM);
-        boot_params.add_e820_entry(
-            linux.layout.kernel_base,
-            guest_mem.len - linux.layout.kernel_base,
-            .RAM,
-        );
-
-        // Setup cmdline
-        const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + boot_params.hdr.cmdline_size];
-        const cmdline_val = "console=ttyS0";
-        @memset(cmdline, 0);
-        @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
-
-        // Copy boot_params
-        loadImage(guest_mem, std.mem.asBytes(&boot_params), linux.layout.bootparam);
-
-        // Load protected-mode kernel code
-        const code_offset = boot_params.hdr.get_protected_code_offset();
-        const code_size = kernel.len - code_offset;
-        loadImage(
-            guest_mem,
-            kernel[code_offset .. code_offset + code_size],
-            linux.layout.kernel_base,
-        );
-        log.debug("Guest kernel code offset: 0x{X:0>16}", .{code_offset});
-        if (linux.layout.kernel_base + code_size > guest_mem.len) {
-            return VmxError.OutOfMemory;
-        }
-
-        // Set registers
-        try vmwrite(vmcs.Guest.rflags, 0x2); // TODO
-        try vmwrite(vmcs.Guest.rip, linux.layout.kernel_base);
-        self.guest_regs.rsi = linux.layout.bootparam;
-    }
-
-    fn loadImage(memory: []u8, image: []u8, addr: usize) void {
-        @memcpy(memory[addr .. addr + image.len], image);
     }
 
     // Enter VMX non-root operation.
@@ -268,7 +212,6 @@ pub const Vcpu = struct {
                 vmread(vmcs.Guest.cs_limit) catch unreachable,
             },
         );
-        log.err("Offset of guest memory: 0x{X:0>16}", .{@intFromPtr(self.guest_mem.ptr)});
 
         unreachable;
     }
@@ -478,27 +421,27 @@ pub const Vcpu = struct {
     pub fn vmxoff(_: *Self) void {
         am.vmxoff();
     }
-};
 
-/// Enable VMX operations.
-pub fn enableVmx() void {
-    // Adjust control registers.
-    adjustControlRegisters();
+    /// Enable VMX operations.
+    pub fn enableVmx(_: *Self) void {
+        // Adjust control registers.
+        adjustControlRegisters();
 
-    // Check VMXON is allowed outside SMX.
-    var msr_fctl = am.readMsrFeatureControl();
-    if (!msr_fctl.vmx_outside_smx) {
-        // Enable VMX outside SMX.
-        if (msr_fctl.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
-        msr_fctl.vmx_outside_smx = true;
-        am.writeMsrFeatureControl(msr_fctl);
+        // Check VMXON is allowed outside SMX.
+        var msr_fctl = am.readMsrFeatureControl();
+        if (!msr_fctl.vmx_outside_smx) {
+            // Enable VMX outside SMX.
+            if (msr_fctl.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
+            msr_fctl.vmx_outside_smx = true;
+            am.writeMsrFeatureControl(msr_fctl);
+        }
+
+        // Set VMXE bit in CR4.
+        var cr4 = am.readCr4();
+        cr4.vmxe = true;
+        am.loadCr4(cr4);
     }
-
-    // Set VMXE bit in CR4.
-    var cr4 = am.readCr4();
-    cr4.vmxe = true;
-    am.loadCr4(cr4);
-}
+};
 
 /// Adjust physical CPU's CR0 and CR4 registers.
 fn adjustControlRegisters() void {
@@ -531,7 +474,7 @@ fn vmxon(page_allocator: Allocator) VmxError!*VmxonRegion {
     vmxon_region.vmcs_revision_id = getVmcsRevisionId();
     log.debug("VMCS revision ID: 0x{X:0>8}", .{vmxon_region.vmcs_revision_id});
 
-    const vmxon_phys = mem.virt2phys(@intFromPtr(vmxon_region));
+    const vmxon_phys = mem.virt2phys(vmxon_region);
     log.debug("VMXON region physical address: 0x{X:0>16}", .{vmxon_phys});
 
     am.vmxon(vmxon_phys) catch |err| {
@@ -546,27 +489,9 @@ fn vmxon(page_allocator: Allocator) VmxError!*VmxonRegion {
 /// After this operation, the VMCS becomes active and current logical processor.
 fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
     // The VMCS becomes inactive and flushed to memory.
-    try am.vmclear(mem.virt2phys(@intFromPtr(vmcs_region)));
+    try am.vmclear(mem.virt2phys(vmcs_region));
     // Load and activate the VMCS.
-    try am.vmptrld(mem.virt2phys(@intFromPtr(vmcs_region)));
-}
-
-/// TODO: temporal: Size of guest stack.
-const guest_stack_size: usize = 4096;
-/// TODO: temporal: Guest stack.
-var guest_stack: [guest_stack_size + 0x30]u8 align(0x10) = [_]u8{0} ** (guest_stack_size + 0x30);
-
-/// TODO: temporary
-export fn guestDebugHandler() callconv(.Naked) noreturn {
-    asm volatile (
-        \\call guestDebugHandler2
-    );
-
-    while (true) am.hlt();
-}
-
-export fn guestDebugHandler2() void {
-    log.debug("THIS IS GUEST!", .{});
+    try am.vmptrld(mem.virt2phys(vmcs_region));
 }
 
 /// Set up VM-Execution control fields.
@@ -673,7 +598,7 @@ fn setupHostState() VmxError!void {
     try vmwrite(vmcs.Host.efer, am.readMsr(.efer));
 }
 
-fn setupGuestState() VmxError!void {
+fn setupGuestState(vcpu: *Vcpu) VmxError!void {
     // Control registers.
     var cr0 = std.mem.zeroes(am.Cr0);
     cr0.pe = true; // Protected-mode
@@ -775,8 +700,13 @@ fn setupGuestState() VmxError!void {
     try vmwrite(vmcs.Guest.sysenter_eip, 0);
     try vmwrite(vmcs.Guest.efer, 0);
 
+    // General registers.
+    try vmwrite(vmcs.Guest.rflags, am.FlagsRegister.new());
+
     // Other crucial fields.
     try vmwrite(vmcs.Guest.vmcs_link_pointer, std.math.maxInt(u64));
+    try vmwrite(vmcs.Guest.rip, linux.layout.kernel_base);
+    vcpu.guest_regs.rsi = linux.layout.bootparam;
 }
 
 /// Partially checks the validity of guest state.
@@ -947,8 +877,8 @@ fn partialCheckGuest() VmxError!void {
     if ((entry_ctrl.ia32e_mode_guest or cs_ar.long) and (rip >> 32) != 0) @panic("RIP: Upper address must be all zeros");
     // TODO: If the processor supports N < 64 linear-address bits, ...
 
-    if (rflags._reserved != 0 or rflags._reserved2 != 0 or rflags._reserved3 != 0 or rflags._reserved4 != 0) @panic("RFLAGS: Reserved bits must be zero");
-    if (rflags._reserved1 != 1) @panic("RFLAGS: Reserved bit 1 must be one");
+    if (rflags._reserved4 != 0 or rflags._reserved1 != 0 or rflags._reserved2 != 0 or rflags._reserved3 != 0) @panic("RFLAGS: Reserved bits must be zero");
+    if (rflags._reservedO != 1) @panic("RFLAGS: Reserved bit 1 must be one");
     if ((entry_ctrl.ia32e_mode_guest or !cr0.pe) and rflags.vm) @panic("RFLAGS: VM must be clear when IA-32e mode is enabled");
     if (((intr_info >> 31) & 1 != 0) and !rflags.ief) @panic("RFLAGS: IF must be set when valid bit in VM-entry interruption-information field is set.");
 

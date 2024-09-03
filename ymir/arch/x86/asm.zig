@@ -1,5 +1,7 @@
 //! This module provides a set of functions corresponding to x64 asm instructions.
 
+const std = @import("std");
+
 const ymir = @import("ymir");
 const mem = ymir.mem;
 const vmx = @import("vmx.zig");
@@ -560,15 +562,15 @@ pub const FlagsRegister = packed struct(u64) {
     /// Carry flag.
     cf: bool,
     /// Reserved. Must be 1.
-    _reserved1: u1 = 1,
+    _reservedO: u1 = 1,
     /// Parity flag.
     pf: bool,
     /// Reserved. Must be 0.
-    _reserved2: u1 = 0,
+    _reserved1: u1 = 0,
     /// Auxiliary carry flag.
     af: bool,
     /// Reserved. Must be 0.
-    _reserved3: u1 = 0,
+    _reserved2: u1 = 0,
     /// Zero flag.
     zf: bool,
     /// Sign flag.
@@ -600,13 +602,19 @@ pub const FlagsRegister = packed struct(u64) {
     /// CPUID support.
     id: bool,
     /// Reserved.
-    _reserved4: u8,
+    _reserved3: u8,
     /// Reserved.
     aes: bool,
     /// Alternate instruction set enabled.
     ai: bool,
     /// Reserved. Must be 0.
-    _reserved: u32 = 0,
+    _reserved4: u32 = 0,
+
+    pub fn new() FlagsRegister {
+        var ret = std.mem.zeroes(FlagsRegister);
+        ret._reservedO = 1;
+        return ret;
+    }
 };
 
 /// CR0 register.

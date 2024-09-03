@@ -11,18 +11,21 @@ const idefs = @import("interrupts.zig");
 const serial = ymir.serial;
 const klog = ymir.klog;
 const arch = ymir.arch;
+const mem = ymir.mem;
 const vmx = ymir.vmx;
 const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
+
+const page_size = mem.page_size;
 
 pub const panic = @import("panic.zig").panic_fn;
 pub const std_options = klog.default_log_options;
 
 /// Size in bytes pages of the kernel stack.
-const kstack_size = arch.page_size * 5;
+const kstack_size = page_size * 5;
 /// Kernel stack.
 /// The first page is used as a guard page.
 /// TODO: make the guard page read-only.
-var kstack: [kstack_size + arch.page_size]u8 align(arch.page_size) = [_]u8{0} ** (kstack_size + arch.page_size);
+var kstack: [kstack_size + page_size]u8 align(page_size) = [_]u8{0} ** (kstack_size + page_size);
 
 /// Kernel entry point called by surtr.
 /// The function switches stack from the surtr stack to the kernel stack.
@@ -31,7 +34,7 @@ export fn kernelEntry() callconv(.Naked) noreturn {
         \\movq %[new_stack], %%rsp
         \\call kernelTrampoline
         :
-        : [new_stack] "r" (@intFromPtr(&kstack) + kstack_size + arch.page_size),
+        : [new_stack] "r" (@intFromPtr(&kstack) + kstack_size + page_size),
     );
 }
 
@@ -116,57 +119,30 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
 
     // Check if VMX is supported.
     arch.enableCpuid();
-    const vendor = arch.getCpuVendorId();
-    log.info("CPU vendor: {s}", .{vendor});
-    if (!std.mem.eql(u8, vendor[0..], "GenuineIntel")) @panic("Unsupported CPU vendor.");
-
-    const feature = arch.getFeatureInformation();
-    if (!feature.ecx.vmx) @panic("VMX is not supported.");
-
-    // Enable VMX.
-    vmx.enableVmx();
-    log.info("Enabled VMX.", .{});
 
     // Enter VMX root operation.
-    var vcpu = vmx.Vcpu.new();
-    try vcpu.init(ymir.mem.page_allocator);
+    var vm = try vmx.Vm.new();
+    try vm.init(ymir.mem.page_allocator);
     log.info("Entered VMX root operation.", .{});
 
-    // Setup VMCS
-    try vcpu.setupVmcs();
-
-    // Allocate guest pages.
-    log.info("Guest kernel image @ {X:0>16} (0x{X}-bytes)", .{ @intFromPtr(guest_info.guest_image), guest_info.guest_size });
-    const guest_memory_size = 0x100_000 * 100; // 100MB
-    const guest_pages = ymir.mem.page_allocator_instance.allocPages(
-        guest_memory_size,
-        0x100_000 * 2, // 2MB
-    ) orelse return error.OutOfMemory;
-    log.info("Guest pages allocated at host memory @{X:0>16} (0x{X}-bytes)", .{ @intFromPtr(guest_pages.ptr), guest_memory_size });
-
-    // Load guest kernel
+    // Setup guest memory and load guest.
     const guest_kernel = b: {
-        const ptr: [*]u8 = @ptrFromInt(ymir.mem.phys2virt(@intFromPtr(guest_info.guest_image)));
+        const ptr: [*]u8 = @ptrFromInt(ymir.mem.phys2virt(guest_info.guest_image));
         break :b ptr[0..guest_info.guest_size];
     };
-    try vcpu.loadKernel(guest_kernel, guest_pages);
-
-    // Initialize EPT.
-    try vcpu.initGuestPage(guest_pages, ymir.mem.page_allocator);
+    try vm.setupGuestMemory(
+        guest_kernel,
+        ymir.mem.page_allocator,
+        &ymir.mem.page_allocator_instance,
+    );
+    log.info("Setup guest memory.", .{});
 
     // Launch
-    log.info("Entering VMX non-root operation...", .{});
-    vcpu.loop() catch |err| switch (err) {
-        error.FailureStatusAvailable => {
-            log.err("VMLAUNCH failed: error={?}", .{try vmx.getInstError()});
-            return err;
-        },
-        else => return err,
-    };
+    log.info("Starting the virtual machine...", .{});
+    try vm.loop();
 
     // Exit VMX root operation.
-    log.info("Exiting VMX root operation...", .{});
-    vcpu.vmxoff();
+    vm.deinit();
 
     // EOL
     log.info("Reached EOL.", .{});

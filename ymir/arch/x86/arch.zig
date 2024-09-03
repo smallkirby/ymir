@@ -5,16 +5,10 @@ pub const intr = @import("interrupt.zig");
 pub const page = @import("page.zig");
 pub const pic = @import("pic.zig");
 pub const serial = @import("serial.zig");
+pub const apic = @import("apic.zig");
 
 const cpuid = @import("cpuid.zig");
 const am = @import("asm.zig");
-
-/// Page size.
-pub const page_size: usize = 4096;
-/// Page shift in bits.
-pub const page_shift: usize = 12;
-/// Page mask.
-pub const page_mask: usize = page_size - 1;
 
 /// Pause a CPU for a short period of time.
 pub fn relax() void {

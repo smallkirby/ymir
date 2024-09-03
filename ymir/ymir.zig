@@ -1,10 +1,10 @@
 pub const serial = @import("serial.zig");
-pub const arch = @import("arch.zig").impl;
+pub const arch = @import("arch.zig");
 pub const klog = @import("log.zig");
 pub const linux = @import("linux.zig");
 pub const mem = @import("mem.zig");
 pub const spin = @import("spin.zig");
-pub const vmx = @import("vmx.zig").impl;
+pub const vmx = @import("vmx.zig");
 
 /// Base virtual address of direct mapping.
 /// The virtual address starting from the address is directly mapped to the physical address at 0x0.

@@ -17,8 +17,9 @@ const MemoryMap = surtr.MemoryMap;
 const MemoryDescriptorIterator = surtr.MemoryDescriptorIterator;
 
 const ymir = @import("ymir");
+const mem = ymir.mem;
 const arch = ymir.arch;
-const page_size = arch.page_size;
+const page_size = mem.page_size;
 
 const PageAddr = u64;
 const PageInUseList = SinglyLinkedList(PageAddr);
@@ -76,8 +77,8 @@ pub fn allocatePage() Error![*]align(page_size) u8 {
 
         // Find available page.
         var current = desc.physical_start;
-        const end = current + desc.number_of_pages * arch.page_size;
-        while (current < end) : (current += arch.page_size) {
+        const end = current + desc.number_of_pages * page_size;
+        while (current < end) : (current += page_size) {
             if (current == 0) continue; // avoid using NULL page
             if (!isPageInuse(current)) {
                 try markPageInuse(current);

@@ -6,13 +6,16 @@ const log = std.log.scoped(.ept);
 const Allocator = std.mem.Allocator;
 
 const ymir = @import("ymir");
-const Phys = ymir.mem.Phys;
-const Virt = ymir.mem.Virt;
+const mem = ymir.mem;
+const Phys = mem.Phys;
+const Virt = mem.Virt;
 
-const page_mask_4k = ymir.arch.page_mask;
-const page_mask_2mb: usize = page_size_2mb - 1;
-const page_shift = ymir.arch.page_shift;
-const page_size = ymir.arch.page_size;
+const page_mask_4k = mem.page_mask_4k;
+const page_mask_2mb = mem.page_mask_2mb;
+const page_shift_4k = mem.page_shift_4k;
+const page_size_4k = mem.page_size_4k;
+const page_size_2mb = mem.page_size_2mb;
+const page_size_1gb = mem.page_size_1gb;
 
 const v2p = ymir.mem.virt2phys;
 const p2v = ymir.mem.phys2virt;
@@ -28,12 +31,6 @@ const lv1_shift = 12;
 /// Mask to extract page entry index from a shifted guest physical address.
 const index_mask = 0x1FF;
 
-/// Size in bytes of a 4K page.
-const page_size_4k: usize = page_size;
-/// Size in bytes of a 2M page.
-const page_size_2mb: usize = page_size_4k << 9;
-/// Size in bytes of a 1G page.
-const page_size_1gb: usize = page_size_2mb << 9;
 /// Number of entries in a page table.
 const num_table_entries: usize = 512;
 
@@ -98,7 +95,7 @@ fn map2m(
     if (!lv2ent.present()) {
         lv2ent.* = Lv2EptEntry{
             .map_memory = true,
-            .phys = @truncate(host_phys >> page_shift),
+            .phys = @truncate(host_phys >> page_shift_4k),
         };
     }
 }
@@ -191,17 +188,17 @@ const Lv4EptEntry = packed struct(u64) {
 
     /// Create a new Level-4 EPT entry that references a level-3 EPT table.
     pub fn new(lv3tbl: []Lv3EptEntry) Lv4EptEntry {
-        const phys_lv3tbl = v2p(@intFromPtr(lv3tbl.ptr));
+        const phys_lv3tbl = v2p(lv3tbl.ptr);
         return Lv4EptEntry{
             .map_memory = false,
             .type = .uncacheable,
-            .phys = @truncate(phys_lv3tbl >> page_shift),
+            .phys = @truncate(phys_lv3tbl >> page_shift_4k),
         };
     }
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv4EptEntry) Phys {
-        return @as(u64, @intCast(self.phys)) << page_shift;
+        return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
@@ -239,17 +236,17 @@ const Lv3EptEntry = packed struct(u64) {
 
     /// Create a new Level-3 EPT entry that references a level-2 EPT table.
     pub fn new(lv2tbl: []Lv2EptEntry) Lv3EptEntry {
-        const phys_lv2tbl = v2p(@intFromPtr(lv2tbl.ptr));
+        const phys_lv2tbl = v2p(lv2tbl.ptr);
         return Lv3EptEntry{
             .map_memory = false,
             .type = .uncacheable,
-            .phys = @truncate(phys_lv2tbl >> page_shift),
+            .phys = @truncate(phys_lv2tbl >> page_shift_4k),
         };
     }
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv3EptEntry) Phys {
-        return @as(u64, @intCast(self.phys)) << page_shift;
+        return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
@@ -287,7 +284,7 @@ const Lv2EptEntry = packed struct(u64) {
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv2EptEntry) Phys {
-        return @as(u64, @intCast(self.phys_pdpt)) << page_shift;
+        return @as(u64, @intCast(self.phys_pdpt)) << page_shift_4k;
     }
 };
 
@@ -338,7 +335,7 @@ pub const Eptp = packed struct(u64) {
 
     pub fn new(lv4tbl: []Lv4EptEntry) Eptp {
         return Eptp{
-            .phys = @truncate(v2p(@intFromPtr(lv4tbl.ptr)) >> page_shift),
+            .phys = @truncate(v2p(lv4tbl.ptr) >> page_shift_4k),
         };
     }
 

@@ -60,16 +60,17 @@ pub const SetupHeader = extern struct {
     /// Bitfield for loadflags.
     const LoadflagBitfield = packed struct(u8) {
         /// If true, the protected-mode code is loaded at 0x100000.
-        LOADED_HIGH: bool = false,
+        loaded_high: bool = false,
         /// If true, KASLR enabled.
-        KASLR_FLAG: bool = false,
+        kaslr_flag: bool = false,
+        /// Unused.
         _unused: u3 = 0,
         /// If false, print early messages.
-        QUIET_FLAG: bool = false,
+        quiet_flag: bool = false,
         /// If false, reload the segment registers in the 32bit entry point.
-        KEEP_SEGMENTS: bool = false,
+        keep_segments: bool = false,
         /// Set true to indicate that the value entered in the `heap_end_ptr` is valid.
-        CAN_USE_HEAP: bool = false,
+        can_use_heap: bool = false,
 
         /// Convert to u8.
         pub fn to_u8(self: @This()) u8 {
@@ -126,15 +127,15 @@ pub const E820Entry = extern struct {
 
     pub const Type = enum(u32) {
         /// RAM.
-        RAM = 1,
+        ram = 1,
         /// Reserved.
-        RESERVED = 2,
+        reserved = 2,
         /// ACPI reclaimable memory.
-        ACPI = 3,
+        acpi = 3,
         /// ACPI NVS memory.
-        NVS = 4,
+        nvs = 4,
         /// Unusable memory region.
-        UNUSABLE = 5,
+        unusable = 5,
     };
 
     comptime {

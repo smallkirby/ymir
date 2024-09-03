@@ -22,28 +22,22 @@ const arch = @import("arch.zig");
 const am = @import("asm.zig");
 
 const ymir = @import("ymir");
-const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
+const mem = ymir.mem;
+const BootstrapPageAllocator = mem.BootstrapPageAllocator;
 const direct_map_base = ymir.direct_map_base;
-const virt2phys = ymir.mem.virt2phys;
-const phys2virt = ymir.mem.phys2virt;
-const Virt = ymir.mem.Virt;
-const Phys = ymir.mem.Phys;
+const virt2phys = mem.virt2phys;
+const phys2virt = mem.phys2virt;
+const Virt = mem.Virt;
+const Phys = mem.Phys;
+const page_size_4k = mem.page_size_4k;
+const page_size_2mb = mem.page_size_2mb;
+const page_size_1gb = mem.page_size_1gb;
+const page_shift_4k = mem.page_shift_4k;
 
 pub const PageError = error{
     /// Failed to allocate memory.
     NoMemory,
 };
-
-/// Size in bytes of a 4K page.
-const page_size_4k: usize = arch.page_size;
-/// Size in bytes of a 2M page.
-const page_size_2mb: usize = page_size_4k << 9;
-/// Size in bytes of a 1G page.
-const page_size_1gb: usize = page_size_2mb << 9;
-/// Shift in bits for a page.
-const page_shift = arch.page_shift;
-/// Number of entries in a page table.
-const num_table_entries: usize = 512;
 
 /// Shift in bits to extract the level-4 index from a virtual address.
 const lv4_shift = 39;
@@ -55,6 +49,9 @@ const lv2_shift = 21;
 const lv1_shift = 12;
 /// Mask to extract page entry index from a shifted virtual address.
 const index_mask = 0x1FF;
+
+/// Number of entries in a page table.
+const num_table_entries: usize = 512;
 
 /// Length of the implemented bits.
 const implemented_bit_length = 48;
@@ -148,7 +145,7 @@ pub fn cloneUefiPageTables() !void {
         if (lv4_entry.present) {
             const lv3_table = getLv3PageTable(lv4_entry.address());
             const new_lv3_table = try cloneLevel3Table(lv3_table);
-            lv4_entry.phys_pdpt = @truncate(@as(u64, @intFromPtr(new_lv3_table.ptr)) >> page_shift);
+            lv4_entry.phys_pdpt = @truncate(@as(u64, @intFromPtr(new_lv3_table.ptr)) >> page_shift_4k);
         }
     }
 
@@ -166,7 +163,7 @@ fn cloneLevel3Table(lv3_table: []Lv3PageTableEntry) ![]Lv3PageTableEntry {
 
         const lv2_table = getLv2PageTable(lv3_entry.address());
         const new_lv2_table = try cloneLevel2Table(lv2_table);
-        lv3_entry.phys_pdt = @truncate(@as(u64, @intFromPtr(new_lv2_table.ptr)) >> page_shift);
+        lv3_entry.phys_pdt = @truncate(@as(u64, @intFromPtr(new_lv2_table.ptr)) >> page_shift_4k);
     }
 
     return new_lv3_table;
@@ -183,7 +180,7 @@ fn cloneLevel2Table(lv2_table: []Lv2PageTableEntry) ![]Lv2PageTableEntry {
 
         const lv1_table = getLv1PageTable(lv2_entry.address());
         const new_lv1_table = try cloneLevel1Table(lv1_table);
-        lv2_entry.phys_pt = @truncate(@as(u64, @intFromPtr(new_lv1_table.ptr)) >> page_shift);
+        lv2_entry.phys_pt = @truncate(@as(u64, @intFromPtr(new_lv1_table.ptr)) >> page_shift_4k);
     }
 
     return new_lv2_table;
@@ -211,7 +208,7 @@ pub fn directOffsetMap() !void {
             .present = true,
             .rw = true,
             .us = false,
-            .phys_pdpt = @truncate(@as(u64, @intFromPtr(lv3_table.ptr)) >> page_shift),
+            .phys_pdpt = @truncate(@as(u64, @intFromPtr(lv3_table.ptr)) >> page_shift_4k),
         };
     }
 
@@ -252,9 +249,9 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     const cr3 = am.readCr3();
     const lv4_table: [*]Lv4PageTableEntry = @ptrFromInt(phys2virt(cr3));
     const lv4_entry = lv4_table[pml4_index];
-    const lv3_table: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv4_entry.phys_pdpt << page_shift));
+    const lv3_table: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv4_entry.phys_pdpt << page_shift_4k));
     const lv3_entry = lv3_table[pdp_index];
-    const lv2_table: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv3_entry.phys_pdt << page_shift));
+    const lv2_table: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv3_entry.phys_pdt << page_shift_4k));
     const lv2_entry = lv2_table[pdt_index];
 
     logger.info("Lv4: 0x{X:0>16}", .{@intFromPtr(lv4_table)});
@@ -265,7 +262,7 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     logger.info("\t[{d}]: 0x{X:0>16}", .{ pdt_index, std.mem.bytesAsValue(u64, &lv2_entry).* });
 
     if (!lv2_entry.ps) {
-        const lv1_table: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv2_entry.phys_pt << page_shift));
+        const lv1_table: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv2_entry.phys_pt << page_shift_4k));
         const lv1_entry = lv1_table[pt_index];
         logger.info("Lv1: 0x{X:0>16}", .{@intFromPtr(lv1_table)});
         logger.info("\t[{d}]: 0x{X:0>16}", .{ pt_index, std.mem.bytesAsValue(u64, &lv1_entry).* });
@@ -319,13 +316,13 @@ const Lv4PageTableEntry = packed struct(u64) {
             .present = true,
             .rw = true,
             .us = false,
-            .phys_pdpt = @truncate(@as(u64, @intFromPtr(phys_pdpt)) >> page_shift),
+            .phys_pdpt = @truncate(@as(u64, @intFromPtr(phys_pdpt)) >> page_shift_4k),
         };
     }
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv4PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_pdpt)) << page_shift;
+        return @as(u64, @intCast(self.phys_pdpt)) << page_shift_4k;
     }
 };
 
@@ -380,13 +377,13 @@ const Lv3PageTableEntry = packed struct(u64) {
             .rw = true,
             .us = false,
             .ps = false,
-            .phys_pdt = @truncate(phys_pdt >> page_shift),
+            .phys_pdt = @truncate(phys_pdt >> page_shift_4k),
         };
     }
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv3PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_pdt)) << page_shift;
+        return @as(u64, @intCast(self.phys_pdt)) << page_shift_4k;
     }
 };
 
