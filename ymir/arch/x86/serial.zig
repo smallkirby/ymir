@@ -7,22 +7,22 @@ const Serial = ymir.serial.Serial;
 
 /// Available serial ports.
 pub const Ports = enum(u16) {
-    COM1 = 0x3F8,
-    COM2 = 0x2F8,
-    COM3 = 0x3E8,
-    COM4 = 0x2E8,
+    com1 = 0x3F8,
+    com2 = 0x2F8,
+    com3 = 0x3E8,
+    com4 = 0x2E8,
 };
 
 /// IRQs to which serial ports can generate interrupts.
 const Irq = struct {
-    pub const COM1 = 4;
-    pub const COM2 = 3;
-    pub const COM3 = 4;
-    pub const COM4 = 3;
+    pub const com1 = 4;
+    pub const com2 = 3;
+    pub const com3 = 4;
+    pub const com4 = 3;
 };
 
-const DIVISOR_LATCH_NUMERATOR = 115200;
-const DEFAULT_BAUD_RATE = 9600;
+const divisor_latch_numerator = 115200;
+const default_baufd_rate = 9600;
 
 const UartOffset = struct {
     /// Transmitter Holding Buffer: DLAB=0, W
@@ -60,7 +60,7 @@ pub fn initSerial(serial: *Serial, port: Ports, baud: u32) void {
     am.outb(0b0000_0011, p + UartOffset.MCR); // Request-to-send, Data-terminal-ready
 
     // set baud rate
-    const divisor = DIVISOR_LATCH_NUMERATOR / baud;
+    const divisor = divisor_latch_numerator / baud;
     const c = am.inb(p + UartOffset.LCR);
     am.outb(c | 0b1000_0000, p + UartOffset.LCR); // Enable DLAB
     am.outb(@truncate(divisor & 0xFF), p + UartOffset.DLL);
@@ -74,16 +74,16 @@ pub fn initSerial(serial: *Serial, port: Ports, baud: u32) void {
 /// You MUST ensure that the console of the `port` is initialized before calling this function.
 pub fn getSerial(serial: *Serial, port: Ports) void {
     serial._write_fn = switch (port) {
-        Ports.COM1 => writeByteCom1,
-        Ports.COM2 => writeByteCom2,
-        Ports.COM3 => writeByteCom3,
-        Ports.COM4 => writeByteCom5,
+        .com1 => writeByteCom1,
+        .com2 => writeByteCom2,
+        .com3 => writeByteCom3,
+        .com4 => writeByteCom5,
     };
     serial._read_fn = switch (port) {
-        Ports.COM1 => readByteCom1,
-        Ports.COM2 => readByteCom2,
-        Ports.COM3 => readByteCom3,
-        Ports.COM4 => readByteCom4,
+        .com1 => readByteCom1,
+        .com2 => readByteCom2,
+        .com3 => readByteCom3,
+        .com4 => readByteCom4,
     };
 }
 
@@ -120,19 +120,19 @@ fn writeByte(byte: u8, port: Ports) void {
 }
 
 fn writeByteCom1(byte: u8) void {
-    writeByte(byte, Ports.COM1);
+    writeByte(byte, .com1);
 }
 
 fn writeByteCom2(byte: u8) void {
-    writeByte(byte, Ports.COM2);
+    writeByte(byte, .com2);
 }
 
 fn writeByteCom3(byte: u8) void {
-    writeByte(byte, Ports.COM3);
+    writeByte(byte, .com3);
 }
 
 fn writeByteCom5(byte: u8) void {
-    writeByte(byte, Ports.COM4);
+    writeByte(byte, .com4);
 }
 
 fn readByte(port: Ports) u8 {
@@ -146,17 +146,17 @@ fn readByte(port: Ports) u8 {
 }
 
 fn readByteCom1() u8 {
-    return readByte(Ports.COM1);
+    return readByte(.com1);
 }
 
 fn readByteCom2() u8 {
-    return readByte(Ports.COM2);
+    return readByte(.com2);
 }
 
 fn readByteCom3() u8 {
-    return readByte(Ports.COM3);
+    return readByte(.com3);
 }
 
 fn readByteCom4() u8 {
-    return readByte(Ports.COM4);
+    return readByte(.com4);
 }

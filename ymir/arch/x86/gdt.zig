@@ -74,7 +74,10 @@ fn loadKernelDs() void {
         \\mov %%di, %%gs
         \\mov %%di, %%ss
         :
-        : [kernel_ds] "n" (@as(u32, kernel_ds_index << 3)),
+        : [kernel_ds] "n" (@as(u16, @bitCast(SegmentSelector{
+            .rpl = 0,
+            .index = kernel_ds_index,
+          }))),
     );
 }
 
@@ -94,7 +97,10 @@ fn loadKernelCs() void {
         \\next:
         \\
         :
-        : [kernel_cs] "n" (@as(u32, kernel_cs_index << 3)),
+        : [kernel_cs] "n" (@as(u16, @bitCast(SegmentSelector{
+            .rpl = 0,
+            .index = kernel_cs_index,
+          }))),
     );
 }
 
@@ -105,7 +111,10 @@ fn loadKernelTss() void {
         \\mov %[kernel_tss], %%di
         \\ltr %%di
         :
-        : [kernel_tss] "n" (@as(u32, kernel_tss_index << 3)),
+        : [kernel_tss] "n" (@as(u16, @bitCast(SegmentSelector{
+            .rpl = 0,
+            .index = kernel_tss_index,
+          }))),
     );
 }
 
@@ -231,6 +240,19 @@ pub const SegmentType = enum(u4) {
     CodeECA = 13,
     CodeERC = 14,
     CodeERCA = 15,
+};
+
+pub const SegmentSelector = packed struct(u16) {
+    /// Requested Privilege Level.
+    rpl: u2,
+    /// Table Indicator.
+    ti: u1 = 0,
+    /// Index.
+    index: u13,
+
+    pub fn from(val: anytype) SegmentSelector {
+        return @bitCast(@as(u16, @truncate(val)));
+    }
 };
 
 const GdtRegister = packed struct {

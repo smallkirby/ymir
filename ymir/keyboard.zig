@@ -42,7 +42,7 @@ pub fn init(source: Keyboard) void {
         },
         .serial => {
             arch.intr.registerHandler(idefs.pic_serial1, serialInterruptHandler);
-            arch.serial.enableInterrupt(.COM1);
+            arch.serial.enableInterrupt(.com1);
             arch.pic.unsetMask(.Serial1);
         },
     }

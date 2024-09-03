@@ -87,7 +87,7 @@ pub inline fn hlt() void {
     asm volatile ("hlt");
 }
 
-pub inline fn loadCr0(cr0: Cr0) void {
+pub inline fn loadCr0(cr0: anytype) void {
     asm volatile (
         \\mov %[cr0], %%cr0
         :
@@ -128,7 +128,7 @@ pub inline fn readCr3() u64 {
     );
 }
 
-pub inline fn loadCr4(cr4: Cr4) void {
+pub inline fn loadCr4(cr4: anytype) void {
     asm volatile (
         \\mov %[cr4], %%cr4
         :
@@ -153,7 +153,7 @@ pub inline fn readEflags() FlagsRegister {
     ));
 }
 
-pub inline fn writeEflags(eflags: FlagsRegister) void {
+pub inline fn writeEflags(eflags: anytype) void {
     asm volatile (
         \\push %[eflags]
         \\popfq
@@ -457,6 +457,18 @@ pub fn relax() void {
     asm volatile ("rep; nop");
 }
 
+fn cast(T: type, value: anytype) T {
+    return switch (@typeInfo(T)) {
+        .Int, .ComptimeInt => return @as(T, @bitCast(value)),
+        .Strunct => if (@TypeOf(value) == T) {
+            return value;
+        } else {
+            @compileError("cast: Invalid type");
+        },
+        else => @compileError("cast: Unsupported type"),
+    };
+}
+
 /// MSR addresses.
 pub const Msr = enum(u32) {
     /// IA32_FEATURE_CONTROL MSR.
@@ -532,7 +544,9 @@ pub const MsrFeatureControl = packed struct(u64) {
     senter_global_enable: bool,
     /// Reserved.
     _reserved2: u1,
+    ///
     sgx_launch_control_enable: bool,
+    ///
     sgx_global_enable: bool,
     /// Reserved.
     _reserved3: u1,

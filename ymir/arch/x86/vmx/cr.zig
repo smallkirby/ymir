@@ -21,7 +21,7 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
                     vcpu.ia32_enabled = cr0.pg;
                     try vmwrite(vmcs.Guest.cr0, adjustCr0(@bitCast(cr0)));
 
-                    var entry_ctrl = try vmcs.entry_control.EntryControls.get();
+                    var entry_ctrl = try vmcs.EntryCtrl.store();
                     entry_ctrl.ia32e_mode_guest = vcpu.ia32_enabled;
                     try entry_ctrl.load();
 

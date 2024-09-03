@@ -142,7 +142,7 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try vm.loop();
 
     // Exit VMX root operation.
-    vm.deinit();
+    vm.devirtualize();
 
     // EOL
     log.info("Reached EOL.", .{});

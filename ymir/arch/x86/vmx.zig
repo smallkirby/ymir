@@ -10,6 +10,7 @@ const BootParams = linux.boot.BootParams;
 
 const am = @import("asm.zig");
 const apic = @import("apic.zig");
+const gdt = @import("gdt.zig");
 const serial = @import("serial.zig");
 const vmcs = @import("vmx/vmcs.zig");
 const regs = @import("vmx/regs.zig");
@@ -23,20 +24,25 @@ const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
 const isCanonical = @import("page.zig").isCanonical;
 
-const vmx_error = @import("vmx/error.zig");
-pub const VmxError = vmx_error.VmxError;
-pub const ExitInformation = vmx_error.ExitInformation;
-pub const InstructionError = vmx_error.InstructionError;
-
 /// Size of VM-exit trampoline stack.
 const vmexit_stack_size: usize = 4096;
 /// VM-exit trampoline stack.
 var vmexit_stack: [vmexit_stack_size + 0x30]u8 align(0x10) = [_]u8{0} ** (vmexit_stack_size + 0x30);
 
+pub const VmxError = error{
+    /// VMCS pointer is invalid. No status available.
+    VmxStatusUnavailable,
+    /// VMCS pointer is valid but the operation failed.
+    /// If a current VMCS is active, error status is stored in VM-instruction error field.
+    VmxStatusAvailable,
+    /// Failed to allocate memory.
+    OutOfMemory,
+};
+
 /// Read RFLAGS and checks if a VMX instruction has failed.
 pub fn vmxtry(rflags: u64) VmxError!void {
     const flags: am.FlagsRegister = @bitCast(rflags);
-    return if (flags.cf) VmxError.FailureInvalidVmcsPointer else if (flags.zf) VmxError.FailureStatusAvailable;
+    return if (flags.cf) VmxError.VmxStatusUnavailable else if (flags.zf) VmxError.VmxStatusAvailable;
 }
 
 /// Virtual logical CPU.
@@ -59,6 +65,27 @@ pub const Vcpu = struct {
     /// EPT pointer.
     eptp: ept.Eptp = undefined,
 
+    const GuestRegisters = packed struct {
+        rax: u64,
+        rcx: u64,
+        rdx: u64,
+        rbx: u64,
+        rbp: u64,
+        rsi: u64,
+        rdi: u64,
+        r8: u64,
+        r9: u64,
+        r10: u64,
+        r11: u64,
+        r12: u64,
+        r13: u64,
+        r14: u64,
+        r15: u64,
+    };
+
+    /// Create a new virtual CPU.
+    /// This function does not virtualize the CPU.
+    /// You MUST call `virtualize` to put the CPU in VMX root operation.
     pub fn new() Self {
         const id = apic.getLapicId();
 
@@ -67,6 +94,26 @@ pub const Vcpu = struct {
             .vmxon_region = undefined,
             .vmcs_region = undefined,
         };
+    }
+
+    /// Enable VMX operations.
+    pub fn enableVmx(_: *Self) void {
+        // Adjust control registers.
+        adjustControlRegisters();
+
+        // Check VMXON is allowed outside SMX.
+        var msr_fctl = am.readMsrFeatureControl();
+        if (!msr_fctl.vmx_outside_smx) {
+            // Enable VMX outside SMX.
+            if (msr_fctl.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
+            msr_fctl.vmx_outside_smx = true;
+            am.writeMsrFeatureControl(msr_fctl);
+        }
+
+        // Set VMXE bit in CR4.
+        var cr4 = am.readCr4();
+        cr4.vmxe = true;
+        am.loadCr4(cr4);
     }
 
     /// Enter VMX root operation and allocate VMCS region for this LP.
@@ -80,48 +127,56 @@ pub const Vcpu = struct {
         self.vmcs_region = vmcs_region;
     }
 
+    /// Exit VMX operation.
+    pub fn devirtualize(_: *Self) void {
+        am.vmxoff();
+    }
+
     /// Set up VMCS for a logical processor.
-    /// TODO: This is a temporary implementation.
     pub fn setupVmcs(self: *Self) VmxError!void {
         // Reset VMCS.
         try resetVmcs(self.vmcs_region);
 
-        // Init fields.
-        try setupExecCtrls();
-        try setupExitCtrls();
-        try setupEntryCtrls();
-        try setupHostState();
+        // Initialize VMCS fields.
+        try setupExecCtrls(self);
+        try setupExitCtrls(self);
+        try setupEntryCtrls(self);
+        try setupHostState(self);
         try setupGuestState(self);
     }
 
-    /// Start executing vCPU.
-    pub fn loop(self: *Self) VmxError!void {
-        while (true) {
-            try partialCheckGuest();
-            self.vmentry() catch |err| {
-                log.err("VM-entry failed: {?}", .{err});
-                if (err == VmxError.FailureStatusAvailable) {
-                    const inst_err = getInstError() catch unreachable;
-                    log.err("VM Instruction error: {?}", .{inst_err});
-                }
-                @panic("Aborting Ymir...");
-            };
-            try self.handleExit(try getExitReason());
-        }
-    }
-
-    /// TODO
-    pub fn initGuestMap(self: *Self, host_pages: []u8, page_allocator: Allocator) !void {
+    /// Maps guest physical memory to host physical memory.
+    pub fn initGuestMap(self: *Self, host_pages: []u8, allocator: Allocator) !void {
         const lv4tbl = try ept.initEpt(
             0,
             ymir.mem.virt2phys(host_pages.ptr),
             host_pages.len,
-            page_allocator,
+            allocator,
         );
         const eptp = ept.Eptp.new(lv4tbl);
         self.eptp = eptp;
 
         try vmwrite(vmcs.Ctrl.eptp, eptp);
+    }
+
+    /// Start executing vCPU.
+    pub fn loop(self: *Self) VmxError!void {
+        while (true) {
+            if (ymir.is_debug) {
+                try partialCheckGuest();
+            }
+
+            self.vmentry() catch |err| {
+                log.err("VM-entry failed: {?}", .{err});
+                if (err == VmxError.VmxStatusAvailable) {
+                    const inst_err = getInstError() catch unreachable;
+                    log.err("VM Instruction error: {?}", .{inst_err});
+                }
+                self.abort();
+            };
+
+            try self.handleExit(try getExitReason());
+        }
     }
 
     // Enter VMX non-root operation.
@@ -135,8 +190,8 @@ pub const Vcpu = struct {
         if (success) {
             return;
         } else {
-            const inst_err = vmcs.vmread(vmcs.Ro.vminstruction_error) catch unreachable;
-            return if (inst_err != 0) VmxError.FailureStatusAvailable else VmxError.FailureInvalidVmcsPointer;
+            const inst_err = try vmcs.vmread(vmcs.Ro.vminstruction_error);
+            return if (inst_err != 0) VmxError.VmxStatusAvailable else VmxError.VmxStatusUnavailable;
         }
     }
 
@@ -416,31 +471,6 @@ pub const Vcpu = struct {
             \\ret
         );
     }
-
-    /// Exit VMX operation.
-    pub fn vmxoff(_: *Self) void {
-        am.vmxoff();
-    }
-
-    /// Enable VMX operations.
-    pub fn enableVmx(_: *Self) void {
-        // Adjust control registers.
-        adjustControlRegisters();
-
-        // Check VMXON is allowed outside SMX.
-        var msr_fctl = am.readMsrFeatureControl();
-        if (!msr_fctl.vmx_outside_smx) {
-            // Enable VMX outside SMX.
-            if (msr_fctl.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
-            msr_fctl.vmx_outside_smx = true;
-            am.writeMsrFeatureControl(msr_fctl);
-        }
-
-        // Set VMXE bit in CR4.
-        var cr4 = am.readCr4();
-        cr4.vmxe = true;
-        am.loadCr4(cr4);
-    }
 };
 
 /// Adjust physical CPU's CR0 and CR4 registers.
@@ -457,8 +487,8 @@ fn adjustControlRegisters() void {
     cr4 |= vmx_cr4_fixed0; // Mandatory 1
     cr4 &= vmx_cr4_fixed1; // Mandatory 0;
 
-    am.loadCr0(@bitCast(cr0));
-    am.loadCr4(@bitCast(cr4));
+    am.loadCr0(cr0);
+    am.loadCr4(cr4);
 }
 
 /// Read VMCS revision identifier.
@@ -496,18 +526,18 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
 
 /// Set up VM-Execution control fields.
 /// cf. SDM Vol.3C 27.2.1.1, Appendix A.3.
-fn setupExecCtrls() VmxError!void {
+fn setupExecCtrls(_: *Vcpu) VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // Pin-based VM-Execution control.
-    const pin_exec_ctrl = try vmcs.exec_control.PinBasedExecutionControl.get();
+    const pin_exec_ctrl = try vmcs.PinExecCtrl.store();
     try adjustRegMandatoryBits(
         pin_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_pinbased_ctls) else am.readMsr(.vmx_pinbased_ctls),
     ).load();
 
     // Primary Processor-based VM-Execution control.
-    var ppb_exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
+    var ppb_exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
     ppb_exec_ctrl.activate_secondary_controls = true;
     ppb_exec_ctrl.unconditional_io = true;
     ppb_exec_ctrl.hlt = true;
@@ -517,7 +547,7 @@ fn setupExecCtrls() VmxError!void {
     ).load();
 
     // Secondary Processor-based VM-Execution control.
-    var ppb_exec_ctrl2 = try vmcs.exec_control.SecondaryProcessorBasedExecutionControl.get();
+    var ppb_exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();
     ppb_exec_ctrl2.ept = true;
     ppb_exec_ctrl2.unrestricted_guest = true; // TODO: should we enable this?
     try adjustRegMandatoryBits(
@@ -534,11 +564,11 @@ fn setupExecCtrls() VmxError!void {
 
 /// Set up VM-Exit control fields.
 /// cf. SDM Vol.3C 27.2.1.2.
-fn setupExitCtrls() VmxError!void {
+fn setupExitCtrls(_: *Vcpu) VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // VM-Exit control.
-    var exit_ctrl = try vmcs.exit_control.PrimaryExitControls.get();
+    var exit_ctrl = try vmcs.PrimaryExitCtrl.store();
     exit_ctrl.host_addr_space_size = true;
     exit_ctrl.load_ia32_efer = true;
     exit_ctrl.save_ia32_efer = true;
@@ -553,11 +583,11 @@ fn setupExitCtrls() VmxError!void {
 
 /// Set up VM-Entry control fields.
 /// cf. SDM Vol.3C 27.2.1.3.
-fn setupEntryCtrls() VmxError!void {
+fn setupEntryCtrls(_: *Vcpu) VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // VM-Entry control.
-    var entry_ctrl = try vmcs.entry_control.EntryControls.get();
+    var entry_ctrl = try vmcs.EntryCtrl.store();
     entry_ctrl.ia32e_mode_guest = false;
     entry_ctrl.load_ia32_efer = true;
     try adjustRegMandatoryBits(
@@ -570,7 +600,7 @@ fn setupEntryCtrls() VmxError!void {
 
 /// Set up host state.
 /// cf. SDM Vol.3C 27.2.2.
-fn setupHostState() VmxError!void {
+fn setupHostState(_: *Vcpu) VmxError!void {
     // Control registers.
     try vmwrite(vmcs.Host.cr0, am.readCr0());
     try vmwrite(vmcs.Host.cr3, am.readCr3());
@@ -709,14 +739,311 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
     vcpu.guest_regs.rsi = linux.layout.bootparam;
 }
 
+/// Set host stack pointer.
+/// This function is called directly from assembly.
+export fn setHostStack(rsp: u64) callconv(.C) void {
+    vmcs.vmwrite(vmcs.Host.rsp, rsp) catch {};
+}
+
+export fn vmexitHandler() noreturn {
+    log.debug("[VMEXIT handler]", .{});
+    const reason = getExitReason() catch unreachable;
+    log.debug("   VMEXIT reason: {?}", .{reason});
+
+    while (true)
+        am.hlt();
+}
+
+fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
+    var ret: u32 = @bitCast(control);
+    ret |= @as(u32, @truncate(mask)); // Mandatory 1
+    ret &= @as(u32, @truncate(mask >> 32)); // Mandatory 0
+    return @bitCast(ret);
+}
+
+/// Get a instruction error number from VMCS.
+fn getInstError() VmxError!InstructionError {
+    return @enumFromInt(@as(u32, @truncate(try vmread(vmcs.Ro.vminstruction_error))));
+}
+
+/// Get a VM-exit reason from VMCS.
+fn getExitReason() VmxError!ExitInformation {
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_reason))));
+}
+
+/// Get a VM-exit qualification from VMCS.
+fn getExitQual(T: anytype) VmxError!T {
+    return @bitCast(@as(u64, try vmread(vmcs.Ro.exit_qual)));
+}
+
+const VmxonRegion = packed struct {
+    vmcs_revision_id: u31,
+    zero: u1 = 0,
+
+    pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmxonRegion {
+        const page = page_allocator.alloc(u8, 4096) catch return VmxError.OutOfMemory;
+        if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
+            return error.OutOfMemory;
+        }
+        @memset(page, 0);
+        return @alignCast(@ptrCast(page.ptr));
+    }
+
+    pub fn deinit(self: *VmxonRegion, page_allocator: Allocator) void {
+        const ptr: [*]u8 = @ptrCast(self);
+        page_allocator.free(ptr[0..4096]);
+    }
+};
+
+const VmcsRegion = packed struct {
+    /// VMCS revision identifier.
+    vmcs_revision_id: u31,
+    /// Must be zero.
+    zero: u1 = 0,
+    /// VMX-abort indicator.
+    abort_indicator: u32,
+
+    // VMCS data follows, but its exact layout is implementation-specific.
+    // Use vmread/vmwrite with appropriate ComponentEncoding.
+
+    pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmcsRegion {
+        const page = try page_allocator.alloc(u8, 4096);
+        if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
+            return error.OutOfMemory;
+        }
+        @memset(page, 0);
+        return @alignCast(@ptrCast(page.ptr));
+    }
+
+    pub fn deinit(self: *VmcsRegion, page_allocator: Allocator) void {
+        const ptr: [*]u8 = @ptrCast(self);
+        page_allocator.free(ptr[0..4096]);
+    }
+};
+
+/// Reason of failures of VMX instructions.
+/// This is not updated on VM-exit.
+/// cf. SDM Vol.3C 31.4.
+pub const InstructionError = enum(u32) {
+    error_not_available = 0,
+    vmcall_in_vmxroot = 1,
+    vmclear_invalid_phys = 2,
+    vmclear_vmxonptr = 3,
+    vmlaunch_nonclear_vmcs = 4,
+    vmresume_nonlaunched_vmcs = 5,
+    vmresume_after_vmxoff = 6,
+    vmentry_invalid_ctrl = 7,
+    vmentry_invalid_host_state = 8,
+    vmptrld_invalid_phys = 9,
+    vmptrld_vmxonp = 10,
+    vmptrld_incorrect_rev = 11,
+    vmrw_unsupported_component = 12,
+    vmw_ro_component = 13,
+    vmxon_in_vmxroot = 15,
+    vmentry_invalid_exec_ctrl = 16,
+    vmentry_nonlaunched_exec_ctrl = 17,
+    vmentry_exec_vmcsptr = 18,
+    vmcall_nonclear_vmcs = 19,
+    vmcall_invalid_exitctl = 20,
+    vmcall_incorrect_msgrev = 22,
+    vmxoff_dualmonitor = 23,
+    vmcall_invalid_smm = 24,
+    vmentry_invalid_execctrl = 25,
+    vmentry_events_blocked = 26,
+    invalid_invept = 28,
+};
+
+/// Provides a basic information about VM exit.
+/// cf. SDM Vol 3C 25.9.1.
+pub const ExitInformation = packed struct(u32) {
+    /// Basic exit reason.
+    basic_reason: ExitReason,
+    /// Always 0.
+    _zero: u1 = 0,
+    /// Undefined.
+    _reserved1: u10 = 0,
+    _one: u1 = 1,
+    /// Pending MTF VM exit.
+    pending_mtf: u1 = 0,
+    /// VM exit from VMX root operation.
+    exit_vmxroot: bool,
+    /// Undefined.
+    _reserved2: u1 = 0,
+    /// If true, VM-entry failure. If false, true VM exit.
+    entry_failure: bool,
+};
+
+/// Reason of every VM-exit and certain VM-entry failures.
+/// cf. SDM Vol.3C Appendix C.
+pub const ExitReason = enum(u16) {
+    /// Exception or NMI.
+    /// 1. Guest caused an exception of which the bit in the exception bitmap is set.
+    /// 2. NMI was delivered to the logical processor.
+    exception_nmi = 0,
+    /// An external interrupt arrived.
+    extintr = 1,
+    /// Triple fault occurred.
+    triple_fault = 2,
+    /// INIT signal arrived.
+    init = 3,
+    /// Start-up IPI arrived.
+    sipi = 4,
+    /// I/O system-management interrupt.
+    io_intr = 5,
+    /// SMI arrived and caused an SMM VM exit.
+    other_smi = 6,
+    /// Interrupt window.
+    intr_window = 7,
+    /// NMI window.
+    nmi_window = 8,
+    /// Guest attempted a task switch.
+    task_switch = 9,
+    /// Guest attempted to execute CPUID.
+    cpuid = 10,
+    /// Guest attempted to execute GETSEC.
+    getsec = 11,
+    /// Guest attempted to execute HLT.
+    hlt = 12,
+    /// Guest attempted to execute INVD.
+    invd = 13,
+    /// Guest attempted to execute INVLPG.
+    invlpg = 14,
+    /// Guest attempted to execute RDPMC.
+    rdpmc = 15,
+    /// Guest attempted to execute RDTSC.
+    rdtsc = 16,
+    /// Guest attempted to execute RSM in SMM.
+    rsm = 17,
+    /// Guest attempted to execute VMCALL.
+    vmcall = 18,
+    /// Guest attempted to execute VMCLEAR.
+    vmclear = 19,
+    /// Guest attempted to execute VMLAUNCH.
+    vmlaunch = 20,
+    /// Guest attempted to execute VMPTRLD.
+    vmptrld = 21,
+    /// Guest attempted to execute VMPTRST.
+    vmptrst = 22,
+    /// Guest attempted to execute VMREAD.
+    vmread = 23,
+    /// Guest attempted to execute VMRESUME.
+    vmresume = 24,
+    /// Guest attempted to execute VMWRITE.
+    vmwrite = 25,
+    /// Guest attempted to execute VMXOFF.
+    vmxoff = 26,
+    /// Guest attempted to execute VMXON.
+    vmxon = 27,
+    /// Control-register access.
+    cr = 28,
+    /// Debug-register access.
+    dr = 29,
+    /// I/O instruction.
+    io = 30,
+    /// Guest attempted to execute RDMSR.
+    rdmsr = 31,
+    /// Guest attempted to execute WRMSR.
+    wrmsr = 32,
+    /// VM-entry failure due to invalid guest state.
+    entry_fail_guest = 33,
+    /// VM-entry failure due to MSR loading.
+    entry_fail_msr = 34,
+
+    /// Guest attempted to execute MWAIT.
+    mwait = 36,
+    /// Monitor trap flag.
+    monitor_trap = 37,
+
+    /// Guest attempted to execute MONITOR.
+    monitor = 39,
+    /// Guest attempted to execute PAUSE.
+    pause = 40,
+    /// VM-entry failure due to machine-check event.
+    entry_fail_mce = 41,
+
+    /// TPR below threshold.
+    tpr_threshold = 43,
+    /// Guest attempted to access memory at a physical address on the API-access page.
+    apic = 44,
+    /// EOI virtualization was performed for a virtual interrupt whose vector indexed a bit set in the EOI-exit bitmap.
+    veoi = 45,
+    /// Access to GDTR or IDTR.
+    gdtr_idtr = 46,
+    /// Access to LDTR or TR.
+    ldtr_tr = 47,
+    /// EPT violation.
+    ept = 48,
+    /// EPT misconfiguration.
+    ept_misconfig = 49,
+    /// Guest attempted to execute INVEPT.
+    invept = 50,
+    /// Guest attempted to execute RDTSCP.
+    rdtscp = 51,
+    /// Preemption timer counted down to zero.
+    preemption_timer = 52,
+    /// Guest attempted to execute INVVPID.
+    invvpid = 53,
+    /// Guest attempted to execute WBINVD or WBNOINVD.
+    wbinvd_wbnoinvd = 54,
+    /// Guest attempted to execute XSETBV.
+    xsetbv = 55,
+    /// Guest completed a write to the virtual-APIC page that must be virtualized.
+    apic_write = 56,
+    /// Guest attempted to execute RDRAND.
+    rdrand = 57,
+    /// Guest attempted to execute INVPCID.
+    invpcid = 58,
+    /// Guest invoked a VM function with the VMFUNC.
+    vmfunc = 59,
+    /// Guest attempted to execute ENCLS.
+    encls = 60,
+    /// Guest attempted to execute RDSEED.
+    rdseed = 61,
+    /// Processor attempted to create a page-modification log entry but the PML index exceeded range 0-511.
+    page_log_full = 62,
+    /// Guest attempted to execute XSAVES.
+    xsaves = 63,
+    /// Guest attempted to execute XRSTORS.
+    xrstors = 64,
+    /// Guest attempted to execute PCONFIG.
+    pconfig = 65,
+    /// SPP-related event.
+    spp = 66,
+    /// Guest attempted to execute UMWAIT.
+    umwait = 67,
+    /// Guest attempted to execute TPAUSE.
+    tpause = 68,
+    /// Guest attempted to execute LOADIWKEY.
+    loadiwkey = 69,
+    /// Guest attempted to execute ENCLV.
+    enclv = 70,
+
+    /// ENQCMD PASID translation failure.
+    enqcmd_pasid_fail = 72,
+    /// ENQCMDS PASID translation failure.
+    enqcmds_pasid_fail = 73,
+    /// Bus lock.
+    bus_lock = 74,
+    /// Certain operations prevented the processor from reaching an instruction boundary within timeout.
+    timeout = 75,
+    /// Guest attempted to execute SEAMCALL.
+    seamcall = 76,
+    /// Guest attempted to execute SEAMOP.
+    tdcall = 77,
+};
+
+// =====================================================
+
 /// Partially checks the validity of guest state.
 fn partialCheckGuest() VmxError!void {
+    if (!ymir.is_debug) @compileError("partialCheckGuest() is only for debug build");
+
     const cr0: am.Cr0 = @bitCast(try vmcs.vmread(vmcs.Guest.cr0));
     const cr3 = try vmcs.vmread(vmcs.Guest.cr3);
     const cr4: am.Cr4 = @bitCast(try vmcs.vmread(vmcs.Guest.cr4));
-    const entry_ctrl = try vmcs.entry_control.EntryControls.get();
-    const exec_ctrl = try vmcs.exec_control.PrimaryProcessorBasedExecutionControl.get();
-    const exec_ctrl2 = try vmcs.exec_control.SecondaryProcessorBasedExecutionControl.get();
+    const entry_ctrl = try vmcs.EntryCtrl.store();
+    const exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
+    const exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();
     const efer: am.Efer = @bitCast(try vmcs.vmread(vmcs.Guest.efer));
 
     // == Checks on Guest Control Registers, Debug Registers, and MSRs.
@@ -767,10 +1094,10 @@ fn partialCheckGuest() VmxError!void {
     // == Checks on Guest Segment Registers.
     // cf. SDM Vol 3C 28.3.1.2.
     // Selector.
-    const cs_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.cs_sel));
-    const tr_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.tr_sel));
-    const ldtr_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ldtr_sel));
-    const ss_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ss_sel));
+    const cs_sel = gdt.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.cs_sel));
+    const tr_sel = gdt.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.tr_sel));
+    const ldtr_sel = gdt.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ldtr_sel));
+    const ss_sel = gdt.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ss_sel));
     if (tr_sel.ti != 0) @panic("TR.sel: TI flag must be 0");
     {
         const ldtr_ar: vmcs.SegmentRights = @bitCast(@as(u32, @truncate(try vmcs.vmread(vmcs.Guest.ldtr_rights))));
@@ -795,10 +1122,10 @@ fn partialCheckGuest() VmxError!void {
     const es_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.es_rights));
     const fs_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.fs_rights));
     const gs_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.gs_rights));
-    const ds_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ds_sel));
-    const es_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.es_sel));
-    const fs_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.fs_sel));
-    const gs_sel = vmcs.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.gs_sel));
+    const ds_sel = gdt.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.ds_sel));
+    const es_sel = gdt.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.es_sel));
+    const fs_sel = gdt.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.fs_sel));
+    const gs_sel = gdt.SegmentSelector.from(try vmcs.vmread(vmcs.Guest.gs_sel));
     const cs_limit = try vmcs.vmread(vmcs.Guest.cs_limit);
     const ss_limit = try vmcs.vmread(vmcs.Guest.ss_limit);
     const ds_limit = try vmcs.vmread(vmcs.Guest.ds_limit);
@@ -909,108 +1236,9 @@ fn partialCheckGuest() VmxError!void {
     }
 }
 
-/// Set host stack pointer.
-/// This function is called directly from assembly.
-export fn setHostStack(rsp: u64) callconv(.C) void {
-    vmcs.vmwrite(vmcs.Host.rsp, rsp) catch {};
-}
-
-export fn vmexitHandler() noreturn {
-    log.debug("[VMEXIT handler]", .{});
-    const reason = getExitReason() catch unreachable;
-    log.debug("   VMEXIT reason: {?}", .{reason});
-
-    while (true)
-        am.hlt();
-}
-
-fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
-    var ret: u32 = @bitCast(control);
-    ret |= @as(u32, @truncate(mask)); // Mandatory 1
-    ret &= @as(u32, @truncate(mask >> 32)); // Mandatory 0
-    return @bitCast(ret);
-}
-
-/// Get a instruction error number from VMCS.
-pub fn getInstError() VmxError!InstructionError {
-    return @enumFromInt(@as(u32, @truncate(try vmread(vmcs.Ro.vminstruction_error))));
-}
-
-/// Get a VM-exit reason from VMCS.
-pub fn getExitReason() VmxError!ExitInformation {
-    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_reason))));
-}
-
-/// Get a VM-exit qualification from VMCS.
-fn getExitQual(T: anytype) VmxError!T {
-    return @bitCast(@as(u64, try vmread(vmcs.Ro.exit_qual)));
-}
-
-const VmxonRegion = packed struct {
-    vmcs_revision_id: u31,
-    zero: u1 = 0,
-
-    pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmxonRegion {
-        const page = page_allocator.alloc(u8, 4096) catch return VmxError.OutOfMemory;
-        if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
-            return error.OutOfMemory;
-        }
-        @memset(page, 0);
-        return @alignCast(@ptrCast(page.ptr));
-    }
-
-    pub fn deinit(self: *VmxonRegion, page_allocator: Allocator) void {
-        const ptr: [*]u8 = @ptrCast(self);
-        page_allocator.free(ptr[0..4096]);
-    }
-};
-
-const VmcsRegion = packed struct {
-    /// VMCS revision identifier.
-    vmcs_revision_id: u31,
-    /// Must be zero.
-    zero: u1 = 0,
-    /// VMX-abort indicator.
-    abort_indicator: u32,
-
-    // VMCS data follows, but its exact layout is implementation-specific.
-    // Use vmread/vmwrite with appropriate ComponentEncoding.
-
-    pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmcsRegion {
-        const page = try page_allocator.alloc(u8, 4096);
-        if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
-            return error.OutOfMemory;
-        }
-        @memset(page, 0);
-        return @alignCast(@ptrCast(page.ptr));
-    }
-
-    pub fn deinit(self: *VmcsRegion, page_allocator: Allocator) void {
-        const ptr: [*]u8 = @ptrCast(self);
-        page_allocator.free(ptr[0..4096]);
-    }
-};
-
-const GuestRegisters = packed struct {
-    rax: u64,
-    rcx: u64,
-    rdx: u64,
-    rbx: u64,
-    rbp: u64,
-    rsi: u64,
-    rdi: u64,
-    r8: u64,
-    r9: u64,
-    r10: u64,
-    r11: u64,
-    r12: u64,
-    r13: u64,
-    r14: u64,
-    r15: u64,
-};
+// =====================================================
 
 test {
     std.testing.refAllDeclsRecursive(@This());
-
     std.testing.refAllDeclsRecursive(@import("vmx/vmcs.zig"));
 }

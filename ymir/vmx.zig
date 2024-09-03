@@ -76,8 +76,8 @@ pub const Vm = struct {
     }
 
     /// Deinitialize the virtual machine, exiting VMX root operation.
-    pub fn deinit(self: *Self) void {
-        self.vcpu.vmxoff();
+    pub fn devirtualize(self: *Self) void {
+        self.vcpu.devirtualize();
     }
 
     /// Setup guest memory and load a guest kernel on the memory.
