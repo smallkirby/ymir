@@ -46,7 +46,12 @@ fn log(
         .warn => "[WARN ]",
         .err => "[ERROR]",
     };
-    const scope_str = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+
+    const scope_str = if (@tagName(scope).len <= 7) b: {
+        break :b std.fmt.comptimePrint("{s: <7} | ", .{@tagName(scope)});
+    } else b: {
+        break :b std.fmt.comptimePrint("{s: <7}-| ", .{@tagName(scope)[0..7]});
+    };
 
     std.fmt.format(
         Writer{ .context = {} },
