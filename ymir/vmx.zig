@@ -9,7 +9,7 @@ const mem = ymir.mem;
 const PageAllocator = mem.PageAllocator;
 const vmx = ymir.vmx;
 const linux = ymir.linux;
-const BootParams = linux.boot.BootParams;
+const BootParams = linux.BootParams;
 
 const impl = switch (builtin.target.cpu.arch) {
     .x86_64 => @import("arch/x86/vmx.zig"),

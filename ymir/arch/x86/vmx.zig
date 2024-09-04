@@ -14,7 +14,7 @@ const gdt = @import("gdt.zig");
 const serial = @import("serial.zig");
 const vmcs = @import("vmx/vmcs.zig");
 const regs = @import("vmx/regs.zig");
-const ext = @import("vmx/exit.zig");
+const qual = @import("vmx/qual.zig");
 const ept = @import("vmx/ept.zig");
 const cpuid = @import("vmx/cpuid.zig");
 const msr = @import("vmx/msr.zig");
@@ -200,18 +200,18 @@ pub const Vcpu = struct {
         log.debug("VM-exit: reason={?}", .{exit_info.basic_reason});
         switch (exit_info.basic_reason) {
             .io => {
-                const qual = try getExitQual(ext.QualIo);
-                log.debug("I/O instruction: {?}", .{qual});
+                const q = try getExitQual(qual.QualIo);
+                log.debug("I/O instruction: {?}", .{q});
                 unreachable;
             },
             .cr => {
-                const qual = try getExitQual(ext.QualCr);
-                try cr.handleAccessCr(self, qual);
+                const q = try getExitQual(qual.QualCr);
+                try cr.handleAccessCr(self, q);
                 try self.stepNextInst();
             },
             .ept => {
-                const qual = try getExitQual(ext.QualEptViolation);
-                log.err("EPT violation: {?}", .{qual});
+                const q = try getExitQual(qual.QualEptViolation);
+                log.err("EPT violation: {?}", .{q});
                 self.abort();
             },
             .cpuid => {

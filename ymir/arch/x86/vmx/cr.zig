@@ -6,7 +6,7 @@ const Vcpu = vmx.Vcpu;
 const VmxError = vmx.VmxError;
 const am = @import("../asm.zig");
 const vmcs = @import("vmcs.zig");
-const QualCr = @import("exit.zig").QualCr;
+const QualCr = @import("qual.zig").QualCr;
 const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
 
