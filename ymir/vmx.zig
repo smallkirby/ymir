@@ -132,7 +132,7 @@ pub const Vm = struct {
 
         // Setup cmdline
         const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + boot_params.hdr.cmdline_size];
-        const cmdline_val = "console=ttyS0";
+        const cmdline_val = "console=ttyS0 earlyprintk=serial nokaslr";
         @memset(cmdline, 0);
         @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
 
