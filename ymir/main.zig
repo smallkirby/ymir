@@ -120,6 +120,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Check if VMX is supported.
     arch.enableCpuid();
 
+    // Enable XSAVE features.
+    arch.enableXstateFeature();
+
     // Enter VMX root operation.
     var vm = try vmx.Vm.new();
     try vm.init(ymir.mem.page_allocator);

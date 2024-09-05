@@ -1,5 +1,8 @@
 //! This module exposes x86_64-specific functions.
 
+const std = @import("std");
+const log = std.log.scoped(.arch);
+
 pub const gdt = @import("gdt.zig");
 pub const intr = @import("interrupt.zig");
 pub const page = @import("page.zig");
@@ -84,6 +87,19 @@ pub fn getFeatureInformation() cpuid.CpuidInformation {
         .ecx = @bitCast(regs.ecx),
         .edx = @bitCast(regs.edx),
     };
+}
+
+/// Enable supported XSAVE features.
+pub fn enableXstateFeature() void {
+    // Enable XSAVE in CR4, which is necessary to access XCR0.
+    var cr4 = am.readCr4();
+    cr4.osxsave = true;
+    am.loadCr4(cr4);
+
+    // Enable supported XSAVE features.
+    const ext_info = am.cpuidEcx(0xD, 0); // Processor extended state enumeration
+    const max_features = ((@as(u64, ext_info.edx) & 0xFFFF_FFFF) << 32) + ext_info.eax;
+    am.xsetbv(0, max_features); // XCR0 enabled mask
 }
 
 test {

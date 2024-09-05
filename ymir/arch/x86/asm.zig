@@ -469,21 +469,47 @@ fn cast(T: type, value: anytype) T {
     };
 }
 
+pub inline fn xgetbv(xcr: u32) u64 {
+    var eax: u32 = undefined;
+    var edx: u32 = undefined;
+    asm volatile (
+        \\xgetbv
+        : [eax] "={eax}" (eax),
+          [edx] "={edx}" (edx),
+        : [ecx] "{ecx}" (xcr),
+    );
+    return (@as(u64, edx) << 32) | @as(u64, eax);
+}
+
+pub inline fn xsetbv(xcr: u32, value: u64) void {
+    asm volatile (
+        \\xsetbv
+        :
+        : [xcr] "{ecx}" (xcr),
+          [eax] "{eax}" (@as(u32, @truncate(value))),
+          [edx] "{edx}" (@as(u32, @truncate(value >> 32))),
+    );
+}
+
 /// MSR addresses.
 pub const Msr = enum(u32) {
     /// IA32_FEATURE_CONTROL MSR.
     feature_control = 0x003A,
-    /// IA32_SYSENTER_CS MSR. SDM Vol.3A Table 2-2.
+    /// IA32_BIOS_SIGN_ID MSR. SDM Vol.3A Table 2-3.
+    bios_sign_id = 0x8B,
+    /// IA32_ARCH_CAPABILITIES MSR. SDM Vol.3A Table 2-2.
+    arch_cap = 0x10A,
+    /// IA32_SYSENTER_CS MSR. SDM Vol.3A Table 2-3.
     sysenter_cs = 0x174,
-    /// IA32_SYSENTER_ESP MSR. SDM Vol.3A Table 2-2.
+    /// IA32_SYSENTER_ESP MSR. SDM Vol.3A Table 2-3.
     sysenter_esp = 0x175,
-    /// IA32_SYSENTER_EIP MSR. SDM Vol.3A Table 2-2.
+    /// IA32_SYSENTER_EIP MSR. SDM Vol.3A Table 2-3.
     sysenter_eip = 0x176,
     /// IA32_MISC_ENABLE MSR.
     misc_enable = 0x1A0,
     /// IA32_PAT MSR.
     pat = 0x277,
-    /// IA32_DEBUGCTL MSR. SDM Vol.4 Table 2-2.
+    /// IA32_DEBUGCTL MSR. SDM Vol.4 Table 2-3.
     debugctl = 0x01D9,
     /// IA32_VMX_BASIC MSR.
     vmx_basic = 0x0480,
@@ -515,11 +541,15 @@ pub const Msr = enum(u32) {
     vmx_true_exit_ctls = 0x048F,
     /// IA32_VMX_TRUE_ENTRY_CTLS MSR.
     vmx_true_entry_ctls = 0x0490,
+    /// IA32_XSS MSR.
+    xss = 0x0DA0,
 
     /// IA32_FS_BASE MSR.
     fs_base = 0xC0000100,
     /// IA32_GS_BASE MSR.
     gs_base = 0xC0000101,
+    /// IA32_KERNEL_GS_BASE MSR.
+    kernel_gs_base = 0xC0000102,
     /// IA32_EFER MSR.
     efer = 0xC0000080,
 };
@@ -764,4 +794,30 @@ pub const Efer = packed struct(u64) {
     tce: bool,
     /// ReservedZ.
     reserved2: u48 = 0,
+};
+
+/// IA32_XSS MSR.
+pub const Xss = packed struct(u64) {
+    /// ReservedZ.
+    _reserved1: u8 = 0,
+    /// PT (Enables the saving and loading of 9 processor trace MSRs)
+    pt: bool,
+    /// ReservedZ.
+    _reserved2: u1 = 0,
+    /// Processor address space ID (PASID) state.
+    pasid: bool,
+    /// CET user state.
+    cet_user: bool,
+    /// CET supervisor state.
+    cet_supervisor: bool,
+    /// HDC (Enables the saving and loading of the IA32_PM_CTL1 MSR)
+    hdc: bool,
+    /// UINTR (User interrupts) state.
+    uintr: bool,
+    /// LBR (Last branch record) state.
+    lbr: bool,
+    /// HWP (Enables the saving/loading of IA32_HWP_REQUEST MSR)
+    hwp: bool,
+    /// ReservedZ.
+    _reserved3: u48 = 0,
 };
