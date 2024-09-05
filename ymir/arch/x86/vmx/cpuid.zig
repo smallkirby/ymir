@@ -11,27 +11,29 @@ const am = @import("../asm.zig");
 /// Note that this function does not increment the RIP.
 pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
     const regs = &vcpu.guest_regs;
+    log.debug("CPUID leaf: {x} sub: {x}", .{ regs.rax, regs.rcx });
     const leaf = Leaf.from(regs.rax);
 
     switch (leaf) {
-        .maximum_input => passthrough(vcpu),
-        .version_info => passthrough(vcpu),
-        .extended_function => passthrough(vcpu),
-        .extended_processor_signature => passthrough(vcpu),
-        .seven => passthroughEcx(vcpu),
+        .maximum_input,
+        .version_info,
+        .extended_function,
+        .extended_processor_signature,
+        .thermal_power,
+        .ext_feature,
+        .ext_topology,
+        .rdt_l3cache,
+        .cache_allocation,
+        .sgx,
+        .v2_ext_topology,
+        .ext_enumuration,
+        .invariant_tsc,
+        .address_size,
+        => passthrough(vcpu),
     }
 }
 
 fn passthrough(vcpu: *Vcpu) void {
-    const gregs = &vcpu.guest_regs;
-    const regs = am.cpuid(@truncate(gregs.rax));
-    gregs.rax = regs.eax;
-    gregs.rbx = regs.ebx;
-    gregs.rcx = regs.ecx;
-    gregs.rdx = regs.edx;
-}
-
-fn passthroughEcx(vcpu: *Vcpu) void {
     const gregs = &vcpu.guest_regs;
     const regs = am.cpuidEcx(@truncate(gregs.rax), @truncate(gregs.rcx));
     gregs.rax = regs.eax;
@@ -40,17 +42,43 @@ fn passthroughEcx(vcpu: *Vcpu) void {
     gregs.rdx = regs.edx;
 }
 
-const Leaf = enum(u64) {
+const Leaf = enum(u32) {
     /// Maximum input value for basic CPUID.
     maximum_input = 0x0,
     /// Version information.
     version_info = 0x1,
-    /// TODO
-    seven = 0x7,
+    /// Thermal and power management.
+    thermal_power = 0x6,
+    /// Structured extended feature enumeration.
+    /// Output depends on the value of ECX.
+    ext_feature = 0x7,
+    /// Extended topology enumeration.
+    ext_topology = 0xB,
+    /// Processor extended state enumeration.
+    /// Output depends on the ECX input value.
+    ext_enumuration = 0xD,
+    /// Intel Resouce Director Technology monitoring enumeration when ECX = 0,
+    /// L3 Cache RDT monitoring capability enumeration when ECX = 1.
+    rdt_l3cache = 0xF,
+    /// RDT allocation enumeration when ECX = 0,
+    /// L3 cache allocation technology enumeration when ECX = 1.
+    /// L2 cache allocation technology enumeration when ECX = 2.
+    /// Memory bandwidth allocation enumeration when ECX = 3.
+    cache_allocation = 0x10,
+    /// Intel SGX capability enumeration when ECX = 0.
+    /// SGX attributes enumeration when ECX = 1.
+    /// SGX EPC enumeration when ECX = 2.
+    sgx = 0x12,
+    /// V2 extended topology enumeration.
+    v2_ext_topology = 0x1F,
     /// Maximum input value for extended function CPUID information.
     extended_function = 0x80000000,
     /// EAX: Extended processor signature and feature bits.
     extended_processor_signature = 0x80000001,
+    /// Envariant TSC available.
+    invariant_tsc = 0x80000007,
+    /// Linear/Physical address size.
+    address_size = 0x80000008,
 
     pub fn from(rax: u64) Leaf {
         return @enumFromInt(rax);

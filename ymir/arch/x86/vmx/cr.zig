@@ -16,20 +16,9 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
     switch (qual.access_type) {
         .mov_to => {
             switch (qual.index) {
-                0 => { // TODO: make this a function
-                    const cr0: am.Cr0 = @bitCast(getValue(vcpu, qual));
-                    vcpu.ia32_enabled = cr0.pg;
-                    try vmwrite(vmcs.Guest.cr0, adjustCr0(@bitCast(cr0)));
-
-                    var entry_ctrl = try vmcs.EntryCtrl.store();
-                    entry_ctrl.ia32e_mode_guest = vcpu.ia32_enabled;
-                    try entry_ctrl.load();
-
-                    if (vcpu.ia32_enabled) {
-                        var efer: am.Efer = @bitCast(try vmread(vmcs.Guest.efer));
-                        efer.lma = efer.lme and vcpu.ia32_enabled;
-                        try vmwrite(vmcs.Guest.efer, efer);
-                    }
+                0, 4 => {
+                    try passthroughWrite(vcpu, qual);
+                    try updateIa32e(vcpu);
                 },
                 else => try passthroughWrite(vcpu, qual),
             }
@@ -40,6 +29,23 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
             unreachable;
         },
     }
+}
+
+fn updateIa32e(vcpu: *Vcpu) VmxError!void {
+    const cr0: am.Cr0 = @bitCast(try vmread(vmcs.Guest.cr0));
+    const cr4: am.Cr4 = @bitCast(try vmread(vmcs.Guest.cr4));
+    const ia32e_enabled = cr0.pg and cr4.pae;
+
+    vcpu.ia32_enabled = ia32e_enabled;
+
+    var entry_ctrl = try vmcs.EntryCtrl.store();
+    entry_ctrl.ia32e_mode_guest = ia32e_enabled;
+    try entry_ctrl.load();
+
+    var efer: am.Efer = @bitCast(try vmread(vmcs.Guest.efer));
+    efer.lma = vcpu.ia32_enabled;
+    efer.lme = if (cr0.pg) efer.lma else efer.lme;
+    try vmwrite(vmcs.Guest.efer, efer);
 }
 
 fn passthroughRead(vcpu: *Vcpu, qual: QualCr) VmxError!void {
@@ -79,8 +85,14 @@ fn passthroughRead(vcpu: *Vcpu, qual: QualCr) VmxError!void {
 fn passthroughWrite(vcpu: *Vcpu, qual: QualCr) VmxError!void {
     const value = getValue(vcpu, qual);
     switch (qual.index) {
-        0 => try vmwrite(vmcs.Guest.cr0, adjustCr0(value)),
-        4 => try vmwrite(vmcs.Guest.cr4, adjustCr4(value)),
+        0 => {
+            try vmwrite(vmcs.Guest.cr0, adjustCr0(value));
+            try vmwrite(vmcs.Ctrl.cr0_read_shadow, value);
+        },
+        4 => {
+            try vmwrite(vmcs.Guest.cr4, adjustCr4(value));
+            try vmwrite(vmcs.Ctrl.cr4_read_shadow, value);
+        },
         else => {
             log.err("Unhandled CR write to: {}", .{qual.index});
             unreachable;

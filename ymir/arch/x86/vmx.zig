@@ -198,6 +198,7 @@ pub const Vcpu = struct {
     /// Handle the VM-exit.
     fn handleExit(self: *Self, exit_info: ExitInformation) VmxError!void {
         log.debug("VM-exit: reason={?}", .{exit_info.basic_reason});
+
         switch (exit_info.basic_reason) {
             .io => {
                 const q = try getExitQual(qual.QualIo);
@@ -226,6 +227,11 @@ pub const Vcpu = struct {
                 try msr.handleWrmsrExit(self);
                 try self.stepNextInst();
             },
+            .xsetbv => {
+                // Ignore xsetbv
+                log.warn("Ignored guest XSETBV.", .{});
+                try self.stepNextInst();
+            },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
                 self.abort();
@@ -235,9 +241,14 @@ pub const Vcpu = struct {
 
     fn abort(self: *Self) noreturn {
         @setCold(true);
+        self.printGuestState() catch unreachable;
+        unreachable;
+    }
 
+    fn printGuestState(self: *Self) VmxError!void {
         log.err("=== vCPU Information ===", .{});
         log.err("[Guest State]", .{});
+        log.err("IA32-e: {}", .{self.ia32_enabled});
         log.err("RIP: 0x{X:0>16}", .{vmread(vmcs.Guest.rip) catch unreachable});
         log.err("RSP: 0x{X:0>16}", .{vmread(vmcs.Guest.rsp) catch unreachable});
         log.err("RAX: 0x{X:0>16}", .{self.guest_regs.rax});
@@ -267,8 +278,6 @@ pub const Vcpu = struct {
                 vmread(vmcs.Guest.cs_limit) catch unreachable,
             },
         );
-
-        unreachable;
     }
 
     /// Increment RIP by the length of the current instruction.
@@ -539,7 +548,8 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     // Primary Processor-based VM-Execution control.
     var ppb_exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
     ppb_exec_ctrl.activate_secondary_controls = true;
-    ppb_exec_ctrl.unconditional_io = true;
+    // TODO: should use I/O bitmap instead of unconditional I/O exit.
+    //ppb_exec_ctrl.unconditional_io = true;
     ppb_exec_ctrl.hlt = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
@@ -550,10 +560,12 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     var ppb_exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();
     ppb_exec_ctrl2.ept = true;
     ppb_exec_ctrl2.unrestricted_guest = true; // TODO: should we enable this?
+    ppb_exec_ctrl2.enable_xsaves_xrstors = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl2,
         am.readMsr(.vmx_procbased_ctls2),
     ).load();
+    try vmwrite(vmcs.Ctrl.xss_exiting_bitmap, 0); // Don't exit on XSAVES/XRSTORS.
 
     // Exit on access to CR0/CR4.
     try vmwrite(vmcs.Ctrl.cr0_mask, std.math.maxInt(u64));
@@ -639,7 +651,9 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
     cr4.pae = false;
     cr4.vmxe = true; // TODO: Should we expose this bit to guest?? (this is requirement for successful VM-entry)
     try vmwrite(vmcs.Guest.cr0, cr0);
+    try vmwrite(vmcs.Ctrl.cr0_read_shadow, cr0);
     try vmwrite(vmcs.Guest.cr4, cr4);
+    try vmwrite(vmcs.Ctrl.cr4_read_shadow, cr4);
 
     // Segment registers.
     {
@@ -1201,7 +1215,7 @@ fn partialCheckGuest() VmxError!void {
     const intr_info = try vmread(vmcs.Ctrl.vmentry_interrupt_information_field);
     const rflags: am.FlagsRegister = @bitCast(try vmcs.vmread(vmcs.Guest.rflags));
 
-    if ((entry_ctrl.ia32e_mode_guest or cs_ar.long) and (rip >> 32) != 0) @panic("RIP: Upper address must be all zeros");
+    if ((!entry_ctrl.ia32e_mode_guest or !cs_ar.long) and (rip >> 32) != 0) @panic("RIP: Upper address must be all zeros");
     // TODO: If the processor supports N < 64 linear-address bits, ...
 
     if (rflags._reserved4 != 0 or rflags._reserved1 != 0 or rflags._reserved2 != 0 or rflags._reserved3 != 0) @panic("RFLAGS: Reserved bits must be zero");
