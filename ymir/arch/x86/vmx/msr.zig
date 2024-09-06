@@ -18,9 +18,45 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
     const msr_kind: am.Msr = @enumFromInt(rcx);
 
     switch (msr_kind) {
-        .bios_sign_id => passthroughRdmsr(vcpu, msr_kind),
-        .arch_cap => passthroughRdmsr(vcpu, msr_kind),
-        .misc_enable => passthroughRdmsr(vcpu, msr_kind),
+        .tsc_adjust,
+        .bios_sign_id,
+        .mtrrcap,
+        .arch_cap,
+        .misc_enable,
+        .mtrr_physbase0,
+        .mtrr_physmask0,
+        .mtrr_physbase1,
+        .mtrr_physmask1,
+        .mtrr_physbase2,
+        .mtrr_physmask2,
+        .mtrr_physbase3,
+        .mtrr_physmask3,
+        .mtrr_physbase4,
+        .mtrr_physmask4,
+        .mtrr_physbase5,
+        .mtrr_physmask5,
+        .mtrr_physbase6,
+        .mtrr_physmask6,
+        .mtrr_physbase7,
+        .mtrr_physmask7,
+        .mtrr_fix64K_00000,
+        .mtrr_fix16K_80000,
+        .mtrr_fix16K_A0000,
+        .mtrr_fix4K_C0000,
+        .mtrr_fix4K_C8000,
+        .mtrr_fix4K_D0000,
+        .mtrr_fix4K_D8000,
+        .mtrr_fix4K_E0000,
+        .mtrr_fix4K_E8000,
+        .mtrr_fix4K_F0000,
+        .mtrr_fix4K_F8000,
+        .pat,
+        .mtrr_def_type,
+        => passthroughRdmsr(vcpu, msr_kind),
+        .apic_base => {
+            guest_regs.rdx = 0;
+            guest_regs.rax = 0;
+        },
         .efer => {
             const efer = try vmread(vmcs.Guest.efer);
             guest_regs.rdx = @as(u32, @truncate(efer >> 32));
@@ -55,8 +91,11 @@ pub fn handleWrmsrExit(vcpu: *Vcpu) VmxError!void {
 
     switch (msr_kind) {
         .bios_sign_id => {}, // TODO
+        .xss,
+        .pat,
+        .mtrr_def_type,
+        => passthroughWrmsr(vcpu, msr_kind),
         .efer => try vmwrite(vmcs.Guest.efer, value),
-        .xss => passthroughWrmsr(vcpu, msr_kind),
         .gs_base => try vmwrite(vmcs.Guest.gs_base, value),
         .fs_base => try vmwrite(vmcs.Guest.fs_base, value),
         else => {

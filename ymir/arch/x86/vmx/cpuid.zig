@@ -12,10 +12,21 @@ const am = @import("../asm.zig");
 pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
     const regs = &vcpu.guest_regs;
     log.debug("CPUID leaf: {x} sub: {x}", .{ regs.rax, regs.rcx });
-    const leaf = Leaf.from(regs.rax);
 
-    switch (leaf) {
-        .maximum_input,
+    if (invalid_cpuid_start <= regs.rax and regs.rax <= invalid_cpuid_end) {
+        // Linux kernel checks KVM support using CPUID in this range.
+        // We should return 0 even for these ranges.
+        return invalid(vcpu);
+    }
+
+    switch (Leaf.from(regs.rax)) {
+        .maximum_input => {
+            const pass = am.cpuid(@truncate(regs.rax));
+            regs.rax = pass.eax;
+            regs.rbx = 0x72_69_6D_59; // Ymir
+            regs.rcx = 0x72_69_6D_59; // Ymir
+            regs.rdx = 0x72_69_6D_59; // Ymir
+        },
         .version_info,
         .extended_function,
         .extended_processor_signature,
@@ -42,6 +53,15 @@ fn passthrough(vcpu: *Vcpu) void {
     gregs.rdx = regs.edx;
 }
 
+fn invalid(vcpu: *Vcpu) void {
+    const gregs = &vcpu.guest_regs;
+    gregs.rax = 0;
+    gregs.rbx = 0;
+    gregs.rcx = 0;
+    gregs.rdx = 0;
+}
+
+/// SDM Vol2A Chapter 3.3 Table 3-8.
 const Leaf = enum(u32) {
     /// Maximum input value for basic CPUID.
     maximum_input = 0x0,
@@ -84,3 +104,6 @@ const Leaf = enum(u32) {
         return @enumFromInt(rax);
     }
 };
+
+const invalid_cpuid_start: u32 = 0x40_000_000;
+const invalid_cpuid_end: u32 = 0x4F_FFF_FFF;

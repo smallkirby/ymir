@@ -493,10 +493,16 @@ pub inline fn xsetbv(xcr: u32, value: u64) void {
 
 /// MSR addresses.
 pub const Msr = enum(u32) {
+    /// IA32_APIC_BASE MSR.
+    apic_base = 0x001B,
     /// IA32_FEATURE_CONTROL MSR.
     feature_control = 0x003A,
+    /// IA32_TSC MSR.
+    tsc_adjust = 0x003B,
     /// IA32_BIOS_SIGN_ID MSR. SDM Vol.3A Table 2-3.
     bios_sign_id = 0x8B,
+    /// IA32_MTRRCAP MSR.
+    mtrrcap = 0xFE,
     /// IA32_ARCH_CAPABILITIES MSR. SDM Vol.3A Table 2-2.
     arch_cap = 0x10A,
     /// IA32_SYSENTER_CS MSR. SDM Vol.3A Table 2-3.
@@ -507,10 +513,66 @@ pub const Msr = enum(u32) {
     sysenter_eip = 0x176,
     /// IA32_MISC_ENABLE MSR.
     misc_enable = 0x1A0,
-    /// IA32_PAT MSR.
-    pat = 0x277,
     /// IA32_DEBUGCTL MSR. SDM Vol.4 Table 2-3.
     debugctl = 0x01D9,
+    /// IA32_MTRR_PHYSBASE0 MSR.
+    mtrr_physbase0 = 0x200,
+    /// IA32_MTRR_PHYSMASK0 MSR.
+    mtrr_physmask0 = 0x201,
+    /// IA32_MTRR_PHYSBASE1 MSR.
+    mtrr_physbase1 = 0x202,
+    /// IA32_MTRR_PHYSMASK1 MSR.
+    mtrr_physmask1 = 0x203,
+    /// IA32_MTRR_PHYSBASE2 MSR.
+    mtrr_physbase2 = 0x204,
+    /// IA32_MTRR_PHYSMASK2 MSR.
+    mtrr_physmask2 = 0x205,
+    /// IA32_MTRR_PHYSBASE3 MSR.
+    mtrr_physbase3 = 0x206,
+    /// IA32_MTRR_PHYSMASK3 MSR.
+    mtrr_physmask3 = 0x207,
+    /// IA32_MTRR_PHYSBASE4 MSR.
+    mtrr_physbase4 = 0x208,
+    /// IA32_MTRR_PHYSMASK4 MSR.
+    mtrr_physmask4 = 0x209,
+    /// IA32_MTRR_PHYSBASE5 MSR.
+    mtrr_physbase5 = 0x20A,
+    /// IA32_MTRR_PHYSMASK5 MSR.
+    mtrr_physmask5 = 0x20B,
+    /// IA32_MTRR_PHYSBASE6 MSR.
+    mtrr_physbase6 = 0x20C,
+    /// IA32_MTRR_PHYSMASK6 MSR.
+    mtrr_physmask6 = 0x20D,
+    /// IA32_MTRR_PHYSBASE7 MSR.
+    mtrr_physbase7 = 0x20E,
+    /// IA32_MTRR_PHYSMASK7 MSR.
+    mtrr_physmask7 = 0x20F,
+    /// IA32_MTRR_FIX64K_00000 MSR.
+    mtrr_fix64K_00000 = 0x250,
+    /// IA32_MTRR_FIX16K_80000 MSR.
+    mtrr_fix16K_80000 = 0x258,
+    /// IA32_MTRR_FIX16K_A0000 MSR.
+    mtrr_fix16K_A0000 = 0x259,
+    /// IA32_MTRR_FIX4K_C0000 MSR.
+    mtrr_fix4K_C0000 = 0x268,
+    /// IA32_MTRR_FIX4K_C8000 MSR.
+    mtrr_fix4K_C8000 = 0x269,
+    /// IA32_MTRR_FIX4K_D0000 MSR.
+    mtrr_fix4K_D0000 = 0x26A,
+    /// IA32_MTRR_FIX4K_D8000 MSR.
+    mtrr_fix4K_D8000 = 0x26B,
+    /// IA32_MTRR_FIX4K_E0000 MSR.
+    mtrr_fix4K_E0000 = 0x26C,
+    /// IA32_MTRR_FIX4K_E8000 MSR.
+    mtrr_fix4K_E8000 = 0x26D,
+    /// IA32_MTRR_FIX4K_F0000 MSR.
+    mtrr_fix4K_F0000 = 0x26E,
+    /// IA32_MTRR_FIX4K_F8000 MSR.
+    mtrr_fix4K_F8000 = 0x26F,
+    /// IA32_PAT MSR.
+    pat = 0x277,
+    /// IA32_MTRR_DEF_TYPE MSR.
+    mtrr_def_type = 0x2FF,
     /// IA32_VMX_BASIC MSR.
     vmx_basic = 0x0480,
     /// IA32_VMX_PINBASED_CTLS MSR.
