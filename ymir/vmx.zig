@@ -26,6 +26,9 @@ pub const VmError = error{
 };
 const Error = VmError;
 
+/// Next virtual processor ID.
+var vpid_next: u16 = 0;
+
 /// Virtual machine instance.
 /// TODO: currently, supports only single CPU.
 pub const Vm = struct {
@@ -56,7 +59,10 @@ pub const Vm = struct {
             return Error.SystemNotSupported;
         }
 
-        const vcpu = impl.Vcpu.new();
+        const vpid = vpid_next;
+        vpid_next += 1;
+
+        const vcpu = impl.Vcpu.new(vpid);
         return Self{
             .vcpu = vcpu,
         };

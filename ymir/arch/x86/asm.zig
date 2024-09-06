@@ -491,6 +491,26 @@ pub inline fn xsetbv(xcr: u32, value: u64) void {
     );
 }
 
+pub inline fn invvpid(inv_type: u64, descriptor: *u8) void {
+    asm volatile (
+        \\invvpid %[descriptor], %[inv_type]
+        :
+        : [inv_type] "r" (inv_type),
+          [descriptor] "m" (descriptor),
+        : "memory", "cc"
+    );
+}
+
+pub inline fn invept(inv_type: u64, descriptor: *u8) void {
+    asm volatile (
+        \\invept %[descriptor], %[inv_type]
+        :
+        : [inv_type] "r" (inv_type),
+          [descriptor] "m" (descriptor),
+        : "memory", "cc"
+    );
+}
+
 /// MSR addresses.
 pub const Msr = enum(u32) {
     /// IA32_APIC_BASE MSR.

@@ -19,6 +19,7 @@ const ept = @import("vmx/ept.zig");
 const cpuid = @import("vmx/cpuid.zig");
 const msr = @import("vmx/msr.zig");
 const cr = @import("vmx/cr.zig");
+const pg = @import("vmx/page.zig");
 
 const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
@@ -52,6 +53,8 @@ pub const Vcpu = struct {
 
     /// ID of the logical processor.
     id: usize = 0,
+    /// VPID of the virtual machine.
+    vpid: u16 = 0,
     /// VMXON region.
     vmxon_region: *VmxonRegion,
     /// VMCS region.
@@ -86,11 +89,12 @@ pub const Vcpu = struct {
     /// Create a new virtual CPU.
     /// This function does not virtualize the CPU.
     /// You MUST call `virtualize` to put the CPU in VMX root operation.
-    pub fn new() Self {
+    pub fn new(vpid: u16) Self {
         const id = apic.getLapicId();
 
         return Self{
             .id = id,
+            .vpid = vpid,
             .vmxon_region = undefined,
             .vmcs_region = undefined,
         };
@@ -197,9 +201,13 @@ pub const Vcpu = struct {
 
     /// Handle the VM-exit.
     fn handleExit(self: *Self, exit_info: ExitInformation) VmxError!void {
-        log.debug("VM-exit: reason={?}", .{exit_info.basic_reason});
+        log.debug("VM-exit: {?}", .{exit_info.basic_reason});
 
         switch (exit_info.basic_reason) {
+            .invpcid => {
+                pg.invalidateEpt(self, .single_context);
+                try self.stepNextInst();
+            },
             .io => {
                 const q = try getExitQual(qual.QualIo);
                 log.debug("I/O instruction: {?}", .{q});
@@ -561,6 +569,7 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     ppb_exec_ctrl2.ept = true;
     ppb_exec_ctrl2.unrestricted_guest = true; // TODO: should we enable this?
     ppb_exec_ctrl2.enable_xsaves_xrstors = true;
+    ppb_exec_ctrl2.enable_invpcid = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl2,
         am.readMsr(.vmx_procbased_ctls2),
