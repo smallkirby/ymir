@@ -11,6 +11,7 @@ pub const BootInfo = extern struct {
     magic: usize = surtr_magic,
     memory_map: MemoryMap,
     guest_info: GuestInfo,
+    acpi_table: *anyopaque,
 };
 
 /// Memory map provided by UEFI.

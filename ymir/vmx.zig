@@ -87,7 +87,13 @@ pub const Vm = struct {
     }
 
     /// Setup guest memory and load a guest kernel on the memory.
-    pub fn setupGuestMemory(self: *Self, guest_image: []u8, allocator: Allocator, page_allocator: *PageAllocator) Error!void {
+    pub fn setupGuestMemory(
+        self: *Self,
+        guest_image: []u8,
+        allocator: Allocator,
+        page_allocator: *PageAllocator,
+    ) Error!void {
+        // Allocate guest memory.
         const guest_memory_size = mem.mib * 100; // TODO: make this configurable
         self.guest_mem = page_allocator.allocPages(
             // This alignment is required because EPT maps 2MiB pages.
@@ -97,10 +103,17 @@ pub const Vm = struct {
 
         try self.loadKernel(guest_image);
 
+        // Create simple EPT mapping.
         self.vcpu.initGuestMap(
             self.guest_mem,
             allocator,
         ) catch return Error.UnknownError; // TODO
+        log.info("Guet memory is mapped to guest. host=0x{X:0>16}", .{@intFromPtr(self.guest_mem.ptr)});
+    }
+
+    /// Maps the RSDP region to the guest physical memory.
+    pub fn mapRsdpRegion(self: *Self, allocator: Allocator) Error!void {
+        self.vcpu.mapRsdpRegion(0x000E0000, allocator); // TODO: magic number
     }
 
     /// Kick off the virtual machine.

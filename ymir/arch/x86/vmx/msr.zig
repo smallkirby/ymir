@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.cpuid);
+const log = std.log.scoped(.vmmsr);
 
 const vmx = @import("../vmx.zig");
 const Vcpu = vmx.Vcpu;

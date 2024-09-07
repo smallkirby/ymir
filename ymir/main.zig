@@ -50,20 +50,21 @@ export fn kernelTrampoline(boot_info: surtr.BootInfo) callconv(.Win64) noreturn 
 }
 
 /// Kernel main function.
-fn kernelMain(boot_info: surtr.BootInfo) !void {
+fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     // Initialize the serial console and logger.
     const sr = serial.init();
     klog.init(sr);
     log.info("Booting Ymir...", .{});
 
     // Validate the boot info.
-    validateBootInfo(boot_info) catch |err| {
+    validateBootInfo(bs_boot_info) catch |err| {
         log.err("Invalid boot info: {}", .{err});
         return error.InvalidBootInfo;
     };
 
-    // Copy guest info into Ymir's stack sice it becomes inaccessible soon.
-    const guest_info = boot_info.guest_info;
+    // Copy boot_info into Ymir's stack sice it becomes inaccessible soon.
+    const guest_info = bs_boot_info.guest_info;
+    const acpi_table = bs_boot_info.acpi_table;
 
     // Initialize GDT.
     // It switches GDT from the one prepared by surtr to the ymir GDT.
@@ -76,7 +77,7 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     log.info("Initialized IDT.", .{});
 
     // Initialize BootstrapPageAllocator.
-    BootstrapPageAllocator.init(boot_info.memory_map);
+    BootstrapPageAllocator.init(bs_boot_info.memory_map);
     log.info("Initialized early stage page allocator.", .{});
 
     // Clone page tables prepared by UEFI and surtr.
@@ -89,7 +90,7 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try arch.page.directOffsetMap();
 
     // Initialize page allocator.
-    ymir.mem.initPageAllocator(boot_info.memory_map);
+    ymir.mem.initPageAllocator(bs_boot_info.memory_map);
     log.info("Initialized page allocator.", .{});
 
     // Now, stack, GDT, and page tables are switched to the ymir's ones.
@@ -112,6 +113,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     arch.intr.registerHandler(idefs.pic_timer, blobTimerHandler);
     arch.pic.unsetMask(.Timer);
     log.info("Enabled PIT.", .{});
+
+    // Find RSDP.
+    arch.initAcpi(acpi_table);
 
     // Init keyboard.
     kbd.init(.{ .serial = sr }); // TODO: make this configurable
@@ -139,6 +143,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
         &ymir.mem.page_allocator_instance,
     );
     log.info("Setup guest memory.", .{});
+
+    // Pass-through ACPI tables.
+    try vm.mapRsdpRegion(ymir.mem.general_allocator);
 
     // Launch
     log.info("Starting the virtual machine...", .{});

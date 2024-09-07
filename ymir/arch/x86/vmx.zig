@@ -9,6 +9,7 @@ const linux = ymir.linux;
 const BootParams = linux.boot.BootParams;
 
 const am = @import("asm.zig");
+const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
 const gdt = @import("gdt.zig");
 const serial = @import("serial.zig");
@@ -183,6 +184,22 @@ pub const Vcpu = struct {
         }
     }
 
+    /// Maps 4KiB page to EPT of this vCPU.
+    fn map4k(self: *Self, host: Phys, guest: Phys, allocator: Allocator) VmxError!void {
+        const lv4tbl = self.eptp.getLv4();
+        try ept.map4k(guest, host, lv4tbl, allocator);
+    }
+
+    /// Maps Ymir's physical pages where RSDP and XSDT are located to pass-through.
+    pub fn mapRsdpRegion(self: *Self, guest: Phys, allocator: Allocator) void {
+        // Map RSDP region.
+        const rsdp_page = @as(u64, acpi.getRsdpPhys().?) & ~mem.page_mask_4k;
+        self.map4k(rsdp_page, guest, allocator) catch @panic("Failed to map RDSP region.");
+        // Map XSDT region.
+        const xsdt_page = @as(u64, acpi.getXsdtPhys().?) & ~mem.page_mask_4k;
+        self.map4k(xsdt_page, xsdt_page, allocator) catch @panic("Failed to map XSDT region.");
+    }
+
     // Enter VMX non-root operation.
     fn vmentry(self: *Self) VmxError!void {
         const success = self.asmVmEntry() == 0;
@@ -201,8 +218,6 @@ pub const Vcpu = struct {
 
     /// Handle the VM-exit.
     fn handleExit(self: *Self, exit_info: ExitInformation) VmxError!void {
-        log.debug("VM-exit: {?}", .{exit_info.basic_reason});
-
         switch (exit_info.basic_reason) {
             .invpcid => {
                 pg.invalidateEpt(self, .single_context);

@@ -248,6 +248,26 @@ pub fn main() uefi.Status {
     }
     log.info("Loaded guest kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ guest_start, guest_start + guest_size });
 
+    // Find RSDP.
+    const acpi_table_guid = uefi.Guid{
+        .time_low = 0x8868E871,
+        .time_mid = 0xE4F1,
+        .time_high_and_version = 0x11D3,
+        .clock_seq_high_and_reserved = 0xBC,
+        .clock_seq_low = 0x22,
+        .node = [_]u8{ 0x0, 0x80, 0xC7, 0x3C, 0x88, 0x81 },
+    };
+    const acpi_table = for (0..uefi.system_table.number_of_table_entries) |i| {
+        const guid = uefi.system_table.configuration_table[i].vendor_guid;
+        if (uefi.Guid.eql(acpi_table_guid, guid)) {
+            break uefi.system_table.configuration_table[i].vendor_table;
+        }
+    } else {
+        log.err("Failed to find ACPI table.", .{});
+        return .LoadError;
+    };
+    log.info("ACPI table @ 0x{X:0>16}", .{@intFromPtr(acpi_table)});
+
     // Clean up memory.
     status = boot_service.freePool(header_buffer);
     if (status != .Success) {
@@ -329,6 +349,7 @@ pub fn main() uefi.Status {
             .guest_image = @ptrFromInt(guest_start),
             .guest_size = guest_size,
         },
+        .acpi_table = acpi_table,
     };
     kernel_entry(boot_info);
 

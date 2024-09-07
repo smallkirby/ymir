@@ -12,6 +12,7 @@ const Virt = mem.Virt;
 
 const page_mask_4k = mem.page_mask_4k;
 const page_mask_2mb = mem.page_mask_2mb;
+const page_mask_1gb = mem.page_mask_1gb;
 const page_shift_4k = mem.page_shift_4k;
 const page_size_4k = mem.page_size_4k;
 const page_size_2mb = mem.page_size_2mb;
@@ -67,7 +68,94 @@ pub fn initEpt(
     return lv4_tbl;
 }
 
+/// Translate guest physical address to host physical address.
+pub fn translate(guest: Phys, lv4tbl: []Lv4EptEntry) ?Phys {
+    const lv4index = (guest >> lv4_shift) & index_mask;
+    const lv4ent = lv4tbl[lv4index];
+    if (!lv4ent.present()) {
+        return null;
+    }
+
+    const lv3tbl = getLv3Table(lv4ent.address());
+    const lv3index = (guest >> lv3_shift) & index_mask;
+    const lv3ent = lv3tbl[lv3index];
+    if (!lv3ent.present()) {
+        return null;
+    }
+    if (lv3ent.map_memory) {
+        return lv3ent.address() + (guest & page_mask_1gb);
+    }
+
+    const lv2tbl = getLv2Table(lv3ent.address());
+    const lv2index = (guest >> lv2_shift) & index_mask;
+    const lv2ent = lv2tbl[lv2index];
+    if (!lv2ent.present()) {
+        return null;
+    }
+    if (lv2ent.map_memory) {
+        return lv2ent.address() + (guest & page_mask_4k);
+    }
+
+    const lv1tbl = getLv1Table(lv2ent.address());
+    const lv1index = (guest >> lv1_shift) & index_mask;
+    const lv1ent = lv1tbl[lv1index];
+    if (!lv1ent.present()) {
+        return null;
+    }
+    return lv1ent.address() + (guest & page_mask_4k);
+}
+
 /// Maps the given 2MiB host physical memory to the guest physical memory.
+/// Caller must flush TLB.
+pub fn map4k(
+    guest_hpsy: Phys,
+    host_phys: Phys,
+    lv4tbl: []Lv4EptEntry,
+    allocator: Allocator,
+) !void {
+    const lv4index = (guest_hpsy >> lv4_shift) & index_mask;
+    var lv4ent = &lv4tbl[lv4index];
+    if (!lv4ent.present()) {
+        const lv3tbl = try initLv3Table(allocator);
+        lv4ent.* = Lv4EptEntry.new(lv3tbl);
+    }
+
+    const lv3tbl = getLv3Table(lv4ent.address());
+    const lv3index = (guest_hpsy >> lv3_shift) & index_mask;
+    var lv3ent = &lv3tbl[lv3index];
+    if (!lv3ent.present()) {
+        const lv2tbl = try initLv2Table(allocator);
+        lv3ent.* = Lv3EptEntry.new(lv2tbl);
+    }
+
+    const lv2tbl = getLv2Table(lv3ent.address());
+    const lv2index = (guest_hpsy >> lv2_shift) & index_mask;
+    var lv2ent = &lv2tbl[lv2index];
+    if (!lv2ent.present()) {
+        const lv1tbl = try initLv1Table(allocator);
+        lv2ent.* = Lv2EptEntry.new(lv1tbl);
+    }
+
+    if (lv2ent.map_memory) {
+        // The Level-2 entry already maps a 2MiB region.
+        // Break down the 2MiB region into 4KiB regions.
+        const original_phys = lv2ent.address();
+        const lv1tbl = try initLv1Table(allocator);
+        for (0..page_size_2mb / page_size_4k) |i| {
+            lv1tbl[i] = Lv1EptEntry.new(original_phys + page_size_4k * i);
+        }
+        lv2ent.* = Lv2EptEntry.new(lv1tbl);
+    }
+
+    // TODO: Should return error if the 4KiB page is already mapped to other physical page.
+    const lv1tbl = getLv1Table(lv2ent.address());
+    const lv1index = (guest_hpsy >> lv1_shift) & index_mask;
+    const lv1ent = &lv1tbl[lv1index];
+    lv1ent.* = Lv1EptEntry.new(host_phys);
+}
+
+/// Maps the given 2MiB host physical memory to the guest physical memory.
+/// Caller must flush TLB.
 fn map2m(
     guest_phys: Phys,
     host_phys: Phys,
@@ -110,6 +198,11 @@ fn getLv2Table(first_lv2ent_addr: Phys) []Lv2EptEntry {
     return first_lv2ent[0..num_table_entries];
 }
 
+fn getLv1Table(first_lv1ent_addr: Phys) []Lv1EptEntry {
+    const first_lv1ent: [*]Lv1EptEntry = @ptrFromInt(p2v(first_lv1ent_addr));
+    return first_lv1ent[0..num_table_entries];
+}
+
 fn initLv4Table(page_allocator: Allocator) ![]Lv4EptEntry {
     const lv4tbl = try page_allocator.alloc(Lv4EptEntry, num_table_entries);
     for (0..lv4tbl.len) |i| {
@@ -147,6 +240,19 @@ fn initLv2Table(page_allocator: Allocator) ![]Lv2EptEntry {
     }
 
     return lv2tbl;
+}
+
+fn initLv1Table(page_allocator: Allocator) ![]Lv1EptEntry {
+    const lv1tbl = try page_allocator.alloc(Lv1EptEntry, num_table_entries);
+    for (0..lv1tbl.len) |i| {
+        lv1tbl[i].read = false;
+        lv1tbl[i].write = false;
+        lv1tbl[i].exec_super = false;
+        lv1tbl[i].map_memory = false;
+        lv1tbl[i].type = .uncacheable;
+    }
+
+    return lv1tbl;
 }
 
 const MemoryType = enum(u3) {
@@ -278,13 +384,23 @@ const Lv2EptEntry = packed struct(u64) {
     /// 4KB aligned address of the level-1 EPT table, or 2MiB aligned address of the memory.
     phys: u52,
 
+    /// Create a new Level-2 EPT entry that references a level-1 EPT table.
+    pub fn new(lv1tbl: []Lv1EptEntry) Lv2EptEntry {
+        const phys_lv1tbl = v2p(lv1tbl.ptr);
+        return Lv2EptEntry{
+            .map_memory = false,
+            .type = .uncacheable,
+            .phys = @truncate(phys_lv1tbl >> page_shift_4k),
+        };
+    }
+
     pub fn present(self: Lv2EptEntry) bool {
         return self.read or self.write or self.exec_super;
     }
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv2EptEntry) Phys {
-        return @as(u64, @intCast(self.phys_pdpt)) << page_shift_4k;
+        return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
@@ -294,10 +410,10 @@ const Lv1EptEntry = packed struct(u64) {
     /// Whether reads are allowed.
     read: bool = true,
     /// Whether writes are allowed.
-    write: bool,
+    write: bool = true,
     /// If "mode-based execute control for EPT" is 0, execute access.
     /// If that field is 1, execute access for supervisor-mode linear address.
-    exec_super: bool,
+    exec_super: bool = true,
     /// EPT memory type.
     /// ReservedZ when the entry maps a 4KiB page.
     type: MemoryType = .write_back,
@@ -310,11 +426,31 @@ const Lv1EptEntry = packed struct(u64) {
     // If EPTP[6] is 1, dirty flag. Otherwise, ignored.
     dirty: bool = false,
     /// Execute access for user-mode linear address.
-    exec_user: bool,
+    exec_user: bool = true,
     /// Ignored
     _ignored2: u1 = 0,
     /// 4KB aligned address of memory region.
-    phy: u52,
+    phys: u52,
+
+    pub fn new(phys: Phys) Lv1EptEntry {
+        return Lv1EptEntry{
+            .read = true,
+            .write = true,
+            .exec_super = true,
+            .type = .write_back,
+            .map_memory = true,
+            .exec_user = true,
+            .phys = @truncate(phys >> page_shift_4k),
+        };
+    }
+
+    pub fn present(self: Lv1EptEntry) bool {
+        return self.read or self.write or self.exec_super;
+    }
+
+    pub inline fn address(self: Lv1EptEntry) Phys {
+        return @as(u64, @intCast(self.phys)) << page_shift_4k;
+    }
 };
 
 /// Extended Page Table Pointer.
@@ -337,6 +473,12 @@ pub const Eptp = packed struct(u64) {
         return Eptp{
             .phys = @truncate(v2p(lv4tbl.ptr) >> page_shift_4k),
         };
+    }
+
+    /// Get the host virtual address of the Level-4 EPT table.
+    pub fn getLv4(self: *Eptp) []Lv4EptEntry {
+        const virt: [*]Lv4EptEntry = @ptrFromInt(p2v(@as(u64, @intCast(self.phys)) << page_shift_4k));
+        return virt[0..num_table_entries];
     }
 
     const PageLevel = enum(u3) {
