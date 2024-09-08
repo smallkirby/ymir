@@ -145,7 +145,8 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     log.info("Setup guest memory.", .{});
 
     // Pass-through ACPI tables.
-    try vm.mapRsdpRegion(ymir.mem.general_allocator);
+    // TODO
+    //try vm.mapRsdpRegion(ymir.mem.general_allocator);
 
     // Launch
     log.info("Starting the virtual machine...", .{});
