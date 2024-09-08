@@ -14,7 +14,6 @@ const vmread = vmcs.vmread;
 pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
     const guest_regs = &vcpu.guest_regs;
     const rcx: u32 = @truncate(guest_regs.rcx);
-    log.debug("RDMSR: MSR[0x{X:0>8}]", .{rcx});
     const msr_kind: am.Msr = @enumFromInt(rcx);
 
     switch (msr_kind) {
@@ -54,8 +53,8 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
         .mtrr_def_type,
         => passthroughRdmsr(vcpu, msr_kind),
         .apic_base => {
-            guest_regs.rdx = 0;
-            guest_regs.rax = 0;
+            guest_regs.rdx = 0xDEADBEEF;
+            guest_regs.rax = 0xCAFEBABE;
         },
         .efer => {
             const efer = try vmread(vmcs.Guest.efer);
@@ -86,7 +85,6 @@ pub fn handleWrmsrExit(vcpu: *Vcpu) VmxError!void {
     const guest_regs = &vcpu.guest_regs;
     const ecx: u32 = @truncate(guest_regs.rcx);
     const value = concat(guest_regs.rdx, guest_regs.rax);
-    log.debug("WRMSR: MSR[0x{X:0>8}] = 0x{X:0>16}", .{ ecx, value });
     const msr_kind: am.Msr = @enumFromInt(ecx);
 
     switch (msr_kind) {

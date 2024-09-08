@@ -79,29 +79,19 @@ pub fn translate(guest: Phys, lv4tbl: []Lv4EptEntry) ?Phys {
     const lv3tbl = getLv3Table(lv4ent.address());
     const lv3index = (guest >> lv3_shift) & index_mask;
     const lv3ent = lv3tbl[lv3index];
-    if (!lv3ent.present()) {
-        return null;
-    }
-    if (lv3ent.map_memory) {
-        return lv3ent.address() + (guest & page_mask_1gb);
-    }
+    if (!lv3ent.present()) return null;
+    if (lv3ent.map_memory) return lv3ent.address() + (guest & page_mask_1gb);
 
     const lv2tbl = getLv2Table(lv3ent.address());
     const lv2index = (guest >> lv2_shift) & index_mask;
     const lv2ent = lv2tbl[lv2index];
-    if (!lv2ent.present()) {
-        return null;
-    }
-    if (lv2ent.map_memory) {
-        return lv2ent.address() + (guest & page_mask_4k);
-    }
+    if (!lv2ent.present()) return null;
+    if (lv2ent.map_memory) return lv2ent.address() + (guest & page_mask_2mb);
 
     const lv1tbl = getLv1Table(lv2ent.address());
     const lv1index = (guest >> lv1_shift) & index_mask;
     const lv1ent = lv1tbl[lv1index];
-    if (!lv1ent.present()) {
-        return null;
-    }
+    if (!lv1ent.present()) return null;
     return lv1ent.address() + (guest & page_mask_4k);
 }
 

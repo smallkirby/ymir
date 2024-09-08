@@ -29,15 +29,21 @@ const virt2phys = mem.virt2phys;
 const phys2virt = mem.phys2virt;
 const Virt = mem.Virt;
 const Phys = mem.Phys;
-const page_size_4k = mem.page_size_4k;
-const page_size_2mb = mem.page_size_2mb;
-const page_size_1gb = mem.page_size_1gb;
-const page_shift_4k = mem.page_shift_4k;
 
 pub const PageError = error{
     /// Failed to allocate memory.
     NoMemory,
 };
+
+const page_size_4k = mem.page_size_4k;
+const page_size_2mb = mem.page_size_2mb;
+const page_size_1gb = mem.page_size_1gb;
+const page_shift_4k = mem.page_shift_4k;
+const page_shift_2mb = mem.page_shift_2mb;
+const page_shift_1gb = mem.page_shift_1gb;
+const page_mask_4k = mem.page_mask_4k;
+const page_mask_2mb = mem.page_mask_2mb;
+const page_mask_1gb = mem.page_mask_1gb;
 
 /// Shift in bits to extract the level-4 index from a virtual address.
 const lv4_shift = 39;
@@ -78,7 +84,7 @@ pub fn isCanonical(addr: Virt) bool {
 /// Get the level-4 page table of the current process.
 pub fn getLv4PageTable() []Lv4PageTableEntry {
     const cr3 = am.readCr3() + phys_virt_offset;
-    const lv4_table_ptr: [*]Lv4PageTableEntry = @ptrFromInt(cr3 & ~@as(u64, 0xFFF));
+    const lv4_table_ptr: [*]Lv4PageTableEntry = @ptrFromInt(cr3 & ~@as(u64, page_mask_4k));
     return lv4_table_ptr[0..num_table_entries];
 }
 
@@ -115,7 +121,7 @@ pub fn translateWalk(addr: Virt) ?Phys {
     const lv3_entry = &lv3_table[lv3_index];
     if (!lv3_entry.present) return null;
     if (lv3_entry.ps) { // 1GiB page
-        return lv3_entry.address() + (addr & 0x1FFFFFFF);
+        return lv3_entry.address() + (addr & page_mask_1gb);
     }
 
     const lv2_table = getLv2PageTable(lv3_entry.address());
@@ -123,14 +129,39 @@ pub fn translateWalk(addr: Virt) ?Phys {
     const lv2_entry = &lv2_table[lv2_index];
     if (!lv2_entry.present) return null;
     if (lv2_entry.ps) { // 2MiB page
-        return lv2_entry.address() + (addr & 0x1FFFF);
+        return lv2_entry.address() + (addr & page_mask_4k);
     }
 
     const lv1_table = getLv1PageTable(lv2_entry.address());
     const lv1_index = (addr >> lv1_shift) & index_mask;
     const lv1_entry = &lv1_table[lv1_index];
     if (!lv1_entry.present) return null;
-    return lv1_entry.phys_addr + (addr & 0xFFF);
+    return lv1_entry.phys + (addr & page_mask_4k);
+}
+
+/// Translate the given guest virtual address to guest physical address.
+pub fn guestTranslateWalk(gva: Virt, cr3: Phys, guest_base: Phys) ?Phys {
+    const lv4tbl: [*]Lv4PageTableEntry = @ptrFromInt(phys2virt((cr3 & ~page_mask_4k) + guest_base));
+    const lv4index = (gva >> lv4_shift) & index_mask;
+    const lv4ent = &lv4tbl[lv4index];
+
+    const lv3tbl: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv4ent.address() + guest_base));
+    const lv3index = (gva >> lv3_shift) & index_mask;
+    const lv3ent = &lv3tbl[lv3index];
+    if (!lv3ent.present) return null;
+    if (lv3ent.ps) return lv3ent.address() + (gva & page_mask_1gb);
+
+    const lv2tbl: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv3ent.address() + guest_base));
+    const lv2index = (gva >> lv2_shift) & index_mask;
+    const lv2ent = &lv2tbl[lv2index];
+    if (!lv2ent.present) return null;
+    if (lv2ent.ps) return lv2ent.address() + (gva & page_mask_2mb);
+
+    const lv1tbl: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv2ent.address() + guest_base));
+    const lv1index = (gva >> lv1_shift) & index_mask;
+    const lv1ent = &lv1tbl[lv1index];
+    if (!lv1ent.present) return null;
+    return lv1ent.address() + (gva & page_mask_4k);
 }
 
 /// Clone page tables prepared by UEFI.
@@ -145,7 +176,7 @@ pub fn cloneUefiPageTables() !void {
         if (lv4_entry.present) {
             const lv3_table = getLv3PageTable(lv4_entry.address());
             const new_lv3_table = try cloneLevel3Table(lv3_table);
-            lv4_entry.phys_pdpt = @truncate(@as(u64, @intFromPtr(new_lv3_table.ptr)) >> page_shift_4k);
+            lv4_entry.phys = @truncate(@as(u64, @intFromPtr(new_lv3_table.ptr)) >> page_shift_4k);
         }
     }
 
@@ -163,7 +194,7 @@ fn cloneLevel3Table(lv3_table: []Lv3PageTableEntry) ![]Lv3PageTableEntry {
 
         const lv2_table = getLv2PageTable(lv3_entry.address());
         const new_lv2_table = try cloneLevel2Table(lv2_table);
-        lv3_entry.phys_pdt = @truncate(@as(u64, @intFromPtr(new_lv2_table.ptr)) >> page_shift_4k);
+        lv3_entry.phys = @truncate(@as(u64, @intFromPtr(new_lv2_table.ptr)) >> page_shift_4k);
     }
 
     return new_lv3_table;
@@ -180,7 +211,7 @@ fn cloneLevel2Table(lv2_table: []Lv2PageTableEntry) ![]Lv2PageTableEntry {
 
         const lv1_table = getLv1PageTable(lv2_entry.address());
         const new_lv1_table = try cloneLevel1Table(lv1_table);
-        lv2_entry.phys_pt = @truncate(@as(u64, @intFromPtr(new_lv1_table.ptr)) >> page_shift_4k);
+        lv2_entry.phys = @truncate(@as(u64, @intFromPtr(new_lv1_table.ptr)) >> page_shift_4k);
     }
 
     return new_lv2_table;
@@ -208,7 +239,7 @@ pub fn directOffsetMap() !void {
             .present = true,
             .rw = true,
             .us = false,
-            .phys_pdpt = @truncate(@as(u64, @intFromPtr(lv3_table.ptr)) >> page_shift_4k),
+            .phys = @truncate(@as(u64, @intFromPtr(lv3_table.ptr)) >> page_shift_4k),
         };
     }
 
@@ -249,9 +280,9 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     const cr3 = am.readCr3();
     const lv4_table: [*]Lv4PageTableEntry = @ptrFromInt(phys2virt(cr3));
     const lv4_entry = lv4_table[pml4_index];
-    const lv3_table: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv4_entry.phys_pdpt << page_shift_4k));
+    const lv3_table: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv4_entry.phys << page_shift_4k));
     const lv3_entry = lv3_table[pdp_index];
-    const lv2_table: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv3_entry.phys_pdt << page_shift_4k));
+    const lv2_table: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv3_entry.phys << page_shift_4k));
     const lv2_entry = lv2_table[pdt_index];
 
     logger.info("Lv4: 0x{X:0>16}", .{@intFromPtr(lv4_table)});
@@ -262,7 +293,7 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     logger.info("\t[{d}]: 0x{X:0>16}", .{ pdt_index, std.mem.bytesAsValue(u64, &lv2_entry).* });
 
     if (!lv2_entry.ps) {
-        const lv1_table: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv2_entry.phys_pt << page_shift_4k));
+        const lv1_table: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv2_entry.phys << page_shift_4k));
         const lv1_entry = lv1_table[pt_index];
         logger.info("Lv1: 0x{X:0>16}", .{@intFromPtr(lv1_table)});
         logger.info("\t[{d}]: 0x{X:0>16}", .{ pt_index, std.mem.bytesAsValue(u64, &lv1_entry).* });
@@ -298,7 +329,7 @@ const Lv4PageTableEntry = packed struct(u64) {
     /// Ignored except for HLAT paging.
     restart: bool = false,
     /// 4KB aligned address of the PDP Table.
-    phys_pdpt: u52,
+    phys: u52,
 
     /// Get a new PML4E entry with the present bit set to false.
     pub fn new_nopresent() Lv4PageTableEntry {
@@ -306,7 +337,7 @@ const Lv4PageTableEntry = packed struct(u64) {
             .present = false,
             .rw = false,
             .us = false,
-            .phys_pdpt = 0,
+            .phys = 0,
         };
     }
 
@@ -316,13 +347,13 @@ const Lv4PageTableEntry = packed struct(u64) {
             .present = true,
             .rw = true,
             .us = false,
-            .phys_pdpt = @truncate(@as(u64, @intFromPtr(phys_pdpt)) >> page_shift_4k),
+            .phys = @truncate(@as(u64, @intFromPtr(phys_pdpt)) >> page_shift_4k),
         };
     }
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv4PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_pdpt)) << page_shift_4k;
+        return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
@@ -357,7 +388,7 @@ const Lv3PageTableEntry = packed struct(u64) {
     /// Ignored except for HLAT paging.
     restart: bool = false,
     /// 4KB aligned address of the PD Table.
-    phys_pdt: u52,
+    phys: u52,
 
     /// Get a new PDPT entry with the present bit set to false.
     pub fn new_nopresent() Lv3PageTableEntry {
@@ -366,7 +397,7 @@ const Lv3PageTableEntry = packed struct(u64) {
             .rw = false,
             .us = false,
             .ps = false,
-            .phys_pdt = 0,
+            .phys = 0,
         };
     }
 
@@ -377,13 +408,13 @@ const Lv3PageTableEntry = packed struct(u64) {
             .rw = true,
             .us = false,
             .ps = false,
-            .phys_pdt = @truncate(phys_pdt >> page_shift_4k),
+            .phys = @truncate(phys_pdt >> page_shift_4k),
         };
     }
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv3PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_pdt)) << page_shift_4k;
+        return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
@@ -424,7 +455,7 @@ const Lv2PageTableEntry = packed struct(u64) {
     restart: bool = false,
     /// When the entry maps a 2MiB page, physical address of the 2MiB page.
     /// When the entry references a Page Table, 4KB aligned address of the Page Table.
-    phys_pt: u52,
+    phys: u52,
 
     /// Get a new PDT entry with the present bit set to false.
     pub fn new_nopresent() Lv2PageTableEntry {
@@ -433,7 +464,7 @@ const Lv2PageTableEntry = packed struct(u64) {
             .rw = false,
             .us = false,
             .ps = false,
-            .phys_pt = 0,
+            .phys = 0,
         };
     }
 
@@ -444,13 +475,13 @@ const Lv2PageTableEntry = packed struct(u64) {
             .rw = true,
             .us = false,
             .ps = true,
-            .phys_pt = @truncate(phys >> 12),
+            .phys = @truncate(phys >> page_shift_4k),
         };
     }
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv2PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_pt)) << 12;
+        return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
@@ -488,11 +519,11 @@ const Lv1PageTableEntry = packed struct(u64) {
     /// Ignored except for HLAT paging.
     restart: bool = false,
     /// Physical address of the 4KiB page.
-    phys_addr: u52,
+    phys: u52,
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv1PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_addr)) << 12;
+        return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 

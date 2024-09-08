@@ -11,7 +11,6 @@ const am = @import("../asm.zig");
 /// Note that this function does not increment the RIP.
 pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
     const regs = &vcpu.guest_regs;
-    log.debug("CPUID leaf: {x} sub: {x}", .{ regs.rax, regs.rcx });
 
     if (invalid_cpuid_start <= regs.rax and regs.rax <= invalid_cpuid_end) {
         // Linux kernel checks KVM support using CPUID in this range.

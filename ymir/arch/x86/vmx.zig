@@ -68,6 +68,8 @@ pub const Vcpu = struct {
     guest_regs: GuestRegisters = undefined,
     /// EPT pointer.
     eptp: ept.Eptp = undefined,
+    /// Host physical address where the guest is mapped.
+    guest_base: Phys = 0,
 
     const GuestRegisters = packed struct {
         rax: u64,
@@ -98,6 +100,7 @@ pub const Vcpu = struct {
             .vpid = vpid,
             .vmxon_region = undefined,
             .vmcs_region = undefined,
+            .guest_base = undefined,
         };
     }
 
@@ -160,6 +163,7 @@ pub const Vcpu = struct {
         );
         const eptp = ept.Eptp.new(lv4tbl);
         self.eptp = eptp;
+        self.guest_base = ymir.mem.virt2phys(host_pages.ptr);
 
         try vmwrite(vmcs.Ctrl.eptp, eptp);
     }
@@ -236,6 +240,10 @@ pub const Vcpu = struct {
             .ept => {
                 const q = try getExitQual(qual.QualEptViolation);
                 log.err("EPT violation: {?}", .{q});
+                const lin = try vmread(vmcs.Ro.guest_linear_address);
+                const phys = try vmread(vmcs.Ro.guest_physical_address);
+                log.err("Guest linear address: 0x{X:0>16}", .{lin});
+                log.err("Guest physical address: 0x{X:0>16}", .{phys});
                 self.abort();
             },
             .cpuid => {
@@ -262,10 +270,37 @@ pub const Vcpu = struct {
         }
     }
 
-    fn abort(self: *Self) noreturn {
+    /// Print guest state and stack trace, and abort.
+    pub fn abort(self: *Self) noreturn {
         @setCold(true);
         self.printGuestState() catch unreachable;
+        self.printGuestStacktrace() catch unreachable;
         unreachable;
+    }
+
+    fn printGuestStacktrace(self: *Self) VmxError!void {
+        log.err("=== Guest Stack Trace ===", .{});
+
+        const page = @import("page.zig");
+        var rbp = self.guest_regs.rbp;
+        var rip = try vmread(vmcs.Guest.rip);
+        var i: usize = 0;
+        const cr3 = try vmread(vmcs.Guest.cr3);
+
+        while (true) : (i += 1) {
+            log.err("#{d:0>2}: 0x{X:0>16}", .{ i, rip });
+
+            if (page.guestTranslateWalk(rbp, cr3, self.guest_base)) |rbp_gpa| {
+                if (ept.translate(rbp_gpa, self.eptp.getLv4())) |rbp_host_addr| {
+                    const rbp_gva: [*]u64 = @ptrFromInt(mem.phys2virt(rbp_host_addr));
+                    rbp = rbp_gva[0];
+                    rip = rbp_gva[1];
+                } else break;
+            } else {
+                log.err("Failed to translate RBP to GPA.", .{});
+                return;
+            }
+        }
     }
 
     fn printGuestState(self: *Self) VmxError!void {
@@ -301,6 +336,7 @@ pub const Vcpu = struct {
                 vmread(vmcs.Guest.cs_limit) catch unreachable,
             },
         );
+        log.err("Guest physical base: 0x{X:0>16}", .{self.guest_base});
     }
 
     /// Increment RIP by the length of the current instruction.
