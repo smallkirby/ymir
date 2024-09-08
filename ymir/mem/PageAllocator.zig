@@ -159,8 +159,6 @@ fn set(self: *Self, frame: FrameId, status: Status) void {
 }
 
 /// Allocate physically contiguous and aligned pages.
-/// NOTE: Zig does not support alignment larger than a page size for Allocator interface.
-///     Therefore, this function provides a utility to allocate pages with an alignment larger than a page size.
 pub fn allocPages(self: *PageAllocator, num_pages: usize, align_size: usize) ?[]u8 {
     self.lock.lockDisableIrq();
     defer self.lock.unlockEnableIrq();
@@ -170,7 +168,7 @@ pub fn allocPages(self: *PageAllocator, num_pages: usize, align_size: usize) ?[]
         return null;
     }
 
-    const num_frames = (num_pages + page_size - 1) / page_size;
+    const num_frames = num_pages;
     const align_frame = (align_size + page_size - 1) / page_size;
     var start_frame = align_frame;
 

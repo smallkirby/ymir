@@ -97,7 +97,7 @@ pub const Vm = struct {
         const guest_memory_size = mem.mib * 100; // TODO: make this configurable
         self.guest_mem = page_allocator.allocPages(
             // This alignment is required because EPT maps 2MiB pages.
-            guest_memory_size,
+            guest_memory_size / ymir.mem.page_size_4k,
             mem.page_size_2mb,
         ) orelse return Error.OutOfMemory;
 
@@ -151,7 +151,7 @@ pub const Vm = struct {
 
         // Setup cmdline
         const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + boot_params.hdr.cmdline_size];
-        const cmdline_val = "console=ttyS0 earlyprintk=serial nokaslr";
+        const cmdline_val = "console=ttyS0 earlyprintk=serial loglevel=7 nokaslr";
         @memset(cmdline, 0);
         @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
 
