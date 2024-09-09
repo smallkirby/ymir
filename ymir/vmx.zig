@@ -116,6 +116,11 @@ pub const Vm = struct {
         self.vcpu.mapRsdpRegion(0x000E0000, allocator); // TODO: magic number
     }
 
+    /// Virtualize APIC (xAPIC).
+    pub fn virtualizeApic(self: *Self, allocator: Allocator) Error!void {
+        self.vcpu.virtualizeApic(allocator) catch return Error.OutOfMemory;
+    }
+
     /// Kick off the virtual machine.
     pub fn loop(self: *Self) Error!void {
         self.vcpu.loop() catch return Error.UnknownError; // TODO

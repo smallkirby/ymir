@@ -148,6 +148,9 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     // TODO
     //try vm.mapRsdpRegion(ymir.mem.general_allocator);
 
+    // Virtualize APIC.
+    try vm.virtualizeApic(ymir.mem.general_allocator);
+
     // Launch
     log.info("Starting the virtual machine...", .{});
     try vm.loop();

@@ -70,6 +70,8 @@ pub const Vcpu = struct {
     eptp: ept.Eptp = undefined,
     /// Host physical address where the guest is mapped.
     guest_base: Phys = 0,
+    /// Virtual APIC registers (kinda shadow page of APIC).
+    virt_apic_regs: VirtApicRegisters = undefined,
 
     const GuestRegisters = packed struct {
         rax: u64,
@@ -202,6 +204,24 @@ pub const Vcpu = struct {
         // Map XSDT region.
         const xsdt_page = @as(u64, acpi.getXsdtPhys().?) & ~mem.page_mask_4k;
         self.map4k(xsdt_page, xsdt_page, allocator) catch @panic("Failed to map XSDT region.");
+    }
+
+    /// Setup vAPIC.
+    pub fn virtualizeApic(self: *Self, allocator: Allocator) !void {
+        // Setup virtual-APIC page.
+        self.virt_apic_regs = try VirtApicRegisters.new(allocator);
+        self.virt_apic_regs.set(.local_apic_id, 0xAA << 24); // TODO: should read the real value from CPU.
+
+        // Maps APIC-access page.
+        // VM-exit due to vAPIC access is lower than page fault or EPT violation.
+        // So we have to map the page (this page might not be mapped when the guest memory is small).
+        const apic_access_page = try allocator.alloc(u8, mem.page_size_4k);
+        const apic_access_page_hpa = mem.virt2phys(apic_access_page.ptr);
+        self.map4k(apic_access_page_hpa, 0xFEE0_0000, allocator) catch unreachable; // TODO
+
+        // Set VMCS.
+        try vmwrite(vmcs.Ctrl.apic_access_address, apic_access_page_hpa);
+        try vmwrite(vmcs.Ctrl.virtual_apic_address, self.virt_apic_regs.hpa());
     }
 
     // Enter VMX non-root operation.
@@ -610,6 +630,7 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     // TODO: should use I/O bitmap instead of unconditional I/O exit.
     //ppb_exec_ctrl.unconditional_io = true;
     ppb_exec_ctrl.hlt = true;
+    ppb_exec_ctrl.use_tpr_shadow = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
@@ -621,6 +642,9 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     ppb_exec_ctrl2.unrestricted_guest = true; // TODO: should we enable this?
     ppb_exec_ctrl2.enable_xsaves_xrstors = true;
     ppb_exec_ctrl2.enable_invpcid = true;
+    ppb_exec_ctrl2.apic_register_virtualization = true;
+    ppb_exec_ctrl2.virtualize_apic_accesses = true;
+    ppb_exec_ctrl2.virtualize_x2apic_mode = false;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl2,
         am.readMsr(.vmx_procbased_ctls2),
@@ -630,7 +654,6 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     // Exit on access to CR0/CR4.
     try vmwrite(vmcs.Ctrl.cr0_mask, std.math.maxInt(u64));
     try vmwrite(vmcs.Ctrl.cr4_mask, std.math.maxInt(u64));
-
     try vmwrite(vmcs.Ctrl.cr3_target_count, 0);
 }
 
@@ -1106,6 +1129,48 @@ pub const ExitReason = enum(u16) {
     tdcall = 77,
 };
 
+/// TODO: move to different file.
+const VirtApicRegisters = struct {
+    const Self = @This();
+
+    /// Virtual-APIC page.
+    page: []u8,
+
+    pub fn new(allocator: Allocator) VmxError!Self {
+        const page = allocator.alloc(u8, mem.page_size_4k) catch return VmxError.OutOfMemory;
+        return Self{
+            .page = page,
+        };
+    }
+
+    /// Get the HPA of the virtual-APIC page.
+    pub fn hpa(self: *Self) u64 {
+        return mem.virt2phys(self.page.ptr);
+    }
+
+    /// Set an register value.
+    pub fn set(self: *Self, offset: Offsets, val: u32) void {
+        // Registers are always 32-bit wide.
+        const ptr: *u32 = @ptrFromInt(@intFromPtr(self.page.ptr) + @intFromEnum(offset));
+        ptr.* = val;
+    }
+
+    const Offsets = enum(u16) {
+        local_apic_id = 0x20,
+        local_apic_version = 0x30,
+        task_priority = 0x80,
+        eoi = 0xB0,
+        logical_dest = 0xD0,
+        dest_fmt = 0xE0,
+        spurious_intr_vec = 0xF0,
+        err_status = 0x280,
+        intr_cmd1 = 0x300,
+        intr_cmd2 = 0x310,
+        initial_count = 0x380,
+        divide_conf = 0x3E0,
+    };
+};
+
 // =====================================================
 
 /// Partially checks the validity of guest state.
@@ -1307,6 +1372,20 @@ fn partialCheckGuest() VmxError!void {
     if (is_pae_paging) {
         // TODO
         @panic("Unimplemented: PAE paging");
+    }
+
+    // == Checks on Control Fields
+    // cf. SDM Vol 3C 27.2.1.1
+    // vAPIC
+    const ppb_exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
+    const ppb_exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();
+    const apic_access_addr = try vmread(vmcs.Ctrl.apic_access_address);
+    if (apic_access_addr & mem.page_mask_4k != 0) @panic("APIC-access address must be page-aligned");
+    if (apic_access_addr >> 32 != 0) @panic("APIC-access address must be within the supported physical-address width");
+    if (!ppb_exec_ctrl.use_tpr_shadow) {
+        if (!ppb_exec_ctrl2.virtualize_x2apic_mode or !ppb_exec_ctrl2.apic_register_virtualization or !ppb_exec_ctrl2.virtual_interrupt_delivery) {
+            @panic("TPR shadow must be enabled when APIC virtualization is enabled");
+        }
     }
 }
 
