@@ -5,6 +5,7 @@
 const std = @import("std");
 const uefi = std.os.uefi;
 const stdlog = std.log;
+const option = @import("option");
 
 const Sto = uefi.protocol.SimpleTextOutput;
 
@@ -19,7 +20,12 @@ const Writer = std.io.Writer(
 /// Default log options.
 /// You can override std_options in your main file.
 pub const default_log_options = std.Options{
-    .log_level = .debug, // TODO: make this configurable by option
+    .log_level = switch (option.log_level) {
+        .debug => .debug,
+        .info => .info,
+        .warn => .warn,
+        .err => .err,
+    },
     .logFn = log,
 };
 

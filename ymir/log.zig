@@ -3,6 +3,7 @@
 const std = @import("std");
 const stdlog = std.log;
 const io = std.io;
+const option = @import("option");
 
 const ymir = @import("ymir");
 const Serial = ymir.serial.Serial;
@@ -19,7 +20,12 @@ const Writer = std.io.Writer(
 );
 
 pub const default_log_options = std.Options{
-    .log_level = .debug, // TODO: make this configurable by option
+    .log_level = switch (option.log_level) {
+        .debug => .debug,
+        .info => .info,
+        .warn => .warn,
+        .err => .err,
+    },
     .logFn = log,
 };
 
