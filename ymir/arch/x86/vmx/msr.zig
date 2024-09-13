@@ -17,6 +17,7 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
     const msr_kind: am.Msr = @enumFromInt(rcx);
 
     switch (msr_kind) {
+        .spec_ctrl,
         .tsc_adjust,
         .bios_sign_id,
         .mtrrcap,
@@ -50,6 +51,7 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
         .mtrr_fix4K_F0000,
         .mtrr_fix4K_F8000,
         .pat,
+        .mcg_cap,
         .mtrr_def_type,
         => passthroughRdmsr(vcpu, msr_kind),
         .apic_base => {
@@ -89,10 +91,20 @@ pub fn handleWrmsrExit(vcpu: *Vcpu) VmxError!void {
 
     switch (msr_kind) {
         .bios_sign_id => {}, // TODO
+        .spec_ctrl,
         .xss,
         .pat,
         .mtrr_def_type,
+        .star, // XXX
+        .lstar, // XXX
+        .cstar, // XXX
+        .fmask, // XXX
+        .tsc_aux,
+        .kernel_gs_base, // XXX
         => passthroughWrmsr(vcpu, msr_kind),
+        .sysenter_cs => try vmwrite(vmcs.Guest.sysenter_cs, value),
+        .sysenter_eip => try vmwrite(vmcs.Guest.sysenter_eip, value),
+        .sysenter_esp => try vmwrite(vmcs.Guest.sysenter_esp, value),
         .efer => try vmwrite(vmcs.Guest.efer, value),
         .gs_base => try vmwrite(vmcs.Guest.gs_base, value),
         .fs_base => try vmwrite(vmcs.Guest.fs_base, value),

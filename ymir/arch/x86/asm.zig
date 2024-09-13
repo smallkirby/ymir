@@ -519,6 +519,8 @@ pub const Msr = enum(u32) {
     feature_control = 0x003A,
     /// IA32_TSC MSR.
     tsc_adjust = 0x003B,
+    /// IA32_SPEC_CTRL MSR.
+    spec_ctrl = 0x0048,
     /// IA32_BIOS_SIGN_ID MSR. SDM Vol.3A Table 2-3.
     bios_sign_id = 0x8B,
     /// IA32_MTRRCAP MSR.
@@ -531,6 +533,8 @@ pub const Msr = enum(u32) {
     sysenter_esp = 0x175,
     /// IA32_SYSENTER_EIP MSR. SDM Vol.3A Table 2-3.
     sysenter_eip = 0x176,
+    /// IA32_MCG_CAP MSR.
+    mcg_cap = 0x179,
     /// IA32_MISC_ENABLE MSR.
     misc_enable = 0x1A0,
     /// IA32_DEBUGCTL MSR. SDM Vol.4 Table 2-3.
@@ -626,12 +630,22 @@ pub const Msr = enum(u32) {
     /// IA32_XSS MSR.
     xss = 0x0DA0,
 
+    /// IA32_STAR MSR.
+    star = 0xC0000081,
+    /// IA32_LSTAR MSR.
+    lstar = 0xC0000082,
+    /// IA32_CSTAR MSR.
+    cstar = 0xC0000083,
+    /// IA32_FMASK MSR.
+    fmask = 0xC0000084,
     /// IA32_FS_BASE MSR.
     fs_base = 0xC0000100,
     /// IA32_GS_BASE MSR.
     gs_base = 0xC0000101,
     /// IA32_KERNEL_GS_BASE MSR.
     kernel_gs_base = 0xC0000102,
+    /// IA32_TSC_AUX MSR.
+    tsc_aux = 0xC0000103,
     /// IA32_EFER MSR.
     efer = 0xC0000080,
 };

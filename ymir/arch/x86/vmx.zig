@@ -21,6 +21,7 @@ const cpuid = @import("vmx/cpuid.zig");
 const msr = @import("vmx/msr.zig");
 const cr = @import("vmx/cr.zig");
 const pg = @import("vmx/page.zig");
+const lapic = @import("vmx/lapic.zig");
 
 const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
@@ -71,7 +72,7 @@ pub const Vcpu = struct {
     /// Host physical address where the guest is mapped.
     guest_base: Phys = 0,
     /// Virtual APIC registers (kinda shadow page of APIC).
-    virt_apic_regs: VirtApicRegisters = undefined,
+    virt_apic_regs: lapic.VirtApicRegisters = undefined,
 
     const GuestRegisters = packed struct {
         rax: u64,
@@ -209,7 +210,7 @@ pub const Vcpu = struct {
     /// Setup vAPIC.
     pub fn virtualizeApic(self: *Self, allocator: Allocator) !void {
         // Setup virtual-APIC page.
-        self.virt_apic_regs = try VirtApicRegisters.new(allocator);
+        self.virt_apic_regs = try lapic.VirtApicRegisters.new(allocator);
         self.virt_apic_regs.set(.local_apic_id, 0xAA << 24); // TODO: should read the real value from CPU.
 
         // Maps APIC-access page.
@@ -283,6 +284,17 @@ pub const Vcpu = struct {
                 log.warn("Ignored guest XSETBV.", .{});
                 try self.stepNextInst();
             },
+            .apic => {
+                const offset = try vmread(vmcs.Ro.exit_qual);
+                try lapic.handleLapic(self, offset);
+                try self.stepNextInst();
+            },
+            .apic_write => {
+                const offset = try vmread(vmcs.Ro.exit_qual);
+                try lapic.handleLapicWrite(self, offset);
+                try self.stepNextInst();
+            },
+            .extintr => {}, // TODO
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
                 self.abort();
@@ -293,9 +305,13 @@ pub const Vcpu = struct {
     /// Print guest state and stack trace, and abort.
     pub fn abort(self: *Self) noreturn {
         @setCold(true);
-        self.printGuestState() catch unreachable;
-        self.printGuestStacktrace() catch unreachable;
+        self.dump() catch unreachable;
         unreachable;
+    }
+
+    pub fn dump(self: *Self) VmxError!void {
+        try self.printGuestState();
+        try self.printGuestStacktrace();
     }
 
     fn printGuestStacktrace(self: *Self) VmxError!void {
@@ -618,7 +634,8 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // Pin-based VM-Execution control.
-    const pin_exec_ctrl = try vmcs.PinExecCtrl.store();
+    var pin_exec_ctrl = try vmcs.PinExecCtrl.store();
+    pin_exec_ctrl.external_interrupt = true;
     try adjustRegMandatoryBits(
         pin_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_pinbased_ctls) else am.readMsr(.vmx_pinbased_ctls),
@@ -645,6 +662,7 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     ppb_exec_ctrl2.apic_register_virtualization = true;
     ppb_exec_ctrl2.virtualize_apic_accesses = true;
     ppb_exec_ctrl2.virtualize_x2apic_mode = false;
+    ppb_exec_ctrl2.virtual_interrupt_delivery = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl2,
         am.readMsr(.vmx_procbased_ctls2),
@@ -1127,48 +1145,6 @@ pub const ExitReason = enum(u16) {
     seamcall = 76,
     /// Guest attempted to execute SEAMOP.
     tdcall = 77,
-};
-
-/// TODO: move to different file.
-const VirtApicRegisters = struct {
-    const Self = @This();
-
-    /// Virtual-APIC page.
-    page: []u8,
-
-    pub fn new(allocator: Allocator) VmxError!Self {
-        const page = allocator.alloc(u8, mem.page_size_4k) catch return VmxError.OutOfMemory;
-        return Self{
-            .page = page,
-        };
-    }
-
-    /// Get the HPA of the virtual-APIC page.
-    pub fn hpa(self: *Self) u64 {
-        return mem.virt2phys(self.page.ptr);
-    }
-
-    /// Set an register value.
-    pub fn set(self: *Self, offset: Offsets, val: u32) void {
-        // Registers are always 32-bit wide.
-        const ptr: *u32 = @ptrFromInt(@intFromPtr(self.page.ptr) + @intFromEnum(offset));
-        ptr.* = val;
-    }
-
-    const Offsets = enum(u16) {
-        local_apic_id = 0x20,
-        local_apic_version = 0x30,
-        task_priority = 0x80,
-        eoi = 0xB0,
-        logical_dest = 0xD0,
-        dest_fmt = 0xE0,
-        spurious_intr_vec = 0xF0,
-        err_status = 0x280,
-        intr_cmd1 = 0x300,
-        intr_cmd2 = 0x310,
-        initial_count = 0x380,
-        divide_conf = 0x3E0,
-    };
 };
 
 // =====================================================

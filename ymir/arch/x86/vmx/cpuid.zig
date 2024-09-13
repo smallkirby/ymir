@@ -37,9 +37,15 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
         .sgx,
         .v2_ext_topology,
         .ext_enumuration,
+        .brand1,
+        .brand2,
+        .brand3,
         .invariant_tsc,
         .address_size,
         => passthrough(vcpu),
+        .reserved,
+        .cacheline,
+        => invalid(vcpu),
     }
 }
 
@@ -94,6 +100,16 @@ const Leaf = enum(u32) {
     extended_function = 0x80000000,
     /// EAX: Extended processor signature and feature bits.
     extended_processor_signature = 0x80000001,
+    /// Processor brand string.
+    brand1 = 0x80000002,
+    /// Processor brand string continued.
+    brand2 = 0x80000003,
+    /// Processor brand string continued.
+    brand3 = 0x80000004,
+    /// Reserved.
+    reserved = 0x80000005,
+    /// Cache line size.
+    cacheline = 0x80000006,
     /// Envariant TSC available.
     invariant_tsc = 0x80000007,
     /// Linear/Physical address size.

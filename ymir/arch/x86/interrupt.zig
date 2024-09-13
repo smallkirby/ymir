@@ -53,7 +53,7 @@ var handlers: [256]Handler = [_]Handler{unhandledHandler} ** 256;
 
 /// Initialize the IDT.
 pub fn init() void {
-    inline for (0..num_system_exceptions) |i| {
+    inline for (0..idt.max_num_gates) |i| {
         idt.setGate(
             i,
             .Interrupt64,

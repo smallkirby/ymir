@@ -17,7 +17,7 @@ const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
 
 const page_size = mem.page_size;
 
-pub const panic = @import("panic.zig").panic_fn;
+pub const panic = ymir.panic.panic_fn;
 pub const std_options = klog.default_log_options;
 
 /// Size in bytes pages of the kernel stack.
@@ -131,6 +131,8 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     var vm = try vmx.Vm.new();
     try vm.init(ymir.mem.page_allocator);
     log.info("Entered VMX root operation.", .{});
+
+    ymir.setVm(&vm);
 
     // Setup guest memory and load guest.
     const guest_kernel = b: {
