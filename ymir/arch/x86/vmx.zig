@@ -646,7 +646,7 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
 /// Save current host MSR values.
 fn saveHostMsrs(vcpu: *Vcpu) void {
     for (vcpu.host_msr.savedEnts()) |ent| {
-        vcpu.host_msr.setIndex(ent.index, am.readMsr(@enumFromInt(ent.index)));
+        vcpu.host_msr.setByIndex(ent.index, am.readMsr(@enumFromInt(ent.index)));
     }
 }
 

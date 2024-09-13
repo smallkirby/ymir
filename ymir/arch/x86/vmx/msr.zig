@@ -130,11 +130,11 @@ pub const MsrPage = struct {
 
     /// Register or update MSR entry.
     pub fn set(self: *MsrPage, index: am.Msr, data: u64) void {
-        return self.setIndex(@intFromEnum(index), data);
+        return self.setByIndex(@intFromEnum(index), data);
     }
 
     /// Register or update MSR entry indexed by `index`.
-    pub fn setIndex(self: *MsrPage, index: u32, data: u64) void {
+    pub fn setByIndex(self: *MsrPage, index: u32, data: u64) void {
         for (0..self.num_ents) |i| {
             if (self.ents[i].index == index) {
                 self.ents[i].data = data;
