@@ -1,6 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.vmmsr);
+const Allocator = std.mem.Allocator;
 
+const ymir = @import("ymir");
 const vmx = @import("../vmx.zig");
 const Vcpu = vmx.Vcpu;
 const VmxError = vmx.VmxError;
@@ -17,46 +19,10 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
     const msr_kind: am.Msr = @enumFromInt(rcx);
 
     switch (msr_kind) {
-        .spec_ctrl,
-        .tsc_adjust,
-        .bios_sign_id,
-        .mtrrcap,
-        .arch_cap,
-        .misc_enable,
-        .mtrr_physbase0,
-        .mtrr_physmask0,
-        .mtrr_physbase1,
-        .mtrr_physmask1,
-        .mtrr_physbase2,
-        .mtrr_physmask2,
-        .mtrr_physbase3,
-        .mtrr_physmask3,
-        .mtrr_physbase4,
-        .mtrr_physmask4,
-        .mtrr_physbase5,
-        .mtrr_physmask5,
-        .mtrr_physbase6,
-        .mtrr_physmask6,
-        .mtrr_physbase7,
-        .mtrr_physmask7,
-        .mtrr_fix64K_00000,
-        .mtrr_fix16K_80000,
-        .mtrr_fix16K_A0000,
-        .mtrr_fix4K_C0000,
-        .mtrr_fix4K_C8000,
-        .mtrr_fix4K_D0000,
-        .mtrr_fix4K_D8000,
-        .mtrr_fix4K_E0000,
-        .mtrr_fix4K_E8000,
-        .mtrr_fix4K_F0000,
-        .mtrr_fix4K_F8000,
-        .pat,
-        .mcg_cap,
-        .mtrr_def_type,
-        => passthroughRdmsr(vcpu, msr_kind),
         .apic_base => {
-            guest_regs.rdx = 0xDEADBEEF;
-            guest_regs.rax = 0xCAFEBABE;
+            const val: u64 = @bitCast(vcpu.apic_base);
+            guest_regs.rdx = @as(u32, @truncate(val >> 32));
+            guest_regs.rax = @as(u32, @truncate(val));
         },
         .efer => {
             const efer = try vmread(vmcs.Guest.efer);
@@ -73,7 +39,7 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
             guest_regs.rdx = @as(u32, @truncate(gs_base >> 32));
             guest_regs.rax = @as(u32, @truncate(gs_base));
         },
-        .kernel_gs_base => passthroughRdmsr(vcpu, msr_kind),
+        //.kernel_gs_base => passthroughRdmsr(vcpu, msr_kind),
         else => {
             log.err("Unhandled RDMSR: {?}", .{msr_kind});
             unreachable;
@@ -84,24 +50,19 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
 /// Handle VM-exit caused by WRMSR instruction.
 /// Note that this function does not increment the RIP.
 pub fn handleWrmsrExit(vcpu: *Vcpu) VmxError!void {
-    const guest_regs = &vcpu.guest_regs;
-    const ecx: u32 = @truncate(guest_regs.rcx);
-    const value = concat(guest_regs.rdx, guest_regs.rax);
+    const regs = &vcpu.guest_regs;
+    const ecx: u32 = @truncate(regs.rcx);
+    const value = concat(regs.rdx, regs.rax);
     const msr_kind: am.Msr = @enumFromInt(ecx);
 
     switch (msr_kind) {
-        .bios_sign_id => {}, // TODO
-        .spec_ctrl,
-        .xss,
-        .pat,
-        .mtrr_def_type,
-        .star, // XXX
-        .lstar, // XXX
-        .cstar, // XXX
-        .fmask, // XXX
+        .star,
+        .lstar,
+        .cstar,
         .tsc_aux,
-        .kernel_gs_base, // XXX
-        => passthroughWrmsr(vcpu, msr_kind),
+        .fmask,
+        .kernel_gs_base,
+        => shadowWrite(vcpu, msr_kind),
         .sysenter_cs => try vmwrite(vmcs.Guest.sysenter_cs, value),
         .sysenter_eip => try vmwrite(vmcs.Guest.sysenter_eip, value),
         .sysenter_esp => try vmwrite(vmcs.Guest.sysenter_esp, value),
@@ -119,13 +80,92 @@ fn concat(r1: u64, r2: u64) u64 {
     return ((r1 & 0xFFFF_FFFF) << 32) | (r2 & 0xFFFF_FFFF);
 }
 
-fn passthroughRdmsr(vcpu: *Vcpu, msr_kind: am.Msr) void {
-    const msr = am.readMsr(msr_kind);
-    vcpu.guest_regs.rax = @as(u32, @truncate(msr));
-    vcpu.guest_regs.rdx = @as(u32, @truncate(msr >> 32));
+fn shadowRead(vcpu: *Vcpu, msr_kind: am.Msr) void {
+    const regs = &vcpu.guest_regs;
+    if (vcpu.guest_msr.find(msr_kind)) |msr| {
+        regs.rdx = @as(u32, @truncate(msr.data >> 32));
+        regs.rax = @as(u32, @truncate(msr.data));
+    } else {
+        log.err("RDMSR: MSR is not registered: {s}", .{@tagName(msr_kind)});
+        unreachable;
+    }
 }
 
-fn passthroughWrmsr(vcpu: *Vcpu, msr_kind: am.Msr) void {
-    const value = concat(vcpu.guest_regs.rdx, vcpu.guest_regs.rax);
-    am.writeMsr(msr_kind, value);
+fn shadowWrite(vcpu: *Vcpu, msr_kind: am.Msr) void {
+    const regs = &vcpu.guest_regs;
+    if (vcpu.guest_msr.find(msr_kind)) |_| {
+        vcpu.guest_msr.set(msr_kind, concat(regs.rdx, regs.rax));
+    } else {
+        log.err("WRMSR: MSR is not registered: {s}", .{@tagName(msr_kind)});
+        unreachable;
+    }
 }
+
+pub const MsrPage = struct {
+    /// Maximum number of MSR entries in a page.
+    const max_num_ents = 512;
+
+    /// MSR entries.
+    ents: []SavedMsr,
+    /// Number of registered MSR entries.
+    num_ents: usize = 0,
+
+    /// MSR Entry.
+    /// cf. SDM Vol.3C. 25.7.2. Table 25-15.
+    pub const SavedMsr = packed struct(u128) {
+        index: u32,
+        reserved: u32 = 0,
+        data: u64,
+    };
+
+    /// Initialize saved MSR page.
+    pub fn init(allocator: Allocator) !MsrPage {
+        const ents = try allocator.alloc(SavedMsr, max_num_ents);
+        @memset(ents, std.mem.zeroes(SavedMsr));
+
+        return MsrPage{
+            .ents = ents,
+        };
+    }
+
+    /// Register or update MSR entry.
+    pub fn set(self: *MsrPage, index: am.Msr, data: u64) void {
+        return self.setIndex(@intFromEnum(index), data);
+    }
+
+    /// Register or update MSR entry indexed by `index`.
+    pub fn setIndex(self: *MsrPage, index: u32, data: u64) void {
+        for (0..self.num_ents) |i| {
+            if (self.ents[i].index == index) {
+                self.ents[i].data = data;
+                return;
+            }
+        }
+        self.ents[self.num_ents] = SavedMsr{ .index = index, .data = data };
+        self.num_ents += 1;
+        if (self.num_ents > max_num_ents) {
+            log.err("Too many MSR entries: {d}", .{self.num_ents});
+            unreachable;
+        }
+    }
+
+    /// Get the saved MSRs.
+    pub fn savedEnts(self: *MsrPage) []SavedMsr {
+        return self.ents[0..self.num_ents];
+    }
+
+    /// Find the saved MSR entry.
+    pub fn find(self: *MsrPage, index: am.Msr) ?SavedMsr {
+        const index_num = @intFromEnum(index);
+        for (0..self.num_ents) |i| {
+            if (self.ents[i].index == index_num) {
+                return self.ents[i];
+            }
+        }
+        return null;
+    }
+
+    pub fn phys(self: *MsrPage) u64 {
+        return ymir.mem.virt2phys(self.ents.ptr);
+    }
+};

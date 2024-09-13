@@ -78,7 +78,7 @@ pub const Vm = struct {
         log.info("vCPU #{X} is created.", .{self.vcpu.id});
 
         // Setup VMCS.
-        self.vcpu.setupVmcs() catch return Error.UnknownError; // TODO
+        self.vcpu.setupVmcs(allocator) catch return Error.UnknownError; // TODO
     }
 
     /// Deinitialize the virtual machine, exiting VMX root operation.

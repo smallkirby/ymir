@@ -117,3 +117,27 @@ pub const VirtApicRegisters = struct {
         divide_conf = 0x3E0,
     };
 };
+
+/// IA32_APIC_BASE MSR.
+pub const ApicBase = packed struct(u64) {
+    /// Reserved.
+    _reserved1: u8 = 0,
+    /// Processor is BSP.
+    bsp: bool,
+    /// Reserved.
+    _reserved2: u2 = 0,
+    /// APIC global enable.
+    global: bool,
+    /// APIC base address.
+    base: u24,
+    /// Reserved.
+    _reserved: u28 = 0,
+
+    pub fn new(bsp: bool, enable: bool) ApicBase {
+        return .{
+            .base = lapic_base >> 12,
+            .bsp = bsp,
+            .global = enable,
+        };
+    }
+};

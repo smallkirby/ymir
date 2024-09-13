@@ -73,6 +73,12 @@ pub const Vcpu = struct {
     guest_base: Phys = 0,
     /// Virtual APIC registers (kinda shadow page of APIC).
     virt_apic_regs: lapic.VirtApicRegisters = undefined,
+    /// APIC_BASE MSR.
+    apic_base: lapic.ApicBase = undefined,
+    /// Host saved MSRs.
+    host_msr: msr.MsrPage = undefined,
+    /// Guest saved MSRs.
+    guest_msr: msr.MsrPage = undefined,
 
     const GuestRegisters = packed struct {
         rax: u64,
@@ -104,6 +110,7 @@ pub const Vcpu = struct {
             .vmxon_region = undefined,
             .vmcs_region = undefined,
             .guest_base = undefined,
+            .apic_base = lapic.ApicBase.new(id == 0, false), // TODO: enable LAPIC
         };
     }
 
@@ -144,11 +151,12 @@ pub const Vcpu = struct {
     }
 
     /// Set up VMCS for a logical processor.
-    pub fn setupVmcs(self: *Self) VmxError!void {
+    pub fn setupVmcs(self: *Self, allocator: Allocator) VmxError!void {
         // Reset VMCS.
         try resetVmcs(self.vmcs_region);
 
         // Initialize VMCS fields.
+        try registerMsrs(self, allocator);
         try setupExecCtrls(self);
         try setupExitCtrls(self);
         try setupEntryCtrls(self);
@@ -227,6 +235,8 @@ pub const Vcpu = struct {
 
     // Enter VMX non-root operation.
     fn vmentry(self: *Self) VmxError!void {
+        saveHostMsrs(self);
+
         const success = self.asmVmEntry() == 0;
 
         if (!self.launch_done and success) {
@@ -243,6 +253,8 @@ pub const Vcpu = struct {
 
     /// Handle the VM-exit.
     fn handleExit(self: *Self, exit_info: ExitInformation) VmxError!void {
+        log.debug("VM-exit: {s}", .{@tagName(exit_info.basic_reason)});
+
         switch (exit_info.basic_reason) {
             .invpcid => {
                 pg.invalidateEpt(self, .single_context);
@@ -294,7 +306,10 @@ pub const Vcpu = struct {
                 try lapic.handleLapicWrite(self, offset);
                 try self.stepNextInst();
             },
-            .extintr => {}, // TODO
+            .extintr => {
+                const info = try getIntrInfo();
+                log.warn("External interrupt is ignored: {?}", .{info});
+            }, // TODO: implement
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
                 self.abort();
@@ -628,6 +643,46 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
     try am.vmptrld(mem.virt2phys(vmcs_region));
 }
 
+/// Save current host MSR values.
+fn saveHostMsrs(vcpu: *Vcpu) void {
+    for (vcpu.host_msr.savedEnts()) |ent| {
+        vcpu.host_msr.setIndex(ent.index, am.readMsr(@enumFromInt(ent.index)));
+    }
+}
+
+/// Register host-saved and guest-saved MSRs.
+fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
+    vcpu.host_msr = try msr.MsrPage.init(allocator);
+    vcpu.guest_msr = try msr.MsrPage.init(allocator);
+
+    const hm = &vcpu.host_msr;
+    const gm = &vcpu.guest_msr;
+
+    // Host MSRs.
+    hm.set(.tsc_aux, 0);
+    hm.set(.star, am.readMsr(.star));
+    hm.set(.lstar, am.readMsr(.lstar));
+    hm.set(.cstar, am.readMsr(.cstar));
+    hm.set(.fmask, am.readMsr(.fmask));
+    hm.set(.kernel_gs_base, am.readMsr(.kernel_gs_base));
+
+    // Guest MSRs.
+    gm.set(.tsc_aux, 0);
+    gm.set(.star, 0);
+    gm.set(.lstar, 0);
+    gm.set(.cstar, 0);
+    gm.set(.fmask, 0);
+    gm.set(.kernel_gs_base, 0);
+
+    // Setup VMCS.
+    try vmwrite(vmcs.Ctrl.vmexit_msr_load_count, hm.num_ents);
+    try vmwrite(vmcs.Ctrl.vmexit_msr_load_address, hm.phys());
+    try vmwrite(vmcs.Ctrl.vmexit_msr_store_count, gm.num_ents);
+    try vmwrite(vmcs.Ctrl.vmexit_msr_store_address, gm.phys());
+    try vmwrite(vmcs.Ctrl.vmentry_msr_load_count, gm.num_ents);
+    try vmwrite(vmcs.Ctrl.vmentry_msr_load_address, gm.phys());
+}
+
 /// Set up VM-Execution control fields.
 /// cf. SDM Vol.3C 27.2.1.1, Appendix A.3.
 fn setupExecCtrls(_: *Vcpu) VmxError!void {
@@ -656,7 +711,7 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     // Secondary Processor-based VM-Execution control.
     var ppb_exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();
     ppb_exec_ctrl2.ept = true;
-    ppb_exec_ctrl2.unrestricted_guest = true; // TODO: should we enable this?
+    ppb_exec_ctrl2.unrestricted_guest = true; // This control must be enabled to allow real-mode or non-paging mode.
     ppb_exec_ctrl2.enable_xsaves_xrstors = true;
     ppb_exec_ctrl2.enable_invpcid = true;
     ppb_exec_ctrl2.apic_register_virtualization = true;
@@ -869,6 +924,8 @@ export fn vmexitHandler() noreturn {
         am.hlt();
 }
 
+/// Adjust mandatory bits of a control field.
+/// Upper 32 bits of `mask` is mandatory 1, and lower 32 bits is mandatory 0.
 fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
     var ret: u32 = @bitCast(control);
     ret |= @as(u32, @truncate(mask)); // Mandatory 1
@@ -889,6 +946,10 @@ fn getExitReason() VmxError!ExitInformation {
 /// Get a VM-exit qualification from VMCS.
 fn getExitQual(T: anytype) VmxError!T {
     return @bitCast(@as(u64, try vmread(vmcs.Ro.exit_qual)));
+}
+
+fn getIntrInfo() VmxError!InterruptInfo {
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_interruption_information))));
 }
 
 const VmxonRegion = packed struct {
@@ -1145,6 +1206,34 @@ pub const ExitReason = enum(u16) {
     seamcall = 76,
     /// Guest attempted to execute SEAMOP.
     tdcall = 77,
+};
+
+/// VM-exit interruption information.
+/// cf. SDM Vol.3C. 28.2.2. Table 25-19.
+pub const InterruptInfo = packed struct(u32) {
+    /// Vector of interrupt or exception.
+    vector: u8,
+    /// Interruption type.
+    type: Type,
+    /// Error code valid.
+    ec_valid: bool,
+    /// NMI unblocking due to IRET.
+    nmi_unblocking: bool,
+    /// Not currently defined.
+    _notused: u18 = 0,
+    /// Valid.
+    valid: bool,
+
+    const Type = enum(u3) {
+        external = 0,
+        _unused1 = 1,
+        nmi = 2,
+        hw = 3,
+        _unused2 = 4,
+        priviledged_sw = 5,
+        exception = 6,
+        _unused3 = 7,
+    };
 };
 
 // =====================================================

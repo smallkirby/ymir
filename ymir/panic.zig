@@ -11,6 +11,7 @@ const debug = std.debug;
 const log = std.log.scoped(.panic);
 const serial = ymir.serial;
 const format = std.fmt.format;
+const arch = ymir.arch;
 
 /// Implementation of the panic function.
 pub const panic_fn = panic;
@@ -19,6 +20,9 @@ pub const panic_fn = panic;
 var sr: serial.Serial = undefined;
 /// Instance of the virtual machine.
 var vm: ?*vmx.Vm = null;
+
+/// Flag to indicate that a panic occurred.
+var panicked = false;
 
 const PanicError = error{};
 const Writer = std.io.Writer(
@@ -52,7 +56,15 @@ fn panic(
 ) noreturn {
     @setCold(true);
 
+    arch.disableIntr();
+
     log.err("{s}", .{msg});
+
+    if (panicked) {
+        log.err("Double panic detected. Halting.", .{});
+        halt();
+    }
+    panicked = true;
 
     if (error_return_trace) |ert| {
         printStackTrace(ert) catch |err| {
@@ -80,7 +92,7 @@ fn panic(
 fn halt() noreturn {
     @setCold(true);
     while (true) {
-        asm volatile ("hlt");
+        arch.halt();
     }
 }
 

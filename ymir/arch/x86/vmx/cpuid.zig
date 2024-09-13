@@ -1,3 +1,6 @@
+//! Handle CPUID instruction.
+//! Information returned by CPUID instruction is listed in SDM Chapter 3.3 Table 3-8.
+
 const std = @import("std");
 const log = std.log.scoped(.cpuid);
 
@@ -7,55 +10,112 @@ const VmxError = vmx.VmxError;
 const cpuid = @import("../cpuid.zig");
 const am = @import("../asm.zig");
 
+// CPUID[Leaf=1] return value.
+// Linux defines the mandatory features in this leaf.
+const feature_info_ecx = cpuid.FeatureInformationEcx{
+    .pcid = true,
+};
+const feature_info_edx = cpuid.FeatureInformationEdx{
+    .fpu = true,
+    .vme = true,
+    .de = true,
+    .pse = true,
+    .msr = true,
+    .pae = true,
+    .cx8 = true,
+    .sep = true,
+    .pge = true,
+    .cmov = true,
+    .pse36 = true,
+    .acpi = true, // TODO
+    .fxsr = true,
+    .sse = true,
+    .sse2 = true,
+};
+// CPUID[Leaf=7,Sub=0] return value.
+const ext_feature0_ebx = cpuid.ExtFeatureEbx0{
+    .smep = true,
+    .invpcid = true,
+    .smap = true,
+};
+
 /// Handle VM-exit caused by CPUID instruction.
 /// Note that this function does not increment the RIP.
 pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
     const regs = &vcpu.guest_regs;
 
-    if (invalid_cpuid_start <= regs.rax and regs.rax <= invalid_cpuid_end) {
-        // Linux kernel checks KVM support using CPUID in this range.
-        // We should return 0 even for these ranges.
-        return invalid(vcpu);
-    }
-
     switch (Leaf.from(regs.rax)) {
         .maximum_input => {
-            const pass = am.cpuid(@truncate(regs.rax));
-            regs.rax = pass.eax;
+            regs.rax = 0x20; // Maximum input value for basic CPUID.
             regs.rbx = 0x72_69_6D_59; // Ymir
             regs.rcx = 0x72_69_6D_59; // Ymir
             regs.rdx = 0x72_69_6D_59; // Ymir
         },
-        .version_info,
-        .extended_function,
-        .extended_processor_signature,
-        .thermal_power,
-        .ext_feature,
-        .ext_topology,
-        .rdt_l3cache,
-        .cache_allocation,
-        .sgx,
-        .v2_ext_topology,
-        .ext_enumuration,
-        .brand1,
-        .brand2,
-        .brand3,
-        .invariant_tsc,
-        .address_size,
-        => passthrough(vcpu),
-        .reserved,
-        .cacheline,
-        => invalid(vcpu),
+        .version_info => {
+            const orig = am.cpuid(1);
+            regs.rax = orig.eax; // Version information.
+            regs.rbx = orig.ebx; // Brand index / CLFLUSH line size / Addressable IDs / Initial APIC ID
+            regs.rcx = @as(u32, @bitCast(feature_info_ecx));
+            regs.rdx = @as(u32, @bitCast(feature_info_edx));
+        },
+        .extended_function => {
+            regs.rax = 0x8000_0000 + 1; // Maximum input value for extended function CPUID.
+            regs.rbx = 0; // Reserved.
+            regs.rcx = 0; // Reserved.
+            regs.rdx = 0; // Reserved.
+        },
+        .extended_processor_signature => {
+            const orig = am.cpuid(@intFromEnum(Leaf.extended_processor_signature));
+            regs.rax = 0; // Extended processor signature and feature bits.
+            regs.rbx = 0; // Reserved.
+            regs.rcx = orig.ecx; // LAHF in 64-bit mode / LZCNT / PREFETCHW
+            regs.rdx = orig.edx; // SYSCALL / XD / 1GB large page / RDTSCP and IA32_TSC_AUX / Intel64
+        },
+        .thermal_power => {
+            regs.rax = 0; // Hide all features.
+            regs.rbx = 0; // Number of interrupt thresholds in digital thermal sensor.
+            regs.rcx = 0; // Hide all features.
+            regs.rdx = 0; // Hide all features.
+        },
+        .ext_feature => {
+            switch (regs.rcx) {
+                0 => {
+                    regs.rax = 1; // Maximum input value for supported leaf 7 sub-leaves.
+                    regs.rbx = @as(u32, @bitCast(ext_feature0_ebx));
+                    regs.rcx = 0; // Unimplemented.
+                    regs.rdx = 0; // Unimplemented.
+                },
+                1, 2 => {
+                    regs.rax = 0; // Unimplemented.
+                    regs.rbx = 0; // Unimplemented.
+                    regs.rcx = 0; // Unimplemented.
+                    regs.rdx = 0; // Unimplemented.
+                },
+                else => {
+                    log.err("Unhandled CPUID: Leaf=0x{X:0>8}, Sub=0x{X:0>8}", .{ regs.rax, regs.rcx });
+                    vcpu.abort();
+                },
+            }
+        },
+        .ext_enumuration => {
+            switch (regs.rcx) {
+                1 => {
+                    regs.rax = 0; // Hide all features.
+                    regs.rbx = 0; // Unimplemented.
+                    regs.rcx = 0; // Unimplemented.
+                    regs.rdx = 0; // Unimplemented.
+                },
+                else => {
+                    log.err("Unhandled CPUID: Leaf=0x{X:0>8}, Sub=0x{X:0>8}", .{ regs.rax, regs.rcx });
+                    vcpu.abort();
+                },
+            }
+        },
+        else => {
+            log.warn("Unhandled CPUID: Leaf=0x{X:0>8}, Sub=0x{X:0>8}", .{ regs.rax, regs.rcx });
+            invalid(vcpu);
+        },
     }
-}
-
-fn passthrough(vcpu: *Vcpu) void {
-    const gregs = &vcpu.guest_regs;
-    const regs = am.cpuidEcx(@truncate(gregs.rax), @truncate(gregs.rcx));
-    gregs.rax = regs.eax;
-    gregs.rbx = regs.ebx;
-    gregs.rcx = regs.ecx;
-    gregs.rdx = regs.edx;
 }
 
 fn invalid(vcpu: *Vcpu) void {
@@ -119,6 +179,3 @@ const Leaf = enum(u32) {
         return @enumFromInt(rax);
     }
 };
-
-const invalid_cpuid_start: u32 = 0x40_000_000;
-const invalid_cpuid_end: u32 = 0x4F_FFF_FFF;
