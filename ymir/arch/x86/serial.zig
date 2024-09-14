@@ -109,7 +109,7 @@ pub fn isSerialPort(port: u16) bool {
     return false;
 }
 
-fn writeByte(byte: u8, port: Ports) void {
+pub fn writeByte(byte: u8, port: Ports) void {
     // wait until the transmitter holding buffer is empty
     while (am.inb(@intFromEnum(port) + UartOffset.LSR) & 0b0010_0000 == 0) {
         am.relax();

@@ -21,6 +21,7 @@ const cpuid = @import("vmx/cpuid.zig");
 const msr = @import("vmx/msr.zig");
 const cr = @import("vmx/cr.zig");
 const pg = @import("vmx/page.zig");
+const io = @import("vmx/io.zig");
 const lapic = @import("vmx/lapic.zig");
 
 const vmwrite = vmcs.vmwrite;
@@ -262,8 +263,8 @@ pub const Vcpu = struct {
             },
             .io => {
                 const q = try getExitQual(qual.QualIo);
-                log.debug("I/O instruction: {?}", .{q});
-                unreachable;
+                try io.handleIo(self, q);
+                try self.stepNextInst();
             },
             .cr => {
                 const q = try getExitQual(qual.QualCr);
@@ -700,7 +701,7 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     var ppb_exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
     ppb_exec_ctrl.activate_secondary_controls = true;
     // TODO: should use I/O bitmap instead of unconditional I/O exit.
-    //ppb_exec_ctrl.unconditional_io = true;
+    ppb_exec_ctrl.unconditional_io = true;
     ppb_exec_ctrl.hlt = true;
     ppb_exec_ctrl.use_tpr_shadow = true;
     try adjustRegMandatoryBits(

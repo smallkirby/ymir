@@ -39,7 +39,6 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
             guest_regs.rdx = @as(u32, @truncate(gs_base >> 32));
             guest_regs.rax = @as(u32, @truncate(gs_base));
         },
-        //.kernel_gs_base => passthroughRdmsr(vcpu, msr_kind),
         else => {
             log.err("Unhandled RDMSR: {?}", .{msr_kind});
             unreachable;
