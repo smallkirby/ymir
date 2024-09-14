@@ -80,6 +80,8 @@ pub const Vcpu = struct {
     host_msr: msr.MsrPage = undefined,
     /// Guest saved MSRs.
     guest_msr: msr.MsrPage = undefined,
+    /// PIC.
+    pic: io.Pic = io.Pic.new(),
 
     const GuestRegisters = packed struct {
         rax: u64,
