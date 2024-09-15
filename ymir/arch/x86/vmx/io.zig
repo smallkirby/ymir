@@ -143,11 +143,13 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
 
     switch (qual.port) {
         // Primary PIC command.
-        0x20 => if (dx == 0x11) {
-            pic.primary_phase = .phase1;
-        } else {
-            log.err("Unsupported command to primary PIC: port=0x{X}", .{dx});
-            unreachable;
+        0x20 => switch (dx) {
+            0x11 => pic.primary_phase = .phase1,
+            0x60 => {}, // TODO: ?
+            else => {
+                log.err("Unsupported command to primary PIC: command=0x{X}", .{dx});
+                unreachable;
+            },
         },
         // Primary PIC data.
         0x21 => switch (pic.primary_phase) {
@@ -169,7 +171,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         0xA0 => if (dx == 0x11) {
             pic.secondary_phase = .phase1;
         } else {
-            log.err("Unsupported command to secondary PIC: port=0x{X}", .{dx});
+            log.err("Unsupported command to secondary PIC: command=0x{X}", .{dx});
             unreachable;
         },
         // Secondary PIC data.

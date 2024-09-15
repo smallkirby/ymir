@@ -82,6 +82,8 @@ pub const Vcpu = struct {
     guest_msr: msr.MsrPage = undefined,
     /// PIC.
     pic: io.Pic = io.Pic.new(),
+    /// TSC value on VM-exit.
+    tsc_on_exit: u64 = 0,
 
     const GuestRegisters = packed struct {
         rax: u64,
@@ -189,6 +191,7 @@ pub const Vcpu = struct {
                 try partialCheckGuest();
             }
 
+            try self.adjustTsc();
             self.vmentry() catch |err| {
                 log.err("VM-entry failed: {?}", .{err});
                 if (err == VmxError.VmxStatusAvailable) {
@@ -197,9 +200,16 @@ pub const Vcpu = struct {
                 }
                 self.abort();
             };
+            self.tsc_on_exit = am.rdtsc();
 
             try self.handleExit(try getExitReason());
         }
+    }
+
+    fn adjustTsc(self: *Self) VmxError!void {
+        const last_tsc_offset = try vmread(vmcs.Ctrl.tsc_offset);
+        const offset = if (self.tsc_on_exit != 0) am.rdtsc() -% self.tsc_on_exit else 0;
+        try vmwrite(vmcs.Ctrl.tsc_offset, last_tsc_offset -% offset); // XXX
     }
 
     /// Maps 4KiB page to EPT of this vCPU.
@@ -316,9 +326,14 @@ pub const Vcpu = struct {
                 try self.stepNextInst();
             },
             .extintr => {
-                const info = try getIntrInfo();
-                log.warn("External interrupt is ignored: {?}", .{info});
-            }, // TODO: implement
+                // Give the external interrupt to guest.
+                try self.injectExtIntr();
+                // Also, consume the interrupt by myself.
+                asm volatile (
+                    \\cli
+                    \\sti
+                );
+            },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
                 self.abort();
@@ -403,6 +418,41 @@ pub const Vcpu = struct {
     fn stepNextInst(_: *Self) VmxError!void {
         const rip = try vmread(vmcs.Guest.rip);
         try vmwrite(vmcs.Guest.rip, rip + try vmread(vmcs.Ro.vmexit_instruction_length));
+    }
+
+    fn injectExtIntr(self: *Self) VmxError!void {
+        const pic = @import("pic.zig");
+        const irr = pic.getIrr();
+        if (irr == 0) return;
+        const irq: pic.IrqLine = @enumFromInt(@ctz(irr));
+
+        if (self.pic.primary_phase != .inited) {
+            pic.notifyEoi(irq);
+            return;
+        }
+
+        const eflags: am.FlagsRegister = @bitCast(try vmread(vmcs.Guest.rflags));
+        if (!eflags.ief) return;
+
+        switch (irq) {
+            .Timer => {
+                if ((self.pic.primary_mask >> 0) & 1 != 0) return;
+
+                const intr_info = InterruptInfo{
+                    .vector = self.pic.primary_base + 0,
+                    .type = .external,
+                    .ec_valid = false,
+                    .nmi_unblocking = false,
+                    .valid = true,
+                };
+                try vmwrite(vmcs.Ctrl.vmentry_interrupt_information_field, intr_info);
+                pic.notifyEoi(.Timer);
+            },
+            else => {
+                log.err("Unhandled IRQ: {s}", .{@tagName(irq)});
+                self.abort();
+            },
+        }
     }
 
     /// VMLAUNCH or VMRESUME.
@@ -642,7 +692,7 @@ fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
     const gm = &vcpu.guest_msr;
 
     // Host MSRs.
-    hm.set(.tsc_aux, 0);
+    hm.set(.tsc_aux, am.readMsr(.tsc_aux));
     hm.set(.star, am.readMsr(.star));
     hm.set(.lstar, am.readMsr(.lstar));
     hm.set(.cstar, am.readMsr(.cstar));
@@ -686,6 +736,7 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     ppb_exec_ctrl.unconditional_io = true;
     ppb_exec_ctrl.hlt = true;
     ppb_exec_ctrl.use_tpr_shadow = true;
+    ppb_exec_ctrl.tsc_offsetting = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
@@ -929,10 +980,6 @@ fn getExitReason() VmxError!ExitInformation {
 /// Get a VM-exit qualification from VMCS.
 fn getExitQual(T: anytype) VmxError!T {
     return @bitCast(@as(u64, try vmread(vmcs.Ro.exit_qual)));
-}
-
-fn getIntrInfo() VmxError!InterruptInfo {
-    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_interruption_information))));
 }
 
 const VmxonRegion = packed struct {

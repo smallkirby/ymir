@@ -117,6 +117,24 @@ pub fn ps2ReadScanCode() u8 {
     return am.inb(ps2_data_port);
 }
 
+/// Read a IRR (Interrupt Request Register) from the PIC.
+pub fn getIrr() u16 {
+    am.outb(0x0A, primary_command_port);
+    am.outb(0x0A, secondary_command_port);
+    const val1: u16 = am.inb(primary_command_port);
+    const val2: u16 = am.inb(secondary_command_port);
+    return (val2 << 8) | val1;
+}
+
+/// Read a ISR (In-Service Register) from the PIC.
+pub fn getIsr() u16 {
+    am.outb(0x0B, primary_command_port);
+    am.outb(0x0B, secondary_command_port);
+    const val1: u16 = am.inb(primary_command_port);
+    const val2: u16 = am.inb(secondary_command_port);
+    return (val2 << 8) | val1;
+}
+
 /// Line numbers for the PIC.
 pub const IrqLine = enum(u8) {
     /// Timer
