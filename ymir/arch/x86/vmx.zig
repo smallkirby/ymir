@@ -240,7 +240,13 @@ pub const Vcpu = struct {
     fn vmentry(self: *Self) VmxError!void {
         saveHostMsrs(self);
 
-        const success = self.asmVmEntry() == 0;
+        const success = asm volatile (
+            \\mov %[self], %%rdi
+            \\call asmVmEntry
+            : [ret] "={ax}" (-> u8),
+            : [self] "r" (self),
+            : "rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11"
+        ) == 0;
 
         if (!self.launch_done and success) {
             self.launch_done = true;
@@ -400,16 +406,11 @@ pub const Vcpu = struct {
     }
 
     /// VMLAUNCH or VMRESUME.
-    /// The function is designed to return to the caller as a normal function via asmVmExit().
     /// Returns 0 if succeeded, 1 if failed.
-    fn asmVmEntry(self: *Self) callconv(.SysV) u8 {
-        // Prologue pushes rbp and rax here.
-        //  push %%rbp
-        //  mov %%rsp, %%rbp
-        //  sub $0x10, %%rsp
-
+    export fn asmVmEntry() callconv(.Naked) u8 {
         // Save callee saved registers.
         asm volatile (
+            \\push %%rbp
             \\push %%r15
             \\push %%r14
             \\push %%r13
@@ -418,11 +419,12 @@ pub const Vcpu = struct {
         );
 
         // Save a pointer to guest registers
-        asm volatile (
-            \\push %[guest_regs]
-            :
-            : [guest_regs] "{rcx}" (&self.guest_regs),
-        );
+        asm volatile (std.fmt.comptimePrint(
+                \\lea {d}(%%rdi), %%rbx
+                \\push %%rbx
+            ,
+                .{@offsetOf(Self, "guest_regs")},
+            ));
 
         // Set host stack
         asm volatile (
@@ -433,11 +435,11 @@ pub const Vcpu = struct {
         );
 
         // Determine VMLAUNCH or VMRESUME.
-        asm volatile (
-            \\testb $1, %[launch_done]
-            :
-            : [launch_done] "{rdx}" (self.launch_done),
-        );
+        asm volatile (std.fmt.comptimePrint(
+                \\testb $1, {d}(%%rdi)
+            ,
+                .{@offsetOf(Self, "launch_done")},
+            ));
 
         // Restore guest registers.
         asm volatile (std.fmt.comptimePrint(
@@ -500,22 +502,10 @@ pub const Vcpu = struct {
             \\pop %%r15
         );
 
-        // Epilogue.
-        asm volatile (
-            \\
-            // Discard stack frame of asmVmEntry()
-            \\add $0x10, %%rsp
-            // Pop saved rbp
-            \\pop %%rbp
-        );
-
         // Return to caller of asmVmEntry()
         asm volatile (
             \\ret
         );
-
-        // Just to suppress the warning.
-        return 0;
     }
 
     fn asmVmExit() callconv(.Naked) noreturn {
@@ -574,16 +564,6 @@ pub const Vcpu = struct {
             \\pop %%r13
             \\pop %%r14
             \\pop %%r15
-        );
-
-        // Epilogue.
-        // This function itself is naked, but asmVmEntry() has prologue.
-        // So we have to pop the pushed frame pointer here.
-        asm volatile (
-            \\
-            // Discard stack frame of asmVmEntry()
-            \\add $0x10, %%rsp
-            // Pop saved rbp
             \\pop %%rbp
         );
 
