@@ -35,31 +35,15 @@ pub fn build(b: *std.Build) void {
     const surtr_module = b.createModule(.{
         .root_source_file = b.path("surtr/defs.zig"),
     });
+    surtr_module.addOptions("option", options);
     const ymir_module = b.createModule(.{
         .root_source_file = b.path("ymir/ymir.zig"),
     });
-    surtr_module.addOptions("option", options);
     ymir_module.addImport("ymir", ymir_module);
     ymir_module.addImport("surtr", surtr_module);
     ymir_module.addOptions("option", options);
 
-    const ymir = b.addExecutable(.{
-        .name = "ymir.elf",
-        .root_source_file = b.path("ymir/main.zig"),
-        .target = target, // Freestanding x64 ELF executable
-        .optimize = optimize, // You can choose the optimization level.
-        .linkage = .static,
-        .code_model = .kernel,
-    });
-    ymir.root_module.red_zone = false; // Disable stack red zone.
-    ymir.link_z_relro = false;
-    ymir.entry = .{ .symbol_name = "kernelEntry" };
-    ymir.linker_script = b.path("ymir/linker.ld");
-    ymir.root_module.code_model = .kernel;
-    ymir.root_module.addImport("surtr", surtr_module);
-    ymir.root_module.addImport("ymir", ymir_module);
-    ymir.root_module.addOptions("option", options);
-
+    // Executables
     const surtr = b.addExecutable(.{
         .name = "BOOTX64.EFI",
         .root_source_file = b.path("surtr/boot.zig"),
@@ -73,31 +57,52 @@ pub fn build(b: *std.Build) void {
     surtr.root_module.red_zone = false;
     surtr.link_z_relro = false;
     surtr.root_module.addOptions("option", options);
+    b.installArtifact(surtr);
 
-    // Put the outputs in the output dir.
+    const ymir = b.addExecutable(.{
+        .name = "ymir.elf",
+        .root_source_file = b.path("ymir/main.zig"),
+        .target = target, // Freestanding x64 ELF executable
+        .optimize = optimize, // You can choose the optimization level.
+        .linkage = .static,
+        .code_model = .kernel,
+    });
+    ymir.root_module.red_zone = false; // Disable stack red zone.
+    ymir.link_z_relro = false;
+    ymir.entry = .{ .symbol_name = "kernelEntry" };
+    ymir.linker_script = b.path("ymir/linker.ld");
+    ymir.root_module.addImport("surtr", surtr_module);
+    ymir.root_module.addImport("ymir", ymir_module);
+    ymir.root_module.addOptions("option", options);
+    b.installArtifact(ymir);
+
+    // EFI directory
     const out_dir_name = "img";
-    const install_ymir = b.addInstallFile(
-        ymir.getEmittedBin(),
-        b.fmt("{s}/{s}", .{ out_dir_name, ymir.name }),
-    );
     const install_surtr = b.addInstallFile(
         surtr.getEmittedBin(),
         b.fmt("{s}/efi/boot/{s}", .{ out_dir_name, surtr.name }),
     );
-    b.getInstallStep().dependOn(&install_ymir.step);
+    install_surtr.step.dependOn(&surtr.step);
     b.getInstallStep().dependOn(&install_surtr.step);
-    b.installArtifact(ymir);
-    b.installArtifact(surtr);
+    const install_ymir = b.addInstallFile(
+        ymir.getEmittedBin(),
+        b.fmt("{s}/{s}", .{ out_dir_name, ymir.name }),
+    );
+    install_ymir.step.dependOn(&ymir.step);
+    b.getInstallStep().dependOn(&install_ymir.step);
 
     // Run QEMU
+    // WARN: VVFAT somehow overwrites /ymir.elf.
+    //  DO NOT use /zig-out/img/ymir.elf to analyze/debug ymir.
+    //  Use /zig-out/bin/ymir.elf instead.
     const qemu_args = [_][]const u8{
         "qemu-system-x86_64",
         "-m",
         "512M",
         "-bios",
         "/usr/share/ovmf/OVMF.fd", // TODO: Make this configurable
-        "-hda",
-        b.fmt("fat:rw:{s}/{s}", .{ b.install_path, out_dir_name }),
+        "-drive",
+        b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, out_dir_name }),
         "-nographic",
         "-serial",
         "mon:stdio",
@@ -108,10 +113,10 @@ pub fn build(b: *std.Build) void {
         "-s",
     };
     const qemu_cmd = b.addSystemCommand(&qemu_args);
-    qemu_cmd.step.dependOn(&install_ymir.step);
-    qemu_cmd.step.dependOn(&install_surtr.step);
-    const run_qemu = b.step("run", "Run QEMU");
-    run_qemu.dependOn(&qemu_cmd.step);
+    qemu_cmd.step.dependOn(b.getInstallStep());
+
+    const run_qemu_cmd = b.step("run", "Run QEMU");
+    run_qemu_cmd.dependOn(&qemu_cmd.step);
 
     // Unit tests
     const ymir_tests = b.addTest(.{
