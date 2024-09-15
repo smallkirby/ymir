@@ -19,13 +19,13 @@ fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     const regs = &vcpu.guest_regs;
     switch (qual.port) {
         0x0020, 0x0021 => try handlePicIn(vcpu, qual),
-        0x0040...0x0048 => try handlePitIn(vcpu, qual),
+        0x0040...0x0047 => try handlePitIn(vcpu, qual),
         0x0070, 0x0071 => regs.rax = 0, // RTC. Unimplemented.
         0x00A0, 0x00A1 => try handlePicIn(vcpu, qual),
-        0x03B0...0x03E0 => regs.rax = 0, // VGA. Uniimplemented.
-        0x03F8...0x0400 => try handleSerialIn(vcpu, qual),
-        0x0CFC => regs.rax = 0, // PCI CONFIG_DATA, Unimplemented.
-        0x0CFE => regs.rax = 0, // TODO: PCI ?
+        0x03B0...0x03DF => regs.rax = 0, // VGA. Uniimplemented.
+        0x03F8...0x03FF => try handleSerialIn(vcpu, qual),
+        0x0CF8...0x0CFB => regs.rax = 0, // TODO: PCI CONFIG_ADDRESS, Unimplemented.
+        0x0CFC...0x0CFF => regs.rax = 0, // TODO: PCI CONFIG_DATA, Unimplemented.
         else => {
             log.err("Unhandled I/O-in port: 0x{X}", .{qual.port});
             log.err("I/O size: {s}", .{@tagName(qual.size)});
@@ -37,13 +37,14 @@ fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
 fn handleIoOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     switch (qual.port) {
         0x0020, 0x0021 => try handlePicOut(vcpu, qual),
-        0x0040...0x0048 => try handlePitOut(vcpu, qual),
+        0x0040...0x0047 => try handlePitOut(vcpu, qual),
         0x0070, 0x0071 => {}, // RTC. Unimplemented.
-        0x80...0x90 => {}, // DMA. Unimplemented.
+        0x80...0x8F => {}, // DMA. Unimplemented.
         0x00A0, 0x00A1 => try handlePicOut(vcpu, qual),
-        0x03B0...0x03E0 => {}, // VGA. Uniimplemented.
-        0x03F8...0x0400 => try handleSerialOut(vcpu, qual),
-        0x0CF8 => {}, // PCI CONFIG_ADDRESS. ignore
+        0x03B0...0x03DF => {}, // VGA. Uniimplemented.
+        0x03F8...0x03FF => try handleSerialOut(vcpu, qual),
+        0x0CF8...0x0CFB => {}, // TODO: PCI CONFIG_ADDRESS. ignore
+        0x0CFC...0x0CFF => {}, // TODO: PCI CONFIG_DATA. ignore
         else => {
             log.err("Unhandled I/O-out port: 0x{X}", .{qual.port});
             log.err("I/O size: {s}", .{@tagName(qual.size)});

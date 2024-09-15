@@ -20,6 +20,10 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
                     try passthroughWrite(vcpu, qual);
                     try updateIa32e(vcpu);
                 },
+                3 => {
+                    const val = getValue(vcpu, qual); // TODO: Why the guest sets the MSB?
+                    try vmwrite(vmcs.Guest.cr3, val & ~@as(u64, (1 << 63)));
+                },
                 else => try passthroughWrite(vcpu, qual),
             }
         },
@@ -49,9 +53,9 @@ fn updateIa32e(vcpu: *Vcpu) VmxError!void {
 }
 
 fn passthroughRead(vcpu: *Vcpu, qual: QualCr) VmxError!void {
-    const gregs = &vcpu.guest_regs;
     const value = switch (qual.index) {
         0 => try vmread(vmcs.Guest.cr0),
+        3 => try vmread(vmcs.Guest.cr3),
         4 => try vmread(vmcs.Guest.cr4),
         else => {
             log.err("Unhandled CR read: {}", .{qual.index});
@@ -59,27 +63,7 @@ fn passthroughRead(vcpu: *Vcpu, qual: QualCr) VmxError!void {
         },
     };
 
-    switch (qual.reg) {
-        .rax => gregs.rax = value,
-        .rcx => gregs.rcx = value,
-        .rdx => gregs.rdx = value,
-        .rbx => gregs.rbx = value,
-        .rbp => gregs.rbp = value,
-        .rsi => gregs.rsi = value,
-        .rdi => gregs.rdi = value,
-        .r8 => gregs.r8 = value,
-        .r9 => gregs.r9 = value,
-        .r10 => gregs.r10 = value,
-        .r11 => gregs.r11 = value,
-        .r12 => gregs.r12 = value,
-        .r13 => gregs.r13 = value,
-        .r14 => gregs.r14 = value,
-        .r15 => gregs.r15 = value,
-        else => {
-            log.err("Unhandled CR read to: {}", .{qual.reg});
-            unreachable;
-        },
-    }
+    setValue(vcpu, qual, value);
 }
 
 fn passthroughWrite(vcpu: *Vcpu, qual: QualCr) VmxError!void {
@@ -123,6 +107,31 @@ fn getValue(vcpu: *Vcpu, qual: QualCr) u64 {
             unreachable;
         },
     };
+}
+
+fn setValue(vcpu: *Vcpu, qual: QualCr, value: u64) void {
+    const gregs = &vcpu.guest_regs;
+    switch (qual.reg) {
+        .rax => gregs.rax = value,
+        .rcx => gregs.rcx = value,
+        .rdx => gregs.rdx = value,
+        .rbx => gregs.rbx = value,
+        .rbp => gregs.rbp = value,
+        .rsi => gregs.rsi = value,
+        .rdi => gregs.rdi = value,
+        .r8 => gregs.r8 = value,
+        .r9 => gregs.r9 = value,
+        .r10 => gregs.r10 = value,
+        .r11 => gregs.r11 = value,
+        .r12 => gregs.r12 = value,
+        .r13 => gregs.r13 = value,
+        .r14 => gregs.r14 = value,
+        .r15 => gregs.r15 = value,
+        else => {
+            log.err("Unhandled CR access to: {}", .{qual.reg});
+            unreachable;
+        },
+    }
 }
 
 fn adjustCr0(value: u64) u64 {

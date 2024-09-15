@@ -275,7 +275,7 @@ pub const Vcpu = struct {
         log.debug("VM-exit: {s}", .{@tagName(exit_info.basic_reason)});
 
         switch (exit_info.basic_reason) {
-            .invpcid => {
+            .invlpg, .invpcid => { // TODO: should not flush entire TLB for INVLPG
                 pg.invalidateEpt(self, .single_context);
                 try self.stepNextInst();
             },
@@ -434,6 +434,8 @@ pub const Vcpu = struct {
         const eflags: am.FlagsRegister = @bitCast(try vmread(vmcs.Guest.rflags));
         if (!eflags.ief) return;
 
+        // TODO: should inject as many interrupt as possible?
+        //  Otherwise, remaining interrupts would be consumed by Ymir and lost.
         switch (irq) {
             .Timer => {
                 if ((self.pic.primary_mask >> 0) & 1 != 0) return;
@@ -737,6 +739,9 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     ppb_exec_ctrl.hlt = true;
     ppb_exec_ctrl.use_tpr_shadow = true;
     ppb_exec_ctrl.tsc_offsetting = true;
+    ppb_exec_ctrl.cr3load = true;
+    ppb_exec_ctrl.cr3store = true;
+    ppb_exec_ctrl.invlpg = true; // exit on INVLPG and INVPCID
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
@@ -1300,7 +1305,10 @@ fn partialCheckGuest() VmxError!void {
     // TODO: If "load debug controls" is 1, bits reserved in IA32_DEBUGCTL MSR must be 0.
     if (entry_ctrl.ia32e_mode_guest and !(cr0.pg and cr4.pae)) @panic("CR0: PG and CR4.PAE must be set when IA-32e mode is enabled");
     if (!entry_ctrl.ia32e_mode_guest and cr4.pcide) @panic("CR4: PCIDE must be unset when IA-32e mode is disabled");
-    if (cr3 >> 46 != 0) @panic("CR3: Reserved bits must be zero");
+    if (cr3 >> 46 != 0) {
+        log.err("CR3: {X:0>16}", .{cr3});
+        @panic("CR3: Reserved bits must be zero");
+    }
     if (!isCanonical(try vmcs.vmread(vmcs.Guest.sysenter_esp))) @panic("IA32_SYSENTER_ESP must be canonical");
     if (!isCanonical(try vmcs.vmread(vmcs.Guest.sysenter_eip))) @panic("IA32_SYSENTER_EIP must be canonical");
     if (entry_ctrl.load_cet_state) @panic("Unimplemented: Load CET state");
