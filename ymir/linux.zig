@@ -8,6 +8,8 @@ pub const layout = struct {
     pub const cmdline = 0x0002_0000;
     /// Where the protected-mode kernel code is loaded
     pub const kernel_base = 0x0010_0000;
+    /// Where the initrd is loaded.
+    pub const initrd = 0x0600_0000;
 };
 
 /// Representation of the linux kernel header.

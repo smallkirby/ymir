@@ -277,6 +277,20 @@ pub const Vcpu = struct {
         log.debug("VM-exit: {s}", .{@tagName(exit_info.basic_reason)});
 
         switch (exit_info.basic_reason) {
+            .hlt => {
+                while (!try self.injectExtIntr()) {}
+
+                // Accept incoming interrupts.
+                asm volatile (
+                    \\sti
+                    \\nop
+                    \\sti
+                );
+
+                try vmwrite(vmcs.Guest.activity_state, 0);
+                try vmwrite(vmcs.Guest.interruptibility_state, 0);
+                try self.stepNextInst();
+            },
             .invlpg, .invpcid => { // TODO: should not flush entire TLB for INVLPG
                 pg.invalidateEpt(self, .single_context);
                 try self.stepNextInst();
@@ -329,11 +343,12 @@ pub const Vcpu = struct {
             },
             .extintr => {
                 // Give the external interrupt to guest.
-                try self.injectExtIntr();
+                _ = try self.injectExtIntr();
                 // Also, consume the interrupt by myself.
                 asm volatile (
-                    \\cli
                     \\sti
+                    \\nop
+                    \\cli
                 );
             },
             else => {
@@ -422,25 +437,25 @@ pub const Vcpu = struct {
         try vmwrite(vmcs.Guest.rip, rip + try vmread(vmcs.Ro.vmexit_instruction_length));
     }
 
-    fn injectExtIntr(self: *Self) VmxError!void {
+    fn injectExtIntr(self: *Self) VmxError!bool {
         const pic = @import("pic.zig");
         const irr = pic.getIrr();
-        if (irr == 0) return;
+        if (irr == 0) return false;
         const irq: pic.IrqLine = @enumFromInt(@ctz(irr));
 
         if (self.pic.primary_phase != .inited) {
             pic.notifyEoi(irq);
-            return;
+            return false;
         }
 
         const eflags: am.FlagsRegister = @bitCast(try vmread(vmcs.Guest.rflags));
-        if (!eflags.ief) return;
+        if (!eflags.ief) return false;
 
         // TODO: should inject as many interrupt as possible?
         //  Otherwise, remaining interrupts would be consumed by Ymir and lost.
         switch (irq) {
             .Timer => {
-                if ((self.pic.primary_mask >> 0) & 1 != 0) return;
+                if ((self.pic.primary_mask >> 0) & 1 != 0) return false;
 
                 const intr_info = InterruptInfo{
                     .vector = self.pic.primary_base + 0,
@@ -451,10 +466,12 @@ pub const Vcpu = struct {
                 };
                 try vmwrite(vmcs.Ctrl.vmentry_interrupt_information_field, intr_info);
                 pic.notifyEoi(.Timer);
+                return true;
             },
             else => {
                 log.err("Unhandled IRQ: {s}", .{@tagName(irq)});
                 self.abort();
+                return false;
             },
         }
     }
@@ -781,6 +798,7 @@ fn setupExitCtrls(_: *Vcpu) VmxError!void {
     exit_ctrl.host_addr_space_size = true;
     exit_ctrl.load_ia32_efer = true;
     exit_ctrl.save_ia32_efer = true;
+    exit_ctrl.ack_interrupt_onexit = false; // Ymir wants to handle interrupt by herself.
     try adjustRegMandatoryBits(
         exit_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls),
@@ -987,6 +1005,16 @@ fn getExitReason() VmxError!ExitInformation {
 /// Get a VM-exit qualification from VMCS.
 fn getExitQual(T: anytype) VmxError!T {
     return @bitCast(@as(u64, try vmread(vmcs.Ro.exit_qual)));
+}
+
+/// Get a interrupt information from VMCS.
+fn getIntrInfo() VmxError!InterruptInfo {
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ctrl.vmentry_interrupt_information_field))));
+}
+
+/// Get a interruptibility state from VMCS.
+fn getInterruptibilityState() VmxError!InterruptibilityState {
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Guest.interruptibility_state))));
 }
 
 const VmxonRegion = packed struct {
@@ -1273,6 +1301,17 @@ pub const InterruptInfo = packed struct(u32) {
     };
 };
 
+/// SDM Vol.3C. 25.4.2. Table 25-3.
+pub const InterruptibilityState = packed struct(u32) {
+    blocking_by_sti: bool,
+    blocking_by_movss: bool,
+    blocking_by_smi: bool,
+    blocking_by_nmi: bool,
+    enclave: bool,
+    /// Reserved.
+    _reserved: u27 = 0,
+};
+
 // =====================================================
 
 /// Partially checks the validity of guest state.
@@ -1302,7 +1341,7 @@ fn partialCheckGuest() VmxError!void {
         if (@as(u64, @bitCast(cr4)) & ~vmx_cr4_fixed1 != 0) @panic("CR4: Fixed1 bits must be 0");
     }
     if (cr0.pg and !cr0.pe) @panic("CR0: PE must be set when PG is set");
-    // TODO: CR4 field must not set any bit to a value not supported in VMX operation.
+    // TODO: CR4 field must not set any bit not supported in VMX operation.
     if (cr4.cet and !cr0.wp) @panic("CR0: WP must be set when CR4.CET is set");
     // TODO: If "load debug controls" is 1, bits reserved in IA32_DEBUGCTL MSR must be 0.
     if (entry_ctrl.ia32e_mode_guest and !(cr0.pg and cr4.pae)) @panic("CR0: PG and CR4.PAE must be set when IA-32e mode is enabled");
@@ -1442,7 +1481,7 @@ fn partialCheckGuest() VmxError!void {
     // == Checks on Guest RIP, RFLAGS, and SSP
     // cf. SDM Vol 3C 27.3.1.4.
     const rip = try vmcs.vmread(vmcs.Guest.rip);
-    const intr_info = try vmread(vmcs.Ctrl.vmentry_interrupt_information_field);
+    const intr_info = try getIntrInfo();
     const rflags: am.FlagsRegister = @bitCast(try vmcs.vmread(vmcs.Guest.rflags));
 
     if ((!entry_ctrl.ia32e_mode_guest or !cs_ar.long) and (rip >> 32) != 0) @panic("RIP: Upper address must be all zeros");
@@ -1451,7 +1490,7 @@ fn partialCheckGuest() VmxError!void {
     if (rflags._reserved4 != 0 or rflags._reserved1 != 0 or rflags._reserved2 != 0 or rflags._reserved3 != 0) @panic("RFLAGS: Reserved bits must be zero");
     if (rflags._reservedO != 1) @panic("RFLAGS: Reserved bit 1 must be one");
     if ((entry_ctrl.ia32e_mode_guest or !cr0.pe) and rflags.vm) @panic("RFLAGS: VM must be clear when IA-32e mode is enabled");
-    if (((intr_info >> 31) & 1 != 0) and !rflags.ief) @panic("RFLAGS: IF must be set when valid bit in VM-entry interruption-information field is set.");
+    if (intr_info.valid and !rflags.ief) @panic("RFLAGS: IF must be set when valid bit in VM-entry interruption-information field is set.");
 
     // == Checks on Guest Non-Register State.
     // cf. SDM Vol 3C 27.3.1.5.
@@ -1463,7 +1502,20 @@ fn partialCheckGuest() VmxError!void {
     // TODO: other checks
 
     // Interruptibility state.
-    // TODO
+    const is = try getInterruptibilityState();
+    const eflags: am.FlagsRegister = @bitCast(try vmcs.vmread(vmcs.Guest.rflags));
+    const pin_exec_ctrl = try vmcs.PinExecCtrl.store();
+    if (is._reserved != 0) {
+        log.err("Interruptibility State: 0b{b:0>27}", .{is._reserved});
+        @panic("Interruptibility State: Reserved bits must be zero");
+    }
+    if (is.blocking_by_sti and is.blocking_by_movss) @panic("Interruptibility State: STI and MOV SS must not be set simultaneously");
+    if (!eflags.ief and is.blocking_by_sti) @panic("Interruptibility State: Blocking by STI must be clear when RFLAGS.IF is clear");
+    if (intr_info.valid and (intr_info.type == .external or intr_info.type == .nmi))
+        if (is.blocking_by_sti or is.blocking_by_movss) @panic("Interruptibility State: Blocking by STI or MOV SS must be clear when external interrupt or NMI is pending");
+    if (is.blocking_by_smi) @panic("Interruptibility State: Blocking by SMI must be clear (unsupported)");
+    if (pin_exec_ctrl.virtual_nmi and intr_info.valid and intr_info.type == .nmi)
+        if (is.blocking_by_nmi) @panic("Interruptibility State: Blocking by NMI must be clear for virtual-NMI");
 
     // Pending debug exceptions.
     // TODO

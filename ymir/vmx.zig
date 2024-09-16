@@ -90,6 +90,7 @@ pub const Vm = struct {
     pub fn setupGuestMemory(
         self: *Self,
         guest_image: []u8,
+        initrd: []u8,
         allocator: Allocator,
         page_allocator: *PageAllocator,
     ) Error!void {
@@ -101,7 +102,7 @@ pub const Vm = struct {
             mem.page_size_2mb,
         ) orelse return Error.OutOfMemory;
 
-        try self.loadKernel(guest_image);
+        try self.loadKernel(guest_image, initrd);
 
         // Create simple EPT mapping.
         self.vcpu.initGuestMap(
@@ -123,14 +124,15 @@ pub const Vm = struct {
 
     /// Kick off the virtual machine.
     pub fn loop(self: *Self) Error!void {
+        arch.disableIntr();
         self.vcpu.loop() catch return Error.UnknownError; // TODO
     }
 
     /// Load a protected kernel image and cmdline to the guest physical memory.
-    fn loadKernel(self: *Self, kernel: []u8) Error!void {
+    fn loadKernel(self: *Self, kernel: []u8, initrd: []u8) Error!void {
         const guest_mem = self.guest_mem;
 
-        if (kernel.len >= guest_mem.len) {
+        if (kernel.len + initrd.len >= guest_mem.len) {
             return Error.OutOfMemory;
         }
 
@@ -160,6 +162,17 @@ pub const Vm = struct {
         @memset(cmdline, 0);
         @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
 
+        // Load initrd
+        if (guest_mem.len - linux.layout.initrd < initrd.len) {
+            return Error.OutOfMemory;
+        }
+        if (boot_params.hdr.initrd_addr_max < linux.layout.initrd + initrd.len) {
+            return Error.OutOfMemory;
+        }
+        boot_params.hdr.ramdisk_image = linux.layout.initrd;
+        boot_params.hdr.ramdisk_size = @truncate(initrd.len);
+        try loadImage(guest_mem, initrd, linux.layout.initrd);
+
         // Copy boot_params
         try loadImage(
             guest_mem,
@@ -175,7 +188,7 @@ pub const Vm = struct {
             kernel[code_offset .. code_offset + code_size],
             linux.layout.kernel_base,
         );
-        log.debug("Guest kernel code offset: 0x{X:0>16}", .{code_offset});
+        log.info("Guest kernel code offset: 0x{X:0>16}", .{code_offset});
         if (linux.layout.kernel_base + code_size > guest_mem.len) {
             return Error.OutOfMemory;
         }
