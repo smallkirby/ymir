@@ -82,6 +82,8 @@ pub const Vcpu = struct {
     guest_msr: msr.MsrPage = undefined,
     /// PIC.
     pic: io.Pic = io.Pic.new(),
+    /// PCI.
+    pci: io.Pci = io.Pci.new(),
     /// TSC value on VM-exit.
     tsc_on_exit: u64 = 0,
 

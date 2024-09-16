@@ -20,12 +20,18 @@ fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     switch (qual.port) {
         0x0020, 0x0021 => try handlePicIn(vcpu, qual),
         0x0040...0x0047 => try handlePitIn(vcpu, qual),
+        0x0060...0x0064 => regs.rax = 0, // Keyboard. Unimplemented.
         0x0070, 0x0071 => regs.rax = 0, // RTC. Unimplemented.
+        0x0080...0x008F => {}, // DMA. Unimplemented.
         0x00A0, 0x00A1 => try handlePicIn(vcpu, qual),
+        0x02E8...0x02EF => {}, // Fourth serial port. Ignore.
+        0x02F8...0x02FF => {}, // Second serial port. Ignore.
         0x03B0...0x03DF => regs.rax = 0, // VGA. Uniimplemented.
+        0x03E8...0x03EF => {}, // Third serial port. Ignore.
         0x03F8...0x03FF => try handleSerialIn(vcpu, qual),
-        0x0CF8...0x0CFB => regs.rax = 0, // TODO: PCI CONFIG_ADDRESS, Unimplemented.
-        0x0CFC...0x0CFF => regs.rax = 0, // TODO: PCI CONFIG_DATA, Unimplemented.
+        0x0CF8...0x0CFB => try vcpu.pci.in(vcpu, qual.port),
+        0x0CFC...0x0CFF => try vcpu.pci.in(vcpu, qual.port),
+        0xC000...0xCFFF => {}, // Old PCI. Ignore.
         else => {
             log.err("Unhandled I/O-in port: 0x{X}", .{qual.port});
             log.err("I/O size: {s}", .{@tagName(qual.size)});
@@ -38,13 +44,18 @@ fn handleIoOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     switch (qual.port) {
         0x0020, 0x0021 => try handlePicOut(vcpu, qual),
         0x0040...0x0047 => try handlePitOut(vcpu, qual),
+        0x0060...0x0064 => {}, // Keyboard. Unimplemented.
         0x0070, 0x0071 => {}, // RTC. Unimplemented.
-        0x80...0x8F => {}, // DMA. Unimplemented.
+        0x0080...0x008F => {}, // DMA. Unimplemented.
         0x00A0, 0x00A1 => try handlePicOut(vcpu, qual),
+        0x2E8...0x2EF => {}, // Fourth serial port. Ignore.
+        0x02F8...0x02FF => {}, // Second serial port. Ignore.
         0x03B0...0x03DF => {}, // VGA. Uniimplemented.
         0x03F8...0x03FF => try handleSerialOut(vcpu, qual),
-        0x0CF8...0x0CFB => {}, // TODO: PCI CONFIG_ADDRESS. ignore
-        0x0CFC...0x0CFF => {}, // TODO: PCI CONFIG_DATA. ignore
+        0x3E8...0x3EF => {}, // Third serial port. Ignore.
+        0x0CF8...0x0CFB => try vcpu.pci.out(vcpu, qual.port),
+        0x0CFC...0x0CFF => try vcpu.pci.out(vcpu, qual.port),
+        0xC000...0xCFFF => {}, // Old PCI. Ignore.
         else => {
             log.err("Unhandled I/O-out port: 0x{X}", .{qual.port});
             log.err("I/O size: {s}", .{@tagName(qual.size)});
@@ -226,5 +237,46 @@ pub const Pic = struct {
             .primary_mask = 0xFF,
             .secondary_mask = 0xFF,
         };
+    }
+};
+
+/// Virtual PCI.
+pub const Pci = struct {
+    const Self = @This();
+
+    /// Configuration address register.
+    config_addr: u32,
+    /// Configuration data register.
+    config_data: u32,
+
+    pub fn new() Self {
+        return Self{
+            .config_addr = 0,
+            .config_data = 0,
+        };
+    }
+
+    pub fn in(self: *Self, vcpu: *Vcpu, port: u16) VmxError!void {
+        const regs = &vcpu.guest_regs;
+        switch (port) {
+            0xCF8...0xCFB => regs.rax = self.config_addr, // TODO: should check offset and return appropriate value
+            0xCFC...0xCFF => {},
+            else => {
+                log.err("Unsupported I/O-in to PCI: port=0x{X}", .{port});
+                unreachable;
+            },
+        }
+    }
+
+    pub fn out(self: *Self, vcpu: *Vcpu, port: u16) VmxError!void {
+        const regs = &vcpu.guest_regs;
+        switch (port) {
+            0xCF8...0xCFB => self.config_addr = @truncate(regs.rax),
+            0xCFC...0xCFF => {}, // TODO: Unimplemented.
+            else => {
+                log.err("Unsupported I/O-out to PCI: port=0x{X}", .{port});
+                unreachable;
+            },
+        }
     }
 };
