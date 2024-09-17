@@ -44,7 +44,7 @@ const ext_feature0_ebx = cpuid.ExtFeatureEbx0{
 pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
     const regs = &vcpu.guest_regs;
 
-    switch (Leaf.from(regs.rax)) {
+    if (std.meta.intToEnum(Leaf, regs.rax)) |leaf| switch (leaf) {
         .maximum_input => {
             regs.rax = 0x20; // Maximum input value for basic CPUID.
             regs.rbx = 0x72_69_6D_59; // Ymir
@@ -115,6 +115,9 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
             log.warn("Unhandled CPUID: Leaf=0x{X:0>8}, Sub=0x{X:0>8}", .{ regs.rax, regs.rcx });
             invalid(vcpu);
         },
+    } else |_| {
+        log.warn("Unimplemented CPUID: Leaf=0x{X:0>8}, Sub=0x{X:0>8}", .{ regs.rax, regs.rcx });
+        invalid(vcpu);
     }
 }
 

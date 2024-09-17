@@ -274,8 +274,6 @@ pub const Vcpu = struct {
 
     /// Handle the VM-exit.
     fn handleExit(self: *Self, exit_info: ExitInformation) VmxError!void {
-        log.debug("VM-exit: {s}", .{@tagName(exit_info.basic_reason)});
-
         switch (exit_info.basic_reason) {
             .hlt => {
                 while (!try self.injectExtIntr()) {}
