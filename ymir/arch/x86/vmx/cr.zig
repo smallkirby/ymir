@@ -21,7 +21,7 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
                     try updateIa32e(vcpu);
                 },
                 3 => {
-                    const val = getValue(vcpu, qual); // TODO: Why the guest sets the MSB?
+                    const val = try getValue(vcpu, qual); // TODO: Why the guest sets the MSB?
                     try vmwrite(vmcs.Guest.cr3, val & ~@as(u64, (1 << 63)));
                 },
                 else => try passthroughWrite(vcpu, qual),
@@ -63,11 +63,11 @@ fn passthroughRead(vcpu: *Vcpu, qual: QualCr) VmxError!void {
         },
     };
 
-    setValue(vcpu, qual, value);
+    try setValue(vcpu, qual, value);
 }
 
 fn passthroughWrite(vcpu: *Vcpu, qual: QualCr) VmxError!void {
-    const value = getValue(vcpu, qual);
+    const value = try getValue(vcpu, qual);
     switch (qual.index) {
         0 => {
             try vmwrite(vmcs.Guest.cr0, adjustCr0(value));
@@ -84,7 +84,7 @@ fn passthroughWrite(vcpu: *Vcpu, qual: QualCr) VmxError!void {
     }
 }
 
-fn getValue(vcpu: *Vcpu, qual: QualCr) u64 {
+fn getValue(vcpu: *Vcpu, qual: QualCr) VmxError!u64 {
     const gregs = &vcpu.guest_regs;
     return switch (qual.reg) {
         .rax => gregs.rax,
@@ -102,14 +102,11 @@ fn getValue(vcpu: *Vcpu, qual: QualCr) u64 {
         .r13 => gregs.r13,
         .r14 => gregs.r14,
         .r15 => gregs.r15,
-        else => {
-            log.err("Unhandled CR access from: {}", .{qual.reg});
-            unreachable;
-        },
+        .rsp => try vmread(vmcs.Guest.rsp),
     };
 }
 
-fn setValue(vcpu: *Vcpu, qual: QualCr, value: u64) void {
+fn setValue(vcpu: *Vcpu, qual: QualCr, value: u64) VmxError!void {
     const gregs = &vcpu.guest_regs;
     switch (qual.reg) {
         .rax => gregs.rax = value,
@@ -127,10 +124,7 @@ fn setValue(vcpu: *Vcpu, qual: QualCr, value: u64) void {
         .r13 => gregs.r13 = value,
         .r14 => gregs.r14 = value,
         .r15 => gregs.r15 = value,
-        else => {
-            log.err("Unhandled CR access to: {}", .{qual.reg});
-            unreachable;
-        },
+        .rsp => try vmwrite(vmcs.Guest.rsp, value),
     }
 }
 

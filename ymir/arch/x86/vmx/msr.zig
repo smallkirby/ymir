@@ -145,8 +145,7 @@ pub const MsrPage = struct {
         self.ents[self.num_ents] = SavedMsr{ .index = index, .data = data };
         self.num_ents += 1;
         if (self.num_ents > max_num_ents) {
-            log.err("Too many MSR entries: {d}", .{self.num_ents});
-            unreachable;
+            @panic("Too many MSR entries registered.");
         }
     }
 
@@ -156,16 +155,17 @@ pub const MsrPage = struct {
     }
 
     /// Find the saved MSR entry.
-    pub fn find(self: *MsrPage, index: am.Msr) ?SavedMsr {
+    pub fn find(self: *MsrPage, index: am.Msr) ?*SavedMsr {
         const index_num = @intFromEnum(index);
         for (0..self.num_ents) |i| {
             if (self.ents[i].index == index_num) {
-                return self.ents[i];
+                return &self.ents[i];
             }
         }
         return null;
     }
 
+    /// Get the host physical address of the MSR page.
     pub fn phys(self: *MsrPage) u64 {
         return ymir.mem.virt2phys(self.ents.ptr);
     }

@@ -194,6 +194,10 @@ pub const Vcpu = struct {
             }
 
             try self.adjustTsc();
+
+            storeHostMsrs(self);
+            try updateVmcsMsrs(self);
+
             self.vmentry() catch |err| {
                 log.err("VM-entry failed: {?}", .{err});
                 if (err == VmxError.VmxStatusAvailable) {
@@ -250,8 +254,6 @@ pub const Vcpu = struct {
 
     // Enter VMX non-root operation.
     fn vmentry(self: *Self) VmxError!void {
-        saveHostMsrs(self);
-
         const success = asm volatile (
             \\mov %[self], %%rdi
             \\call asmVmEntry
@@ -695,11 +697,18 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
     try am.vmptrld(mem.virt2phys(vmcs_region));
 }
 
-/// Save current host MSR values.
-fn saveHostMsrs(vcpu: *Vcpu) void {
+/// Save current host MSR values to MSR page.
+fn storeHostMsrs(vcpu: *Vcpu) void {
     for (vcpu.host_msr.savedEnts()) |ent| {
         vcpu.host_msr.setByIndex(ent.index, am.readMsr(@enumFromInt(ent.index)));
     }
+}
+
+/// Update MSR count fields in VMCS.
+fn updateVmcsMsrs(vcpu: *Vcpu) VmxError!void {
+    try vmwrite(vmcs.Ctrl.vmexit_msr_load_count, vcpu.host_msr.num_ents);
+    try vmwrite(vmcs.Ctrl.vmexit_msr_store_count, vcpu.guest_msr.num_ents);
+    try vmwrite(vmcs.Ctrl.vmentry_msr_load_count, vcpu.guest_msr.num_ents);
 }
 
 /// Register host-saved and guest-saved MSRs.
@@ -727,12 +736,10 @@ fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
     gm.set(.kernel_gs_base, 0);
 
     // Setup VMCS.
-    try vmwrite(vmcs.Ctrl.vmexit_msr_load_count, hm.num_ents);
     try vmwrite(vmcs.Ctrl.vmexit_msr_load_address, hm.phys());
-    try vmwrite(vmcs.Ctrl.vmexit_msr_store_count, gm.num_ents);
     try vmwrite(vmcs.Ctrl.vmexit_msr_store_address, gm.phys());
-    try vmwrite(vmcs.Ctrl.vmentry_msr_load_count, gm.num_ents);
     try vmwrite(vmcs.Ctrl.vmentry_msr_load_address, gm.phys());
+    try updateVmcsMsrs(vcpu);
 }
 
 /// Set up VM-Execution control fields.
