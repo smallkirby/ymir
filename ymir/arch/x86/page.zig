@@ -106,6 +106,26 @@ pub fn getLv1PageTable(lv1_table_addr: Phys) []Lv1PageTableEntry {
     return lv1_table_ptr[0..num_table_entries];
 }
 
+fn getLv4GuestPageTable(cr3: Phys, guest_base: u64) []Lv4PageTableEntry {
+    const lv4_table_ptr: [*]Lv4PageTableEntry = @ptrFromInt(phys2virt((cr3 & ~page_mask_4k) + guest_base));
+    return lv4_table_ptr[0..num_table_entries];
+}
+
+fn getLv3GuestPageTable(lv3_table_addr: Phys, guest_base: u64) []Lv3PageTableEntry {
+    const lv3_table_ptr: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv3_table_addr + guest_base));
+    return lv3_table_ptr[0..num_table_entries];
+}
+
+fn getLv2GuestPageTable(lv2_table_addr: Phys, guest_base: u64) []Lv2PageTableEntry {
+    const lv2_table_ptr: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv2_table_addr + guest_base));
+    return lv2_table_ptr[0..num_table_entries];
+}
+
+fn getLv1GuestPageTable(lv1_table_addr: Phys, guest_base: u64) []Lv1PageTableEntry {
+    const lv1_table_ptr: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv1_table_addr + guest_base));
+    return lv1_table_ptr[0..num_table_entries];
+}
+
 /// Translate the given virtual address to physical address by walking page tables.
 /// If the translation fails, return null.
 pub fn translateWalk(addr: Virt) ?Phys {
@@ -141,23 +161,23 @@ pub fn translateWalk(addr: Virt) ?Phys {
 
 /// Translate the given guest virtual address to guest physical address.
 pub fn guestTranslateWalk(gva: Virt, cr3: Phys, guest_base: Phys) ?Phys {
-    const lv4tbl: [*]Lv4PageTableEntry = @ptrFromInt(phys2virt((cr3 & ~page_mask_4k) + guest_base));
+    const lv4tbl = getLv4GuestPageTable(cr3, guest_base);
     const lv4index = (gva >> lv4_shift) & index_mask;
     const lv4ent = &lv4tbl[lv4index];
 
-    const lv3tbl: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv4ent.address() + guest_base));
+    const lv3tbl = getLv3GuestPageTable(lv4ent.address(), guest_base);
     const lv3index = (gva >> lv3_shift) & index_mask;
     const lv3ent = &lv3tbl[lv3index];
     if (!lv3ent.present) return null;
     if (lv3ent.ps) return lv3ent.address() + (gva & page_mask_1gb);
 
-    const lv2tbl: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv3ent.address() + guest_base));
+    const lv2tbl = getLv2GuestPageTable(lv3ent.address(), guest_base);
     const lv2index = (gva >> lv2_shift) & index_mask;
     const lv2ent = &lv2tbl[lv2index];
     if (!lv2ent.present) return null;
     if (lv2ent.ps) return lv2ent.address() + (gva & page_mask_2mb);
 
-    const lv1tbl: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv2ent.address() + guest_base));
+    const lv1tbl = getLv1GuestPageTable(lv2ent.address(), guest_base);
     const lv1index = (gva >> lv1_shift) & index_mask;
     const lv1ent = &lv1tbl[lv1index];
     if (!lv1ent.present) return null;
