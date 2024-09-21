@@ -22,6 +22,12 @@ pub fn setVm(target_vm: *vmx.Vm) void {
     panic.setVm(target_vm);
 }
 
+/// Halt endlessly with interrupts disabled.
+pub fn endlessHalt() noreturn {
+    arch.disableIntr();
+    while (true) arch.halt();
+}
+
 test {
     @import("std").testing.refAllDeclsRecursive(@This());
 }

@@ -167,8 +167,7 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
 
     // EOL
     log.info("Reached EOL.", .{});
-    while (true)
-        arch.halt();
+    ymir.endlessHalt();
 }
 
 fn validateBootInfo(boot_info: surtr.BootInfo) !void {

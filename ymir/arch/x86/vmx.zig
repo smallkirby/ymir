@@ -379,7 +379,7 @@ pub const Vcpu = struct {
     pub fn abort(self: *Self) noreturn {
         @setCold(true);
         self.dump() catch log.err("Failed to dump VM information.", .{});
-        while (true) am.hlt();
+        ymir.endlessHalt();
     }
 
     pub fn dump(self: *Self) VmxError!void {

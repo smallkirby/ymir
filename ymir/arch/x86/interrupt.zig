@@ -37,6 +37,7 @@
 const std = @import("std");
 const log = std.log.scoped(.intr);
 
+const ymir = @import("ymir");
 const am = @import("asm.zig");
 const idt = @import("idt.zig");
 const isr = @import("isr.zig");
@@ -116,7 +117,7 @@ fn unhandledHandler(context: *Context) void {
     log.err("CS     : 0x{X:0>4}", .{context.cs});
     log.err("SS     : 0x{X:0>4}", .{context.ss});
 
-    while (true) asm volatile ("hlt");
+    ymir.endlessHalt();
 }
 
 fn unhandledFaultHandler(context: *Context) void {
