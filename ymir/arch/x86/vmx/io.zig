@@ -7,6 +7,7 @@ const Vcpu = vmx.Vcpu;
 const VmxError = vmx.VmxError;
 const sr = @import("../serial.zig");
 const am = @import("../asm.zig");
+const IrqLine = @import("../pic.zig").IrqLine;
 
 pub fn handleIo(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     return switch (qual.direction) {
@@ -69,12 +70,22 @@ fn handleIoOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
 fn handleSerialIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     const regs = &vcpu.guest_regs;
     switch (qual.port) {
+        // Receive buffer.
+        0x3F8 => regs.rax = 0, // not implemented
         // Interrupt Enable Register (DLAB=1) / Divisor Latch High Register (DLAB=0).
-        0x3F9 => regs.rax = am.inb(qual.port),
+        0x3F9 => regs.rax = vcpu.serial.ier,
+        // Interrupt Identification Register.
+        0x3FA => regs.rax = 0x00,
         // Line Control Register (MSB is DLAB).
         0x3FB => regs.rax = 0x00, // ignore
+        // Modem Control Register.
+        0x3FC => regs.rax = vcpu.serial.mcr,
         // Line Status Register.
         0x3FD => regs.rax = 0b0110_0000, // THRE / TEMT. Always DR clear.
+        // Modem Status Register.
+        0x3FE => regs.rax = vcpu.serial.msr,
+        // Scratch Register.
+        0x3FF => regs.rax = 0, // 8250
         else => {
             log.err("Unsupported I/O-in to the first serial port: 0x{X}", .{qual.port});
             vcpu.abort();
@@ -86,15 +97,25 @@ fn handleSerialOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     const regs = &vcpu.guest_regs;
     switch (qual.port) {
         // Transmit buffer.
-        0x3F8 => sr.writeByte(@truncate(regs.rax), .com1),
+        0x3F8 => {
+            sr.writeByte(@truncate(regs.rax), .com1);
+            // If "TX empty" interrupt is enabled, set the pending IRQ.
+            if (vcpu.serial.ier & 0b0010 != 0) {
+                vcpu.pending_irq |= 1 << @intFromEnum(IrqLine.Serial1);
+            }
+        },
         // Interrupt Enable Register.
-        0x3F9 => {}, // ignore
+        0x3F9 => vcpu.serial.ier = @truncate(regs.rax),
         // FIFO control registers.
         0x3FA => {}, // ignore
         // Line Control Register (MSB is DLAB).
         0x3FB => {}, // ignore
         // Modem Control Register.
-        0x3FC => {}, // ignore
+        0x3FC => vcpu.serial.mcr = @truncate(regs.rax),
+        // Modem Status Register.
+        0x3FE => vcpu.serial.msr = @truncate(regs.rax),
+        // Scratch Register.
+        0x3FF => {}, // ignore
         else => {
             log.err("Unsupported I/O-out to the first serial port: 0x{X}", .{qual.port});
             vcpu.abort();
@@ -281,5 +302,18 @@ pub const Pci = struct {
                 vcpu.abort();
             },
         }
+    }
+};
+
+pub const Serial = struct {
+    /// Interrupt Enable Register.
+    ier: u8 = 0,
+    /// Modem Control Register.
+    mcr: u8 = 0,
+    /// Line Status Register.
+    msr: u8 = 0,
+
+    pub fn new() Serial {
+        return Serial{};
     }
 };

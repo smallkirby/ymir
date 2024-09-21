@@ -84,8 +84,12 @@ pub const Vcpu = struct {
     pic: io.Pic = io.Pic.new(),
     /// PCI.
     pci: io.Pci = io.Pci.new(),
+    /// 8250 serial port.
+    serial: io.Serial = io.Serial.new(),
     /// TSC value on VM-exit.
     tsc_on_exit: u64 = 0,
+    /// Pending IRQ.
+    pending_irq: u16 = 0,
 
     const GuestRegisters = packed struct {
         rax: u64,
@@ -295,14 +299,9 @@ pub const Vcpu = struct {
                 }
             },
             .hlt => {
-                while (!try self.injectExtIntr()) {}
-
-                // Accept incoming interrupts.
-                asm volatile (
-                    \\sti
-                    \\nop
-                    \\sti
-                );
+                while (!try self.injectExtIntr()) {
+                    am.relax();
+                }
 
                 try vmwrite(vmcs.Guest.activity_state, 0);
                 try vmwrite(vmcs.Guest.interruptibility_state, 0);
@@ -361,7 +360,7 @@ pub const Vcpu = struct {
             .extintr => {
                 // Give the external interrupt to guest.
                 _ = try self.injectExtIntr();
-                // Also, consume the interrupt by myself.
+                // Consume the interrupt by myself.
                 asm volatile (
                     \\sti
                     \\nop
@@ -454,43 +453,61 @@ pub const Vcpu = struct {
         try vmwrite(vmcs.Guest.rip, rip + try vmread(vmcs.Ro.vmexit_instruction_length));
     }
 
+    /// Inject external interrupt to the guest if possible.
+    /// Returns true if the interrupt is injected, otherwise false.
+    /// This function saves the current IRR in the PIC,
+    /// so Ymir can consume it and send EOI after this function.
     fn injectExtIntr(self: *Self) VmxError!bool {
+        // Save current IRR in case the guest blocks interrupts and Ymir consumes them.
         const pic = @import("pic.zig");
-        const irr = pic.getIrr();
-        if (irr == 0) return false;
-        const irq: pic.IrqLine = @enumFromInt(@ctz(irr));
+        self.pending_irq |= pic.getIrr();
+        const pending = self.pending_irq;
 
-        if (self.pic.primary_phase != .inited) {
-            pic.notifyEoi(irq);
-            return false;
-        }
+        // No interrupts to inject.
+        if (pending == 0) return false;
+        // PIC is not initialized.
+        if (self.pic.primary_phase != .inited) return false;
 
+        // Guest is blocking interrupts.
         const eflags: am.FlagsRegister = @bitCast(try vmread(vmcs.Guest.rflags));
         if (!eflags.ief) return false;
 
-        // TODO: should inject as many interrupt as possible?
-        //  Otherwise, remaining interrupts would be consumed by Ymir and lost.
-        switch (irq) {
-            .Timer => {
-                if ((self.pic.primary_mask >> 0) & 1 != 0) return false;
+        // Iterate all possible IRQs and inject one if possible.
+        var irq: u4 = 0;
+        while (irq <= 15) : (irq += 1) {
+            const irq_bit: u16 = @as(u16, 1) << irq;
+            // The IRQ is not pending.
+            if (pending & irq_bit == 0) continue;
 
-                const intr_info = InterruptInfo{
-                    .vector = self.pic.primary_base + 0,
-                    .type = .external,
-                    .ec_valid = false,
-                    .nmi_unblocking = false,
-                    .valid = true,
-                };
-                try vmwrite(vmcs.Ctrl.vmentry_interrupt_information_field, intr_info);
-                pic.notifyEoi(.Timer);
-                return true;
-            },
-            else => {
-                log.err("Unhandled IRQ: {s}", .{@tagName(irq)});
-                self.abort();
-                return false;
-            },
+            // Check if the IRQ is masked.
+            // TODO: refactor bit operations
+            const is_masked = if (irq >= 8) b: { // Secondary PIC
+                const secondary_irq = @intFromEnum(pic.IrqLine.Secondary);
+                const is_secondary_masked = (self.pic.primary_mask & (1 << secondary_irq)) != 0;
+                const shift: u3 = @truncate(irq - 8);
+                const is_irq_masked = (self.pic.secondary_mask & (@as(u8, 1) << shift)) != 0;
+                break :b is_secondary_masked or is_irq_masked;
+            } else b: { // Primary PIC
+                break :b (self.pic.primary_mask & irq_bit) != 0;
+            };
+            if (is_masked) continue;
+
+            // Inject the interrupt.
+            const intr_info = InterruptInfo{
+                .vector = self.pic.primary_base + irq,
+                .type = .external,
+                .ec_valid = false,
+                .nmi_unblocking = false,
+                .valid = true,
+            };
+            try vmwrite(vmcs.Ctrl.vmentry_interrupt_information_field, intr_info);
+
+            // Clear the pending IRQ.
+            self.pending_irq &= ~(@as(u16, 1) << @as(u4, @truncate(irq)));
+            return true;
         }
+
+        return false;
     }
 
     /// VMLAUNCH or VMRESUME.
@@ -597,6 +614,11 @@ pub const Vcpu = struct {
     }
 
     fn asmVmExit() callconv(.Naked) noreturn {
+        // Disable IRQ.
+        asm volatile (
+            \\cli
+        );
+
         // Save guest RAX, get &guest_regs
         asm volatile (
             \\push %%rax
