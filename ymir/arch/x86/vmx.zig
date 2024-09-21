@@ -201,7 +201,7 @@ pub const Vcpu = struct {
             self.vmentry() catch |err| {
                 log.err("VM-entry failed: {?}", .{err});
                 if (err == VmxError.VmxStatusAvailable) {
-                    const inst_err = getInstError() catch unreachable;
+                    const inst_err = try getInstError();
                     log.err("VM Instruction error: {?}", .{inst_err});
                 }
                 self.abort();
@@ -245,7 +245,7 @@ pub const Vcpu = struct {
         // So we have to map the page (this page might not be mapped when the guest memory is small).
         const apic_access_page = try allocator.alloc(u8, mem.page_size_4k);
         const apic_access_page_hpa = mem.virt2phys(apic_access_page.ptr);
-        self.map4k(apic_access_page_hpa, 0xFEE0_0000, allocator) catch unreachable; // TODO
+        try self.map4k(apic_access_page_hpa, 0xFEE0_0000, allocator);
 
         // Set VMCS.
         try vmwrite(vmcs.Ctrl.apic_access_address, apic_access_page_hpa);
@@ -374,8 +374,8 @@ pub const Vcpu = struct {
     /// Print guest state and stack trace, and abort.
     pub fn abort(self: *Self) noreturn {
         @setCold(true);
-        self.dump() catch unreachable;
-        unreachable;
+        self.dump() catch log.err("Failed to dump VM information.", .{});
+        while (true) am.hlt();
     }
 
     pub fn dump(self: *Self) VmxError!void {
@@ -412,8 +412,8 @@ pub const Vcpu = struct {
         log.err("=== vCPU Information ===", .{});
         log.err("[Guest State]", .{});
         log.err("IA32-e: {}", .{self.ia32_enabled});
-        log.err("RIP: 0x{X:0>16}", .{vmread(vmcs.Guest.rip) catch unreachable});
-        log.err("RSP: 0x{X:0>16}", .{vmread(vmcs.Guest.rsp) catch unreachable});
+        log.err("RIP: 0x{X:0>16}", .{try vmread(vmcs.Guest.rip)});
+        log.err("RSP: 0x{X:0>16}", .{try vmread(vmcs.Guest.rsp)});
         log.err("RAX: 0x{X:0>16}", .{self.guest_regs.rax});
         log.err("RBX: 0x{X:0>16}", .{self.guest_regs.rbx});
         log.err("RCX: 0x{X:0>16}", .{self.guest_regs.rcx});
@@ -429,16 +429,16 @@ pub const Vcpu = struct {
         log.err("R13: 0x{X:0>16}", .{self.guest_regs.r13});
         log.err("R14: 0x{X:0>16}", .{self.guest_regs.r14});
         log.err("R15: 0x{X:0>16}", .{self.guest_regs.r15});
-        log.err("CR0: 0x{X:0>16}", .{vmread(vmcs.Guest.cr0) catch unreachable});
-        log.err("CR3: 0x{X:0>16}", .{vmread(vmcs.Guest.cr3) catch unreachable});
-        log.err("CR4: 0x{X:0>16}", .{vmread(vmcs.Guest.cr4) catch unreachable});
-        log.err("EFER:0x{X:0>16}", .{vmread(vmcs.Guest.efer) catch unreachable});
+        log.err("CR0: 0x{X:0>16}", .{try vmread(vmcs.Guest.cr0)});
+        log.err("CR3: 0x{X:0>16}", .{try vmread(vmcs.Guest.cr3)});
+        log.err("CR4: 0x{X:0>16}", .{try vmread(vmcs.Guest.cr4)});
+        log.err("EFER:0x{X:0>16}", .{try vmread(vmcs.Guest.efer)});
         log.err(
             "CS : 0x{X:0>4} 0x{X:0>16} 0x{X:0>8}",
             .{
-                vmread(vmcs.Guest.cs_sel) catch unreachable,
-                vmread(vmcs.Guest.cs_base) catch unreachable,
-                vmread(vmcs.Guest.cs_limit) catch unreachable,
+                try vmread(vmcs.Guest.cs_sel),
+                try vmread(vmcs.Guest.cs_base),
+                try vmread(vmcs.Guest.cs_limit),
             },
         );
         log.err("Guest physical base: 0x{X:0>16}", .{self.guest_base});
@@ -995,15 +995,6 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
 /// This function is called directly from assembly.
 export fn setHostStack(rsp: u64) callconv(.C) void {
     vmcs.vmwrite(vmcs.Host.rsp, rsp) catch {};
-}
-
-export fn vmexitHandler() noreturn {
-    log.debug("[VMEXIT handler]", .{});
-    const reason = getExitReason() catch unreachable;
-    log.debug("   VMEXIT reason: {?}", .{reason});
-
-    while (true)
-        am.hlt();
 }
 
 /// Adjust mandatory bits of a control field.

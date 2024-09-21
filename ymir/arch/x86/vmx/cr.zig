@@ -30,7 +30,7 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
         .mov_from => try passthroughRead(vcpu, qual),
         else => {
             log.err("Unimplemented CR access: {?}", .{qual});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -59,7 +59,7 @@ fn passthroughRead(vcpu: *Vcpu, qual: QualCr) VmxError!void {
         4 => try vmread(vmcs.Guest.cr4),
         else => {
             log.err("Unhandled CR read: {}", .{qual.index});
-            unreachable;
+            vcpu.abort();
         },
     };
 
@@ -79,7 +79,7 @@ fn passthroughWrite(vcpu: *Vcpu, qual: QualCr) VmxError!void {
         },
         else => {
             log.err("Unhandled CR write to: {}", .{qual.index});
-            unreachable;
+            vcpu.abort();
         },
     }
 }

@@ -35,7 +35,7 @@ fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         else => {
             log.err("Unhandled I/O-in port: 0x{X}", .{qual.port});
             log.err("I/O size: {s}", .{@tagName(qual.size)});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -59,7 +59,7 @@ fn handleIoOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         else => {
             log.err("Unhandled I/O-out port: 0x{X}", .{qual.port});
             log.err("I/O size: {s}", .{@tagName(qual.size)});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -77,7 +77,7 @@ fn handleSerialIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         0x3FD => regs.rax = 0b0110_0000, // THRE / TEMT. Always DR clear.
         else => {
             log.err("Unsupported I/O-in to the first serial port: 0x{X}", .{qual.port});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -97,7 +97,7 @@ fn handleSerialOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         0x3FC => {}, // ignore
         else => {
             log.err("Unsupported I/O-out to the first serial port: 0x{X}", .{qual.port});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -124,7 +124,7 @@ fn handlePitOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
 fn handlePicIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     if (qual.size != .byte) {
         log.err("Unsupported I/O-in size to PIC: size={s}, port=0x{X}", .{ @tagName(qual.size), qual.port });
-        unreachable;
+        vcpu.abort();
     }
 
     const regs = &vcpu.guest_regs;
@@ -134,11 +134,14 @@ fn handlePicIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         // Primary PIC data.
         0x21 => switch (pic.primary_phase) {
             .uninitialized, .inited => regs.rax = pic.primary_mask,
-            else => unreachable,
+            else => {
+                log.err("Unsupported I/O-in to primary PIC: phase={s}", .{@tagName(pic.primary_phase)});
+                vcpu.abort();
+            },
         },
         else => {
             log.err("Unsupported I/O-in to PIC: port=0x{X}", .{qual.port});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -146,7 +149,7 @@ fn handlePicIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
 fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     if (qual.size != .byte) {
         log.err("Unsupported I/O-out size to PIC: size={s}, port=0x{X}", .{ @tagName(qual.size), qual.port });
-        unreachable;
+        vcpu.abort();
     }
 
     const regs = &vcpu.guest_regs;
@@ -160,7 +163,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             0x60 => {}, // TODO: ?
             else => {
                 log.err("Unsupported command to primary PIC: command=0x{X}", .{dx});
-                unreachable;
+                vcpu.abort();
             },
         },
         // Primary PIC data.
@@ -173,7 +176,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             },
             .phase2 => if (dx != (1 << 2)) {
                 log.err("Invalid secondary PIC location: 0x{X}", .{dx});
-                unreachable;
+                vcpu.abort();
             } else {
                 pic.primary_phase = .phase3;
             },
@@ -184,7 +187,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             pic.secondary_phase = .phase1;
         } else {
             log.err("Unsupported command to secondary PIC: command=0x{X}", .{dx});
-            unreachable;
+            vcpu.abort();
         },
         // Secondary PIC data.
         0xA1 => switch (pic.secondary_phase) {
@@ -196,7 +199,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             },
             .phase2 => if (dx != 2) {
                 log.err("Invalid PIC cascade identity: 0x{X}", .{dx});
-                unreachable;
+                vcpu.abort();
             } else {
                 pic.secondary_phase = .phase3;
             },
@@ -204,7 +207,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         },
         else => {
             log.err("Unsupported I/O-out to PIC: port=0x{X}", .{qual.port});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -263,7 +266,7 @@ pub const Pci = struct {
             0xCFC...0xCFF => {},
             else => {
                 log.err("Unsupported I/O-in to PCI: port=0x{X}", .{port});
-                unreachable;
+                vcpu.abort();
             },
         }
     }
@@ -275,7 +278,7 @@ pub const Pci = struct {
             0xCFC...0xCFF => {}, // TODO: Unimplemented.
             else => {
                 log.err("Unsupported I/O-out to PCI: port=0x{X}", .{port});
-                unreachable;
+                vcpu.abort();
             },
         }
     }

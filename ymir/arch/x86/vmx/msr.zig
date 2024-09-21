@@ -43,7 +43,7 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
         => shadowRead(vcpu, msr_kind),
         else => {
             log.err("Unhandled RDMSR: {?}", .{msr_kind});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -72,7 +72,7 @@ pub fn handleWrmsrExit(vcpu: *Vcpu) VmxError!void {
         .fs_base => try vmwrite(vmcs.Guest.fs_base, value),
         else => {
             log.err("Unhandled WRMSR: {?}", .{msr_kind});
-            unreachable;
+            vcpu.abort();
         },
     }
 }
@@ -88,7 +88,7 @@ fn shadowRead(vcpu: *Vcpu, msr_kind: am.Msr) void {
         regs.rax = @as(u32, @truncate(msr.data));
     } else {
         log.err("RDMSR: MSR is not registered: {s}", .{@tagName(msr_kind)});
-        unreachable;
+        vcpu.abort();
     }
 }
 
@@ -98,7 +98,7 @@ fn shadowWrite(vcpu: *Vcpu, msr_kind: am.Msr) void {
         vcpu.guest_msr.set(msr_kind, concat(regs.rdx, regs.rax));
     } else {
         log.err("WRMSR: MSR is not registered: {s}", .{@tagName(msr_kind)});
-        unreachable;
+        vcpu.abort();
     }
 }
 

@@ -24,11 +24,11 @@ pub fn handleLapic(vcpu: *Vcpu, offset: usize) VmxError!void {
     const inst_gva = try vmcs.vmread(vmcs.Guest.rip);
     const inst_gpa = pg.guestTranslateWalk(inst_gva, cr3, vcpu.guest_base) orelse {
         log.err("Failed to translate GVA to GPA: {X}", .{inst_gva});
-        unreachable;
+        vcpu.abort();
     };
     const inst_hpa = ept.translate(inst_gpa, vcpu.eptp.getLv4()) orelse {
         log.err("Failed to translate GPA to HPA: {X}", .{inst_gpa});
-        unreachable;
+        vcpu.abort();
     };
     const inst_hva = mem.phys2virt(inst_hpa);
     const inst: [*]u8 = @ptrFromInt(inst_hva);

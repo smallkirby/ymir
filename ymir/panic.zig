@@ -41,7 +41,7 @@ fn write(comptime fmt: []const u8, args: anytype) void {
         Writer{ .context = {} },
         fmt,
         args,
-    ) catch unreachable;
+    ) catch {};
 }
 
 fn writerFunction(_: void, bytes: []const u8) PanicError!usize {

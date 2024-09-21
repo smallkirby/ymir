@@ -44,7 +44,7 @@ pub fn init(_rsdp: *align(1) Rsdp) void {
     xsdt.header.valid("XSDT") catch |e| switch (e) {
         AcpiError.InvalidSignature => @panic("Invalid XSDT signature."),
         AcpiError.InvalidChecksum => @panic("Invalid XSDT checksum."),
-        else => unreachable,
+        else => @panic("Unknown error while checking validity of XSDT."),
     };
 
     var ix: usize = 0;

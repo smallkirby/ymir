@@ -33,7 +33,7 @@ pub fn invalidateVpid(vcpu: *Vcpu, inv_type: InvvpidType) void {
         ),
         .single_addr => {
             log.err("Invalidation of single address is not supported yet.", .{});
-            unreachable;
+            vcpu.abort();
         },
     }
 }

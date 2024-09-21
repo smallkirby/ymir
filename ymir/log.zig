@@ -63,5 +63,5 @@ fn log(
         Writer{ .context = {} },
         level_str ++ " " ++ scope_str ++ fmt ++ "\n",
         args,
-    ) catch unreachable;
+    ) catch {};
 }
