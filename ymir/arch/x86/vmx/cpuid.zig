@@ -46,51 +46,41 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
 
     switch (Leaf.from(regs.rax)) {
         .maximum_input => {
-            regs.rax = 0x20; // Maximum input value for basic CPUID.
-            regs.rbx = 0x72_69_6D_59; // Ymir
-            regs.rcx = 0x72_69_6D_59; // Ymir
-            regs.rdx = 0x72_69_6D_59; // Ymir
+            setValue(&regs.rax, 0x20); // Maximum input value for basic CPUID.
+            setValue(&regs.rbx, 0x72_69_6D_59); // Ymir
+            setValue(&regs.rcx, 0x72_69_6D_59); // Ymir
+            setValue(&regs.rdx, 0x72_69_6D_59); // Ymir
         },
         .version_info => {
             const orig = am.cpuid(1);
-            regs.rax = orig.eax; // Version information.
-            regs.rbx = orig.ebx; // Brand index / CLFLUSH line size / Addressable IDs / Initial APIC ID
-            regs.rcx = @as(u32, @bitCast(feature_info_ecx));
-            regs.rdx = @as(u32, @bitCast(feature_info_edx));
+            setValue(&regs.rax, orig.eax); // Version information.
+            setValue(&regs.rbx, orig.ebx); // Brand index / CLFLUSH line size / Addressable IDs / Initial APIC ID
+            setValue(&regs.rcx, @as(u32, @bitCast(feature_info_ecx)));
+            setValue(&regs.rdx, @as(u32, @bitCast(feature_info_edx)));
         },
         .extended_function => {
-            regs.rax = 0x8000_0000 + 1; // Maximum input value for extended function CPUID.
-            regs.rbx = 0; // Reserved.
-            regs.rcx = 0; // Reserved.
-            regs.rdx = 0; // Reserved.
+            setValue(&regs.rax, 0x8000_0000 + 1); // Maximum input value for extended function CPUID.
+            setValue(&regs.rbx, 0); // Reserved.
+            setValue(&regs.rcx, 0); // Reserved.
+            setValue(&regs.rdx, 0); // Reserved.
         },
         .extended_processor_signature => {
             const orig = am.cpuid(@intFromEnum(Leaf.extended_processor_signature));
-            regs.rax = 0; // Extended processor signature and feature bits.
-            regs.rbx = 0; // Reserved.
-            regs.rcx = orig.ecx; // LAHF in 64-bit mode / LZCNT / PREFETCHW
-            regs.rdx = orig.edx; // SYSCALL / XD / 1GB large page / RDTSCP and IA32_TSC_AUX / Intel64
+            setValue(&regs.rax, 0); // Extended processor signature and feature bits.
+            setValue(&regs.rbx, 0); // Reserved.
+            setValue(&regs.rcx, orig.ecx); // LAHF in 64-bit mode / LZCNT / PREFETCHW
+            setValue(&regs.rdx, orig.edx); // SYSCALL / XD / 1GB large page / RDTSCP and IA32_TSC_AUX / Intel64
         },
-        .thermal_power => {
-            regs.rax = 0; // Hide all features.
-            regs.rbx = 0; // Number of interrupt thresholds in digital thermal sensor.
-            regs.rcx = 0; // Hide all features.
-            regs.rdx = 0; // Hide all features.
-        },
+        .thermal_power => invalid(vcpu),
         .ext_feature => {
             switch (regs.rcx) {
                 0 => {
-                    regs.rax = 1; // Maximum input value for supported leaf 7 sub-leaves.
-                    regs.rbx = @as(u32, @bitCast(ext_feature0_ebx));
-                    regs.rcx = 0; // Unimplemented.
-                    regs.rdx = 0; // Unimplemented.
+                    setValue(&regs.rax, 1); // Maximum input value for supported leaf 7 sub-leaves.
+                    setValue(&regs.rbx, @as(u32, @bitCast(ext_feature0_ebx)));
+                    setValue(&regs.rcx, 0); // Unimplemented.
+                    setValue(&regs.rdx, 0); // Unimplemented.
                 },
-                1, 2 => {
-                    regs.rax = 0; // Unimplemented.
-                    regs.rbx = 0; // Unimplemented.
-                    regs.rcx = 0; // Unimplemented.
-                    regs.rdx = 0; // Unimplemented.
-                },
+                1, 2 => invalid(vcpu),
                 else => {
                     log.err("Unhandled CPUID: Leaf=0x{X:0>8}, Sub=0x{X:0>8}", .{ regs.rax, regs.rcx });
                     vcpu.abort();
@@ -99,12 +89,7 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
         },
         .ext_enumuration => {
             switch (regs.rcx) {
-                1 => {
-                    regs.rax = 0; // Hide all features.
-                    regs.rbx = 0; // Unimplemented.
-                    regs.rcx = 0; // Unimplemented.
-                    regs.rdx = 0; // Unimplemented.
-                },
+                1 => invalid(vcpu),
                 else => {
                     log.err("Unhandled CPUID: Leaf=0x{X:0>8}, Sub=0x{X:0>8}", .{ regs.rax, regs.rcx });
                     vcpu.abort();
@@ -118,12 +103,17 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
     }
 }
 
+/// Set a 32-bit value to the given 64-bit without modifying the upper 32-bits.
+fn setValue(reg: *u64, val: u64) void {
+    @as(*u32, @ptrCast(reg)).* = @as(u32, @truncate(val));
+}
+
 fn invalid(vcpu: *Vcpu) void {
     const gregs = &vcpu.guest_regs;
-    gregs.rax = 0;
-    gregs.rbx = 0;
-    gregs.rcx = 0;
-    gregs.rdx = 0;
+    setValue(&gregs.rax, 0);
+    setValue(&gregs.rbx, 0);
+    setValue(&gregs.rcx, 0);
+    setValue(&gregs.rdx, 0);
 }
 
 /// SDM Vol2A Chapter 3.3 Table 3-8.

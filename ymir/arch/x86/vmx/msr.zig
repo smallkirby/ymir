@@ -19,26 +19,10 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
     const msr_kind: am.Msr = @enumFromInt(rcx);
 
     switch (msr_kind) {
-        .apic_base => {
-            const val: u64 = @bitCast(vcpu.apic_base);
-            guest_regs.rdx = @as(u32, @truncate(val >> 32));
-            guest_regs.rax = @as(u32, @truncate(val));
-        },
-        .efer => {
-            const efer = try vmread(vmcs.Guest.efer);
-            guest_regs.rdx = @as(u32, @truncate(efer >> 32));
-            guest_regs.rax = @as(u32, @truncate(efer));
-        },
-        .fs_base => {
-            const fs_base = try vmread(vmcs.Guest.fs_base);
-            guest_regs.rdx = @as(u32, @truncate(fs_base >> 32));
-            guest_regs.rax = @as(u32, @truncate(fs_base));
-        },
-        .gs_base => {
-            const gs_base = try vmread(vmcs.Guest.gs_base);
-            guest_regs.rdx = @as(u32, @truncate(gs_base >> 32));
-            guest_regs.rax = @as(u32, @truncate(gs_base));
-        },
+        .apic_base => setReturnVal(vcpu, @bitCast(vcpu.apic_base)),
+        .efer => setReturnVal(vcpu, try vmread(vmcs.Guest.efer)),
+        .fs_base => setReturnVal(vcpu, try vmread(vmcs.Guest.fs_base)),
+        .gs_base => setReturnVal(vcpu, try vmread(vmcs.Guest.gs_base)),
         .kernel_gs_base,
         => shadowRead(vcpu, msr_kind),
         else => {
@@ -77,21 +61,29 @@ pub fn handleWrmsrExit(vcpu: *Vcpu) VmxError!void {
     }
 }
 
+/// Concatnate two 32-bit values into a 64-bit value.
 fn concat(r1: u64, r2: u64) u64 {
     return ((r1 & 0xFFFF_FFFF) << 32) | (r2 & 0xFFFF_FFFF);
 }
 
-fn shadowRead(vcpu: *Vcpu, msr_kind: am.Msr) void {
+/// Set the 64-bit return value to the guest registers without modifying upper 32-bits.
+fn setReturnVal(vcpu: *Vcpu, val: u64) void {
     const regs = &vcpu.guest_regs;
+    @as(*u32, @ptrCast(&regs.rdx)).* = @as(u32, @truncate(val >> 32));
+    @as(*u32, @ptrCast(&regs.rax)).* = @as(u32, @truncate(val));
+}
+
+/// Read from the shadow MSR.
+fn shadowRead(vcpu: *Vcpu, msr_kind: am.Msr) void {
     if (vcpu.guest_msr.find(msr_kind)) |msr| {
-        regs.rdx = @as(u32, @truncate(msr.data >> 32));
-        regs.rax = @as(u32, @truncate(msr.data));
+        setReturnVal(vcpu, msr.data);
     } else {
         log.err("RDMSR: MSR is not registered: {s}", .{@tagName(msr_kind)});
         vcpu.abort();
     }
 }
 
+/// Write to the shadow MSR.
 fn shadowWrite(vcpu: *Vcpu, msr_kind: am.Msr) void {
     const regs = &vcpu.guest_regs;
     if (vcpu.guest_msr.find(msr_kind)) |_| {
