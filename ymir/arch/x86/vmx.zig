@@ -277,6 +277,19 @@ pub const Vcpu = struct {
     /// Handle the VM-exit.
     fn handleExit(self: *Self, exit_info: ExitInformation) VmxError!void {
         switch (exit_info.basic_reason) {
+            .exception_nmi => {
+                const ii = try getIntrInfo();
+                switch (ii.vector) {
+                    13 => { // general protection fault
+                        log.err("General protection fault in the guest.", .{});
+                        @panic("Aborting.");
+                    },
+                    else => |vec| {
+                        log.err("Unhandled guest exception: vector={d}", .{vec});
+                        @panic("Aborting.");
+                    },
+                }
+            },
             .hlt => {
                 while (!try self.injectExtIntr()) {}
 
@@ -791,6 +804,11 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     try vmwrite(vmcs.Ctrl.cr0_mask, std.math.maxInt(u64));
     try vmwrite(vmcs.Ctrl.cr4_mask, std.math.maxInt(u64));
     try vmwrite(vmcs.Ctrl.cr3_target_count, 0);
+
+    // Exception bitmap
+    var exception_bitmap: u32 = 0;
+    exception_bitmap |= 1 << 13; // General protection fault
+    try vmwrite(vmcs.Ctrl.exception_bitmap, exception_bitmap);
 }
 
 /// Set up VM-Exit control fields.
@@ -1015,6 +1033,11 @@ fn getExitQual(T: anytype) VmxError!T {
 /// Get a interrupt information from VMCS.
 fn getIntrInfo() VmxError!InterruptInfo {
     return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ctrl.vmentry_interrupt_information_field))));
+}
+
+/// Get a IDT-vectoring information from VMCS.
+fn getIdtVecInfo() VmxError!InterruptInfo {
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.idt_vectoring_information))));
 }
 
 /// Get a interruptibility state from VMCS.
