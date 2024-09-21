@@ -278,15 +278,19 @@ pub const Vcpu = struct {
     fn handleExit(self: *Self, exit_info: ExitInformation) VmxError!void {
         switch (exit_info.basic_reason) {
             .exception_nmi => {
-                const ii = try getIntrInfo();
+                const ii = try getExitIntrInfo();
+                if (!ii.valid) {
+                    log.err("Invalid VM-exit interrupt information.", .{});
+                    self.abort();
+                }
                 switch (ii.vector) {
                     13 => { // general protection fault
                         log.err("General protection fault in the guest.", .{});
-                        @panic("Aborting.");
+                        self.abort();
                     },
                     else => |vec| {
                         log.err("Unhandled guest exception: vector={d}", .{vec});
-                        @panic("Aborting.");
+                        self.abort();
                     },
                 }
             },
@@ -1021,9 +1025,14 @@ fn getExitQual(T: anytype) VmxError!T {
     return @bitCast(@as(u64, try vmread(vmcs.Ro.exit_qual)));
 }
 
-/// Get a interrupt information from VMCS.
-fn getIntrInfo() VmxError!InterruptInfo {
+/// Get a VM-entry interrupt information from VMCS.
+fn getEntryIntrInfo() VmxError!InterruptInfo {
     return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ctrl.vmentry_interrupt_information_field))));
+}
+
+/// Get a VM-exit interrupt information from VMCS.
+fn getExitIntrInfo() VmxError!InterruptInfo {
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_interruption_information))));
 }
 
 /// Get a IDT-vectoring information from VMCS.
@@ -1500,7 +1509,7 @@ fn partialCheckGuest() VmxError!void {
     // == Checks on Guest RIP, RFLAGS, and SSP
     // cf. SDM Vol 3C 27.3.1.4.
     const rip = try vmcs.vmread(vmcs.Guest.rip);
-    const intr_info = try getIntrInfo();
+    const intr_info = try getEntryIntrInfo();
     const rflags: am.FlagsRegister = @bitCast(try vmcs.vmread(vmcs.Guest.rflags));
 
     if ((!entry_ctrl.ia32e_mode_guest or !cs_ar.long) and (rip >> 32) != 0) @panic("RIP: Upper address must be all zeros");
