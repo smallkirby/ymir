@@ -181,7 +181,8 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         // Primary PIC command.
         0x20 => switch (dx) {
             0x11 => pic.primary_phase = .phase1,
-            0x60 => {}, // TODO: ?
+            0x60 => {}, // TODO: XXX: ?
+            0x64 => {}, // TODO: XXX: ?
             else => {
                 log.err("Unsupported command to primary PIC: command=0x{X}", .{dx});
                 vcpu.abort();

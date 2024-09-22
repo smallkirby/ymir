@@ -473,8 +473,8 @@ pub const Vcpu = struct {
         if (!eflags.ief) return false;
 
         // Iterate all possible IRQs and inject one if possible.
-        var irq: u4 = 0;
-        while (irq <= 15) : (irq += 1) {
+        for (0..15) |i| {
+            const irq: u4 = @intCast(i);
             const irq_bit: u16 = @as(u16, 1) << irq;
             // The IRQ is not pending.
             if (pending & irq_bit == 0) continue;
