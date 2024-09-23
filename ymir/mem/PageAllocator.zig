@@ -185,6 +185,7 @@ pub fn allocPages(self: *PageAllocator, num_pages: usize, align_size: usize) ?[]
         }
 
         start_frame += align_frame;
+        if (start_frame + num_frames >= self.frame_end) return null;
     }
 }
 

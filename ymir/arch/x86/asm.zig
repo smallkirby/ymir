@@ -4,6 +4,8 @@ const std = @import("std");
 
 const ymir = @import("ymir");
 const mem = ymir.mem;
+const Phys = mem.Phys;
+const Virt = mem.Virt;
 const vmx = @import("vmx.zig");
 const VmxError = vmx.VmxError;
 const vmxerr = vmx.vmxtry;
@@ -519,6 +521,16 @@ pub inline fn invept(inv_type: u64, descriptor: *u8) void {
         : [inv_type] "r" (inv_type),
           [descriptor] "m" (descriptor),
         : "memory", "cc"
+    );
+}
+
+// TODO: argument is Virt?
+pub inline fn invlpg(lin_addr: Virt) void {
+    asm volatile (
+        \\invlpg (%[lin_addr])
+        :
+        : [lin_addr] "r" (lin_addr),
+        : "memory"
     );
 }
 
