@@ -14,6 +14,8 @@ pub const util = @import("util.zig");
 /// Base virtual address of direct mapping.
 /// The virtual address starting from the address is directly mapped to the physical address at 0x0.
 pub const direct_map_base = 0xFFFF_8880_0000_0000;
+/// Size in bytes of the direct mapping region.
+pub const direct_map_size = 512 * mem.gib;
 /// The base virtual address of the kernel.
 /// The virtual address strating from the address is directly mapped to the physical address at 0x0.
 pub const kernel_base = 0xFFFF_FFFF_8000_0000;

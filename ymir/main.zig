@@ -20,7 +20,7 @@ const page_size = mem.page_size;
 pub const panic = ymir.panic.panic_fn;
 pub const std_options = klog.default_log_options;
 
-/// Size in bytes pages of the kernel stack.
+/// Size in bytes pages of the kernel stack excluding the guard page.
 const kstack_size = page_size * 5;
 /// Kernel stack.
 /// The first page is used as a guard page.
@@ -65,6 +65,7 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     // Copy boot_info into Ymir's stack sice it becomes inaccessible soon.
     const guest_info = bs_boot_info.guest_info;
     const acpi_table = bs_boot_info.acpi_table;
+    const memory_map = bs_boot_info.memory_map;
 
     // Initialize GDT.
     // It switches GDT from the one prepared by surtr to the ymir GDT.
@@ -77,29 +78,21 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     log.info("Initialized IDT.", .{});
 
     // Initialize BootstrapPageAllocator.
-    BootstrapPageAllocator.init(bs_boot_info.memory_map);
+    BootstrapPageAllocator.init(memory_map);
     log.info("Initialized early stage page allocator.", .{});
 
-    // Clone page tables prepared by UEFI and surtr.
+    // Reconstruct memory mapping from the one provided by UEFI and Sutr.
     // This operation must be done before initializing allocators other than BootstrapPageAllocator,
     // that allocate pages from any usable regions.
-    log.info("Cloning UEFI page tables...", .{});
-    try arch.page.cloneUefiPageTables();
-    // Map direct map with offset region.
-    log.info("Creating direct map region...", .{});
-    try arch.page.directOffsetMap();
+    log.info("Reconstructing memory mapping...", .{});
+    try mem.reconstructMapping();
 
     // Initialize page allocator.
-    ymir.mem.initPageAllocator(bs_boot_info.memory_map);
+    ymir.mem.initPageAllocator(memory_map);
     log.info("Initialized page allocator.", .{});
 
     // Now, stack, GDT, and page tables are switched to the ymir's ones.
     // We are ready to destroy any usable regions in UEFI memory map.
-
-    // Unmap straight map region.
-    // After this operation, memory map passed by UEFI is no longer used.
-    log.info("Unmapping straight map region...", .{});
-    try arch.page.unmapStraightMap();
 
     // Initialize general allocator.
     ymir.mem.initGeneralAllocator();

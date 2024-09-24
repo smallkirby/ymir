@@ -109,7 +109,15 @@ pub const Vm = struct {
             self.guest_mem,
             allocator,
         ) catch return Error.UnknownError; // TODO
-        log.info("Guet memory is mapped to guest. host=0x{X:0>16}", .{@intFromPtr(self.guest_mem.ptr)});
+        log.info("Guet memory is mapped: HVA=0x{X:0>16} (size=0x{X})", .{ @intFromPtr(self.guest_mem.ptr), self.guest_mem.len });
+
+        // Make the pages read only.
+        for (0..self.guest_mem.len / mem.page_size_2mb) |i| {
+            arch.page.makeReadOnly2mib(@intFromPtr(self.guest_mem.ptr) + i * mem.page_size_2mb, allocator) catch {
+                @panic("Failed to make guest memory read-only.");
+            };
+        }
+        log.info("Guest memory is made read-only for Ymir.", .{});
     }
 
     /// Maps the RSDP region to the guest physical memory.

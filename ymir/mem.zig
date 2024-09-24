@@ -1,9 +1,29 @@
+//! Ymir has three memory regions.
+//! - Initial direct mapping
+//! - Direct mapping
+//! - Kernel text mapping
+//!
+//! Initial direct mapping is used until page tables provided by UEFI are reconstructed.
+//! It directly maps entire VA to PA without offset.
+//! After the UEFI page tables are cloned and new tables are created, the second direct mapping is used.
+//! The direct mapping maps entire memory with offset of `ymir.direct_map_base`.
+//! At the same time, kernel text is mapped to `ymir.kernel_base` as the ELF image requests.
+//! That means the kernel image is mapped to two VA: direct mapping and kernel text mapping.
+//! Page allocator allocates pages from the direct mapping region.
+//!
+//! While the initial direct mapping is in use, VA is equal to PA.
+//! After the initial direct mapping is discarded, VA-to-PA translation is done by simple calculation.
+//! If the VA is in the direct mapping region, the PA can be calculated by subtracting the base address.
+//! If the VA is in the kernel text mapping region, the PA can be calculated by subtracting the kernel base.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const log = std.log.scoped(.mem);
 const surtr = @import("surtr");
 const MemoryMap = surtr.MemoryMap;
 
 const ymir = @import("ymir");
+const arch = ymir.arch;
 
 pub const BootstrapPageAllocator = @import("mem/BootstrapPageAllocator.zig");
 /// Temporary page allocator.
@@ -58,6 +78,10 @@ pub const page_mask_2mb: u64 = page_size_2mb - 1;
 /// Mask for a 1G page.
 pub const page_mask_1gb: u64 = page_size_1gb - 1;
 
+/// If set to false, the initial direct mapping is in use.
+/// If set to true, the initial direct mapping is discarded and the new page tables are uesd.
+var mapping_reconstructed = false;
+
 /// Initialize the page allocator.
 /// You MUST call this function before using `page_allocator`.
 pub fn initPageAllocator(map: MemoryMap) void {
@@ -70,6 +94,30 @@ pub fn initGeneralAllocator() void {
     bin_allocator_instance.init(page_allocator);
 }
 
+/// Discard the initial direct mapping and construct Ymir's page tables.
+/// It creates two mappings: direct mapping and kernel text mapping.
+/// For the detail, refer to this module documentation.
+pub fn reconstructMapping() !void {
+    arch.disableIntr();
+    defer arch.enableIntr();
+
+    if (mapping_reconstructed) {
+        @panic("Mapping reconstruction is being called twice.");
+    }
+
+    log.debug("Cloning UEFI page tables...", .{});
+    try arch.page.cloneUefiPageTables();
+    // --- UEFI page tables are cloned. The initial direct mapping is still in use. ---
+    log.debug("Creating new page tables...", .{});
+    try arch.page.directOffsetMap();
+    // --- Direct mapping is created. Now, the initial direct mapping can be discarded. ---
+    log.debug("Unmapping initial direct mapping...", .{});
+    try arch.page.unmapStraightMap();
+    // --- The initial direct mapping is discarded. ---
+
+    mapping_reconstructed = true;
+}
+
 /// Translate the given virtual address to physical address.
 /// This function just use simple calculation and does not walk page tables.
 /// To do page table walk, use arch-specific functions.
@@ -79,7 +127,9 @@ pub fn virt2phys(addr: anytype) Phys {
         .Pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
-    return if (value < ymir.kernel_base) b: {
+    return if (!mapping_reconstructed) b: {
+        break :b value;
+    } else if (value < ymir.kernel_base) b: {
         // Direct mapping region.
         break :b value - ymir.direct_map_base;
     } else b: {
@@ -97,7 +147,11 @@ pub fn phys2virt(addr: anytype) Virt {
         .Pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
-    return value + ymir.direct_map_base;
+    return if (!mapping_reconstructed) b: {
+        break :b value;
+    } else b: {
+        break :b value + ymir.direct_map_base;
+    };
 }
 
 // ========================================
@@ -111,6 +165,8 @@ test {
 test "address translation" {
     const direct_map_base = ymir.direct_map_base;
     const kernel_base = ymir.kernel_base;
+
+    mapping_reconstructed = true;
 
     // virt -> phys
     try testing.expectEqual(0x0, virt2phys(direct_map_base));

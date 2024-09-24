@@ -80,16 +80,20 @@ pub fn newUninit() Self {
 
 /// Initialize the allocator.
 /// This function MUST be called before the direct mapping w/ offset 0x0 is unmapped.
-pub fn init(self: *PageAllocator, map: MemoryMap) void {
+pub fn init(self: *PageAllocator, map_: MemoryMap) void {
     self.lock.lockDisableIrq();
     defer self.lock.unlockEnableIrq();
 
     var avail_end: Phys = 0;
 
+    // Replace the physical address with the virtual address.
+    var map = map_;
+    map.descriptors = @ptrFromInt(ymir.mem.phys2virt(map.descriptors));
+
     // Scan memory map and mark usable regions.
     var desc_iter = MemoryDescriptorIterator.new(map);
     while (true) {
-        const desc = desc_iter.next() orelse break;
+        const desc: *uefi.tables.MemoryDescriptor = desc_iter.next() orelse break;
         if (desc.type == .ReservedMemoryType) continue;
 
         // Mark holes between regions as allocated (used).
