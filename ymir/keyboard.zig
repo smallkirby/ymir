@@ -56,8 +56,7 @@ fn ps2InterruptHandler(_: *arch.intr.Context) void {
 }
 
 fn serialInterruptHandler(_: *arch.intr.Context) void {
-    _ = instance.serial.read();
-    // Do something with the key.
+    // Do nothing for now
     arch.pic.notifyEoi(.Serial1);
 }
 

@@ -80,16 +80,18 @@ pub fn getSerial(serial: *Serial, port: Ports) void {
         .com4 => writeByteCom5,
     };
     serial._read_fn = switch (port) {
-        .com1 => readByteCom1,
-        .com2 => readByteCom2,
-        .com3 => readByteCom3,
-        .com4 => readByteCom4,
+        .com1 => tryReadByteCom1,
+        .com2 => tryReadByteCom2,
+        .com3 => tryReadByteCom3,
+        .com4 => tryReadByteCom4,
     };
 }
 
+/// Enable serial console interrupt for Rx-available and Tx-empty.
 pub fn enableInterrupt(port: Ports) void {
-    const p = @intFromEnum(port);
-    am.outb(0b0000_0001, p + UartOffset.IER); // Receive data available interrupt
+    var ie = am.inb(@intFromEnum(port) + UartOffset.IER);
+    ie |= 0b0000_0011; // Rx-available, Tx-empty
+    am.outb(ie, @intFromEnum(port) + UartOffset.IER); // Rx-available, Tx-empty
 }
 
 /// Check if the given port is holding a transmitter buffer of any ports.
@@ -135,28 +137,30 @@ fn writeByteCom5(byte: u8) void {
     writeByte(byte, .com4);
 }
 
-fn readByte(port: Ports) u8 {
-    // wait until the receiver buffer is not empty
-    while (am.inb(@intFromEnum(port) + UartOffset.LSR) & 0b0000_0001 == 0) {
-        am.relax();
+/// Read a byte from Rx buffer.
+/// If Rx buffer is empty, return null.
+fn tryReadByte(port: Ports) ?u8 {
+    // Check if Rx buffer is not empty
+    if (am.inb(@intFromEnum(port) + UartOffset.LSR) & 0b0000_0001 == 0) {
+        return null;
     }
 
     // read char from the receiver buffer
     return am.inb(@intFromEnum(port));
 }
 
-fn readByteCom1() u8 {
-    return readByte(.com1);
+fn tryReadByteCom1() ?u8 {
+    return tryReadByte(.com1);
 }
 
-fn readByteCom2() u8 {
-    return readByte(.com2);
+fn tryReadByteCom2() ?u8 {
+    return tryReadByte(.com2);
 }
 
-fn readByteCom3() u8 {
-    return readByte(.com3);
+fn tryReadByteCom3() ?u8 {
+    return tryReadByte(.com3);
 }
 
-fn readByteCom4() u8 {
-    return readByte(.com4);
+fn tryReadByteCom4() ?u8 {
+    return tryReadByte(.com4);
 }

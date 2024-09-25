@@ -10,7 +10,7 @@ var spin_lock: spin.SpinLock = spin.SpinLock{};
 /// Serial console.
 pub const Serial = struct {
     const WriteFn = *const fn (u8) void;
-    const ReadFn = *const fn () u8;
+    const ReadFn = *const fn () ?u8;
 
     /// Pointer to the arch-specific write-function.
     /// Do NOT access this field directly, use the `write` function instead.
@@ -42,7 +42,7 @@ pub const Serial = struct {
     }
 
     /// Read a character from the serial console.
-    pub fn read(self: Self) u8 {
+    pub fn tryRead(self: Self) ?u8 {
         spin_lock.lockDisableIrq();
         defer spin_lock.unlockEnableIrq();
         return self._read_fn();
