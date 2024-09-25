@@ -34,6 +34,7 @@ const feature_info_edx = cpuid.FeatureInformationEdx{
 };
 // CPUID[Leaf=7,Sub=0] return value.
 const ext_feature0_ebx = cpuid.ExtFeatureEbx0{
+    .fsgsbase = false, // NOTE: rdfsbase seemingly cannot be intercepted.
     .smep = true,
     .invpcid = true,
     .smap = true,
@@ -87,7 +88,7 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
                 },
             }
         },
-        .ext_enumuration => {
+        .ext_enumeration => {
             switch (regs.rcx) {
                 1 => invalid(vcpu),
                 else => {
@@ -129,7 +130,7 @@ const Leaf = enum(u32) {
     ext_feature = 0x7,
     /// Processor extended state enumeration.
     /// Output depends on the ECX input value.
-    ext_enumuration = 0xD,
+    ext_enumeration = 0xD,
     /// Maximum input value for extended function CPUID information.
     extended_function = 0x80000000,
     /// EAX: Extended processor signature and feature bits.

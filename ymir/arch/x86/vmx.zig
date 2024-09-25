@@ -91,7 +91,7 @@ pub const Vcpu = struct {
     /// Pending IRQ.
     pending_irq: u16 = 0,
 
-    const GuestRegisters = packed struct {
+    const GuestRegisters = extern struct {
         rax: u64,
         rcx: u64,
         rdx: u64,
@@ -107,6 +107,15 @@ pub const Vcpu = struct {
         r13: u64,
         r14: u64,
         r15: u64,
+        // Align to 16 bytes, otherwise movaps would cause #GP.
+        xmm0: u128 align(16),
+        xmm1: u128 align(16),
+        xmm2: u128 align(16),
+        xmm3: u128 align(16),
+        xmm4: u128 align(16),
+        xmm5: u128 align(16),
+        xmm6: u128 align(16),
+        xmm7: u128 align(16),
     };
 
     /// Create a new virtual CPU.
@@ -342,11 +351,6 @@ pub const Vcpu = struct {
                 try msr.handleWrmsrExit(self);
                 try self.stepNextInst();
             },
-            .xsetbv => {
-                // Ignore xsetbv
-                log.warn("Ignored guest XSETBV.", .{});
-                try self.stepNextInst();
-            },
             .apic => {
                 const offset = try vmread(vmcs.Ro.exit_qual);
                 try lapic.handleLapic(self, offset);
@@ -563,6 +567,14 @@ pub const Vcpu = struct {
                 \\mov {[r13]}(%%rax), %%r13
                 \\mov {[r14]}(%%rax), %%r14
                 \\mov {[r15]}(%%rax), %%r15
+                \\movaps {[xmm0]}(%%rax), %%xmm0
+                \\movaps {[xmm1]}(%%rax), %%xmm1
+                \\movaps {[xmm2]}(%%rax), %%xmm2
+                \\movaps {[xmm3]}(%%rax), %%xmm3
+                \\movaps {[xmm4]}(%%rax), %%xmm4
+                \\movaps {[xmm5]}(%%rax), %%xmm5
+                \\movaps {[xmm6]}(%%rax), %%xmm6
+                \\movaps {[xmm7]}(%%rax), %%xmm7
                 \\mov {[rax]}(%%rax), %%rax
             , .{
                 .rax = @offsetOf(GuestRegisters, "rax"),
@@ -580,6 +592,14 @@ pub const Vcpu = struct {
                 .r13 = @offsetOf(GuestRegisters, "r13"),
                 .r14 = @offsetOf(GuestRegisters, "r14"),
                 .r15 = @offsetOf(GuestRegisters, "r15"),
+                .xmm0 = @offsetOf(GuestRegisters, "xmm0"),
+                .xmm1 = @offsetOf(GuestRegisters, "xmm1"),
+                .xmm2 = @offsetOf(GuestRegisters, "xmm2"),
+                .xmm3 = @offsetOf(GuestRegisters, "xmm3"),
+                .xmm4 = @offsetOf(GuestRegisters, "xmm4"),
+                .xmm5 = @offsetOf(GuestRegisters, "xmm5"),
+                .xmm6 = @offsetOf(GuestRegisters, "xmm6"),
+                .xmm7 = @offsetOf(GuestRegisters, "xmm7"),
             }));
 
         // VMLAUNCH or VMRESUME.
@@ -626,6 +646,7 @@ pub const Vcpu = struct {
         );
 
         // Save guest registers.
+        // TODO: should save/restore host AVX registers?
         asm volatile (std.fmt.comptimePrint(
                 \\
                 // Save pushed RAX.
@@ -647,6 +668,14 @@ pub const Vcpu = struct {
                 \\mov %%r13, {[r13]}(%%rax)
                 \\mov %%r14, {[r14]}(%%rax)
                 \\mov %%r15, {[r15]}(%%rax)
+                \\movaps %%xmm0, {[xmm0]}(%%rax)
+                \\movaps %%xmm1, {[xmm1]}(%%rax)
+                \\movaps %%xmm2, {[xmm2]}(%%rax)
+                \\movaps %%xmm3, {[xmm3]}(%%rax)
+                \\movaps %%xmm4, {[xmm4]}(%%rax)
+                \\movaps %%xmm5, {[xmm5]}(%%rax)
+                \\movaps %%xmm6, {[xmm6]}(%%rax)
+                \\movaps %%xmm7, {[xmm7]}(%%rax)
             ,
                 .{
                     .rax = @offsetOf(GuestRegisters, "rax"),
@@ -664,6 +693,14 @@ pub const Vcpu = struct {
                     .r13 = @offsetOf(GuestRegisters, "r13"),
                     .r14 = @offsetOf(GuestRegisters, "r14"),
                     .r15 = @offsetOf(GuestRegisters, "r15"),
+                    .xmm0 = @offsetOf(GuestRegisters, "xmm0"),
+                    .xmm1 = @offsetOf(GuestRegisters, "xmm1"),
+                    .xmm2 = @offsetOf(GuestRegisters, "xmm2"),
+                    .xmm3 = @offsetOf(GuestRegisters, "xmm3"),
+                    .xmm4 = @offsetOf(GuestRegisters, "xmm4"),
+                    .xmm5 = @offsetOf(GuestRegisters, "xmm5"),
+                    .xmm6 = @offsetOf(GuestRegisters, "xmm6"),
+                    .xmm7 = @offsetOf(GuestRegisters, "xmm7"),
                 },
             ));
 
