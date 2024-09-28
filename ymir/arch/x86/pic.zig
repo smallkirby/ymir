@@ -102,11 +102,15 @@ pub fn unsetMask(irq: IrqLine) void {
 }
 
 /// Notify the end of interrupt (EOI) to the PIC.
+/// This function uses specific-EOI.
+/// TODO: Must send an EOI to the primary PIC when the EOI is sent to the secondary PIC?
 pub fn notifyEoi(irq: IrqLine) void {
-    if (@intFromEnum(irq) >= 8) {
-        am.outb(eoi, secondary_command_port);
+    const irq_num: u8 = @intFromEnum(irq);
+    if (irq_num < 8) {
+        am.outb(0x60 + irq_num, primary_command_port);
+    } else {
+        am.outb(0x60 + irq_num - 8, secondary_command_port);
     }
-    am.outb(eoi, primary_command_port);
 }
 
 /// Read a scan code from the PS/2 keyboard.

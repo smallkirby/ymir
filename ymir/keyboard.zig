@@ -4,7 +4,7 @@ const std = @import("std");
 const log = std.log.scoped(.kbd);
 
 const ymir = @import("ymir");
-const idefs = @import("interrupts.zig");
+const idefs = ymir.intr;
 const arch = ymir.arch;
 const Serial = ymir.serial.Serial;
 

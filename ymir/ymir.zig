@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 pub const is_debug = builtin.mode == .Debug;
 
+pub const intr = @import("interrupts.zig");
 pub const serial = @import("serial.zig");
 pub const arch = @import("arch.zig");
 pub const klog = @import("log.zig");

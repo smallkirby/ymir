@@ -13,6 +13,7 @@ const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
 const gdt = @import("gdt.zig");
 const serial = @import("serial.zig");
+const intr = @import("interrupt.zig");
 const vmcs = @import("vmx/vmcs.zig");
 const regs = @import("vmx/regs.zig");
 const qual = @import("vmx/qual.zig");
@@ -41,6 +42,8 @@ pub const VmxError = error{
     VmxStatusAvailable,
     /// Failed to allocate memory.
     OutOfMemory,
+    /// Failed to subscribe to interrupts.
+    InterruptFull,
 };
 
 /// Read RFLAGS and checks if a VMX instruction has failed.
@@ -90,6 +93,8 @@ pub const Vcpu = struct {
     tsc_on_exit: u64 = 0,
     /// Pending IRQ.
     pending_irq: u16 = 0,
+    /// I/O bitmap.
+    io_bitmap: IoBitmap = undefined,
 
     const GuestRegisters = extern struct {
         rax: u64,
@@ -163,6 +168,9 @@ pub const Vcpu = struct {
         const vmcs_region = try VmcsRegion.new(page_allocator);
         vmcs_region.vmcs_revision_id = getVmcsRevisionId();
         self.vmcs_region = vmcs_region;
+
+        // Subscribe to interrupts.
+        intr.subscribe(self, intrSubscriptorCallback) catch return VmxError.InterruptFull;
     }
 
     /// Exit VMX operation.
@@ -177,7 +185,7 @@ pub const Vcpu = struct {
 
         // Initialize VMCS fields.
         try registerMsrs(self, allocator);
-        try setupExecCtrls(self);
+        try setupExecCtrls(self, allocator);
         try setupExitCtrls(self);
         try setupEntryCtrls(self);
         try setupHostState(self);
@@ -308,8 +316,13 @@ pub const Vcpu = struct {
                 }
             },
             .hlt => {
+                // Wait until the external interrupt is generated.
                 while (!try self.injectExtIntr()) {
-                    am.relax();
+                    asm volatile (
+                        \\sti
+                        \\hlt
+                        \\cli
+                    );
                 }
 
                 try vmwrite(vmcs.Guest.activity_state, 0);
@@ -362,14 +375,15 @@ pub const Vcpu = struct {
                 try self.stepNextInst();
             },
             .extintr => {
-                // Give the external interrupt to guest.
-                _ = try self.injectExtIntr();
-                // Consume the interrupt by myself.
+                // Consume the interrupt by Ymir.
+                // At the same time, interrupt subscriber sets the pending IRQ.
                 asm volatile (
                     \\sti
                     \\nop
                     \\cli
                 );
+                // Give the external interrupt to guest.
+                _ = try self.injectExtIntr();
             },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
@@ -459,12 +473,10 @@ pub const Vcpu = struct {
 
     /// Inject external interrupt to the guest if possible.
     /// Returns true if the interrupt is injected, otherwise false.
-    /// This function saves the current IRR in the PIC,
-    /// so Ymir can consume it and send EOI after this function.
+    /// It's the totally Ymir's responsibility to send an EOI to the PIC.
     fn injectExtIntr(self: *Self) VmxError!bool {
         // Save current IRR in case the guest blocks interrupts and Ymir consumes them.
         const pic = @import("pic.zig");
-        self.pending_irq |= pic.getIrr();
         const pending = self.pending_irq;
 
         // No interrupts to inject.
@@ -498,7 +510,7 @@ pub const Vcpu = struct {
 
             // Inject the interrupt.
             const intr_info = InterruptInfo{
-                .vector = self.pic.primary_base + irq,
+                .vector = irq + if (irq < 8) self.pic.primary_base else self.pic.secondary_base,
                 .type = .external,
                 .ec_valid = false,
                 .nmi_unblocking = false,
@@ -507,11 +519,24 @@ pub const Vcpu = struct {
             try vmwrite(vmcs.Ctrl.vmentry_interrupt_information_field, intr_info);
 
             // Clear the pending IRQ.
-            self.pending_irq &= ~(@as(u16, 1) << @as(u4, @truncate(irq)));
+            self.pending_irq &= ~irq_bit;
             return true;
         }
 
         return false;
+    }
+
+    /// Callback function for interrupts.
+    /// This function is to "share" IRQs between Ymir and the guest.
+    /// This function is called before Ymir's interrupt handler and mark the incoming IRQ as pending.
+    /// After that, Ymir's interrupt handler consumes the IRQ and send EOI to the PIC.
+    fn intrSubscriptorCallback(self_: *anyopaque, ctx: *@import("isr.zig").Context) void {
+        const self: *Self = @alignCast(@ptrCast(self_));
+        const vector = ctx.vector;
+
+        if (ymir.intr.user_intr_base <= vector and vector < ymir.intr.user_intr_base + 16) {
+            self.pending_irq |= @as(u16, 1) << @as(u4, @intCast(vector - ymir.intr.user_intr_base));
+        }
     }
 
     /// VMLAUNCH or VMRESUME.
@@ -820,7 +845,7 @@ fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
 
 /// Set up VM-Execution control fields.
 /// cf. SDM Vol.3C 27.2.1.1, Appendix A.3.
-fn setupExecCtrls(_: *Vcpu) VmxError!void {
+fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // Pin-based VM-Execution control.
@@ -834,8 +859,8 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
     // Primary Processor-based VM-Execution control.
     var ppb_exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
     ppb_exec_ctrl.activate_secondary_controls = true;
-    // TODO: should use I/O bitmap instead of unconditional I/O exit.
     ppb_exec_ctrl.unconditional_io = true;
+    ppb_exec_ctrl.use_io_bitmap = true;
     ppb_exec_ctrl.hlt = true;
     ppb_exec_ctrl.use_tpr_shadow = true;
     ppb_exec_ctrl.tsc_offsetting = true;
@@ -846,6 +871,12 @@ fn setupExecCtrls(_: *Vcpu) VmxError!void {
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
     ).load();
+
+    // Init I/O bitmap
+    vcpu.io_bitmap = try IoBitmap.new(allocator);
+    for (0x60..0x64 + 1) |port| { // pass-through PS/2
+        vcpu.io_bitmap.set(@intCast(port), false);
+    }
 
     // Secondary Processor-based VM-Execution control.
     var ppb_exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();
@@ -1397,6 +1428,41 @@ pub const InterruptibilityState = packed struct(u32) {
     enclave: bool,
     /// Reserved.
     _reserved: u27 = 0,
+};
+
+/// I/O bitmap.
+const IoBitmap = struct {
+    /// The first one maps 0x0000 to 0x7FFF. The second one maps 0x8000 to 0xFFFF.
+    map_a: []u8,
+    map_b: []u8,
+
+    /// Initialize I/O bitmap.
+    /// All bits are set to true, meaning that all I/O accesses causes a VM-exit.
+    pub fn new(allocator: Allocator) VmxError!IoBitmap {
+        const map_a = allocator.alignedAlloc(u8, mem.page_size_4k, mem.page_size_4k) catch return error.OutOfMemory;
+        const map_b = allocator.alignedAlloc(u8, mem.page_size_4k, mem.page_size_4k) catch return error.OutOfMemory;
+        @memset(map_a, 0xFF);
+        @memset(map_b, 0xFF);
+
+        try vmwrite(vmcs.Ctrl.io_bitmap_a, mem.virt2phys(map_a.ptr));
+        try vmwrite(vmcs.Ctrl.io_bitmap_b, mem.virt2phys(map_b.ptr));
+
+        return IoBitmap{
+            .map_a = map_a,
+            .map_b = map_b,
+        };
+    }
+
+    pub fn set(self: *IoBitmap, port: u32, exit: bool) void {
+        const idx = if (port < 0x8000) port / 8 else (port - 0x8000) / 8;
+        const bit: u3 = @intCast(port % 8);
+        const map = if (port < 0x8000) self.map_a else self.map_b;
+        if (exit) {
+            map[idx] |= @as(u8, 1) << bit;
+        } else {
+            map[idx] &= ~(@as(u8, 1) << bit);
+        }
+    }
 };
 
 // =====================================================

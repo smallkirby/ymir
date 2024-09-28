@@ -160,6 +160,14 @@ fn handlePicIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
                 vcpu.abort();
             },
         },
+        // Secondary PIC data.
+        0xA1 => switch (pic.secondary_phase) {
+            .uninitialized, .inited => regs.rax = pic.secondary_mask,
+            else => {
+                log.err("Unsupported I/O-in to secondary PIC: phase={s}", .{@tagName(pic.secondary_phase)});
+                vcpu.abort();
+            },
+        },
         else => {
             log.err("Unsupported I/O-in to PIC: port=0x{X}", .{qual.port});
             vcpu.abort();
@@ -181,8 +189,9 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         // Primary PIC command.
         0x20 => switch (dx) {
             0x11 => pic.primary_phase = .phase1,
-            0x60 => {}, // TODO: XXX: ?
-            0x64 => {}, // TODO: XXX: ?
+            // Specific-EOI.
+            // It's Ymir's responsibility to send EOI, so guests are not allowed to send EOI.
+            0x60...0x67 => {},
             else => {
                 log.err("Unsupported command to primary PIC: command=0x{X}", .{dx});
                 vcpu.abort();
@@ -205,11 +214,15 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             .phase3 => pic.primary_phase = .inited,
         },
         // Secondary PIC command.
-        0xA0 => if (dx == 0x11) {
-            pic.secondary_phase = .phase1;
-        } else {
-            log.err("Unsupported command to secondary PIC: command=0x{X}", .{dx});
-            vcpu.abort();
+        0xA0 => switch (dx) {
+            0x11 => pic.secondary_phase = .phase1,
+            // Specific-EOI.
+            // It's Ymir's responsibility to send EOI, so guests are not allowed to send EOI.
+            0x60...0x67 => {},
+            else => {
+                log.err("Unsupported command to secondary PIC: command=0x{X}", .{dx});
+                vcpu.abort();
+            },
         },
         // Secondary PIC data.
         0xA1 => switch (pic.secondary_phase) {

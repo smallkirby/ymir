@@ -46,8 +46,23 @@ const page = @import("page.zig");
 /// Context for interrupt handlers.
 pub const Context = isr.Context;
 
+/// Subscriber to interrupts.
+pub const Subscriber = struct {
+    /// Context of the subscriber.
+    self: *anyopaque,
+    /// Context of the interrupt.
+    callback: Callback,
+
+    pub const Callback = *const fn (*anyopaque, *Context) void;
+};
+
 /// Interrupt handler function signature.
 pub const Handler = *const fn (*Context) void;
+
+/// Maximum number of subscribers.
+const max_subscribers = 10;
+/// Subscribers to interrupts.
+var subscribers: [max_subscribers]?Subscriber = [_]?Subscriber{null} ** max_subscribers;
 
 /// Interrupt handlers.
 var handlers: [256]Handler = [_]Handler{unhandledHandler} ** 256;
@@ -80,10 +95,30 @@ pub fn registerHandler(comptime vector: u8, handler: Handler) void {
     );
 }
 
+/// Subscribe to interrupts.
+/// Subscribers are called when an interrupt is triggered before the interrupt handler.
+pub fn subscribe(ctx: *anyopaque, callback: Subscriber.Callback) !void {
+    for (subscribers, 0..) |sub, i| {
+        if (sub == null) {
+            subscribers[i] = Subscriber{
+                .callback = callback,
+                .self = ctx,
+            };
+            return;
+        }
+    }
+    return error.SubscriberFull;
+}
+
 /// Called from the ISR stub.
 /// Dispatches the interrupt to the appropriate handler.
 pub fn dispatch(context: *Context) void {
     const vector = context.vector;
+    // Notify subscribers.
+    for (subscribers) |subscriber| {
+        if (subscriber) |s| s.callback(s.self, context);
+    }
+    // Call the handler.
     handlers[vector](context);
 }
 

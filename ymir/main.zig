@@ -7,7 +7,7 @@ const surtr = @import("surtr");
 
 const ymir = @import("ymir");
 const kbd = @import("keyboard.zig");
-const idefs = @import("interrupts.zig");
+const idefs = ymir.intr;
 const serial = ymir.serial;
 const klog = ymir.klog;
 const arch = ymir.arch;
