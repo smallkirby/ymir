@@ -135,6 +135,19 @@ pub fn getIsr() u16 {
     return (val2 << 8) | val1;
 }
 
+/// Get IRQ mask from the PIC.
+pub inline fn getIrqMask() u16 {
+    const val1: u16 = am.inb(primary_data_port);
+    const val2: u16 = am.inb(secondary_data_port);
+    return (val2 << 8) | val1;
+}
+
+/// Set IRQ mask to the PIC.
+pub inline fn setIrqMask(mask: u16) void {
+    am.outb(@truncate(mask), primary_data_port);
+    am.outb(@truncate(mask >> 8), secondary_data_port);
+}
+
 /// Line numbers for the PIC.
 pub const IrqLine = enum(u8) {
     /// Timer

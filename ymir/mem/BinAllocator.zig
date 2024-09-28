@@ -60,8 +60,8 @@ fn binIndex(size: usize) ?usize {
 }
 
 fn allocFromBin(self: *Self, bin_index: usize) ?[*]u8 {
-    self.lock.lockDisableIrq();
-    defer self.lock.unlockEnableIrq();
+    const mask = self.lock.lockSaveIrq();
+    defer self.lock.unlockRestoreIrq(mask);
 
     if (self.list_heads[bin_index] == null) {
         initBinPage(self, bin_index) orelse return null;
@@ -70,8 +70,8 @@ fn allocFromBin(self: *Self, bin_index: usize) ?[*]u8 {
 }
 
 fn freeToBin(self: *Self, bin_index: usize, ptr: [*]u8) void {
-    self.lock.lockDisableIrq();
-    defer self.lock.unlockEnableIrq();
+    const mask = self.lock.lockSaveIrq();
+    defer self.lock.unlockRestoreIrq(mask);
 
     const chunk: *ChunkMetaNode = @alignCast(@ptrCast(ptr));
     push(&self.list_heads[bin_index], chunk);

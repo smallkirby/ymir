@@ -63,8 +63,8 @@ pub fn init(memory_map: MemoryMap) void {
 pub fn allocatePage() Error![*]align(page_size) u8 {
     if (!initialized) @panic("BootstrapPageAllocator is not initialized");
 
-    lock.lockDisableIrq();
-    defer lock.unlockEnableIrq();
+    const mask = lock.lockSaveIrq();
+    defer lock.unlockRestoreIrq(mask);
 
     var desc_iter = MemoryDescriptorIterator.new(map);
     while (true) {

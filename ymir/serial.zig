@@ -23,8 +23,8 @@ pub const Serial = struct {
 
     /// Write a single byte to the serial console.
     pub fn write(self: Self, c: u8) void {
-        spin_lock.lockDisableIrq();
-        defer spin_lock.unlockEnableIrq();
+        const mask = spin_lock.lockSaveIrq();
+        defer spin_lock.unlockRestoreIrq(mask);
         self._write_fn(c);
     }
 
@@ -34,8 +34,8 @@ pub const Serial = struct {
 
     /// Write a string to the serial console.
     pub fn write_string(self: Self, s: []const u8) void {
-        spin_lock.lockDisableIrq();
-        defer spin_lock.unlockEnableIrq();
+        const mask = spin_lock.lockSaveIrq();
+        defer spin_lock.unlockRestoreIrq(mask);
         for (s) |c| {
             self.write_unlocked(c);
         }
@@ -43,8 +43,8 @@ pub const Serial = struct {
 
     /// Read a character from the serial console.
     pub fn tryRead(self: Self) ?u8 {
-        spin_lock.lockDisableIrq();
-        defer spin_lock.unlockEnableIrq();
+        const mask = spin_lock.lockSaveIrq();
+        defer spin_lock.unlockRestoreIrq(mask);
         return self._read_fn();
     }
 };

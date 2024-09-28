@@ -81,8 +81,8 @@ pub fn newUninit() Self {
 /// Initialize the allocator.
 /// This function MUST be called before the direct mapping w/ offset 0x0 is unmapped.
 pub fn init(self: *PageAllocator, map_: MemoryMap) void {
-    self.lock.lockDisableIrq();
-    defer self.lock.unlockEnableIrq();
+    const mask = self.lock.lockSaveIrq();
+    defer self.lock.unlockRestoreIrq(mask);
 
     var avail_end: Phys = 0;
 
@@ -164,8 +164,8 @@ fn set(self: *Self, frame: FrameId, status: Status) void {
 
 /// Allocate physically contiguous and aligned pages.
 pub fn allocPages(self: *PageAllocator, num_pages: usize, align_size: usize) ?[]u8 {
-    self.lock.lockDisableIrq();
-    defer self.lock.unlockEnableIrq();
+    const mask = self.lock.lockSaveIrq();
+    defer self.lock.unlockRestoreIrq(mask);
 
     if (align_size % page_size != 0) {
         log.err("Invalid alignment size: {}", .{align_size});
@@ -199,8 +199,8 @@ fn allocate(ctx: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
     //  and Zig does not assumes an align larger than a page size is not requested for Allocator interface.
 
     const self: *PageAllocator = @alignCast(@ptrCast(ctx));
-    self.lock.lockDisableIrq();
-    defer self.lock.unlockEnableIrq();
+    const mask = self.lock.lockSaveIrq();
+    defer self.lock.unlockRestoreIrq(mask);
 
     const num_frames = (n + page_size - 1) / page_size;
     var start_frame = self.frame_begin;
@@ -225,8 +225,8 @@ fn free(ctx: *anyopaque, slice: []u8, _: u8, _: usize) void {
     //  See the comment in `allocate` function.
 
     const self: *PageAllocator = @alignCast(@ptrCast(ctx));
-    self.lock.lockDisableIrq();
-    defer self.lock.unlockEnableIrq();
+    const mask = self.lock.lockSaveIrq();
+    defer self.lock.unlockRestoreIrq(mask);
 
     const num_frames = (slice.len + page_size - 1) / page_size;
     const start_frame_vaddr: Virt = @intFromPtr(slice.ptr) & ~page_mask;
