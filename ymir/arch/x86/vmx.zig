@@ -510,7 +510,7 @@ pub const Vcpu = struct {
 
             // Inject the interrupt.
             const intr_info = InterruptInfo{
-                .vector = irq + if (irq < 8) self.pic.primary_base else self.pic.secondary_base,
+                .vector = irq + if (irq < 8) self.pic.primary_base else (self.pic.secondary_base - 8),
                 .type = .external,
                 .ec_valid = false,
                 .nmi_unblocking = false,
