@@ -874,9 +874,6 @@ fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
 
     // Init I/O bitmap
     vcpu.io_bitmap = try IoBitmap.new(allocator);
-    for (0x60..0x64 + 1) |port| { // pass-through PS/2
-        vcpu.io_bitmap.set(@intCast(port), false);
-    }
 
     // Secondary Processor-based VM-Execution control.
     var ppb_exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();

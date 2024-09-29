@@ -21,7 +21,7 @@ fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     switch (qual.port) {
         0x0020, 0x0021 => try handlePicIn(vcpu, qual),
         0x0040...0x0047 => try handlePitIn(vcpu, qual),
-        0x0060...0x0064 => regs.rax = 0, // Keyboard. Unimplemented.
+        0x0060...0x64 => regs.rax = 0, // PS/2. Unimplemented.
         0x0070, 0x0071 => regs.rax = 0, // RTC. Unimplemented.
         0x0080...0x008F => {}, // DMA. Unimplemented.
         0x00A0, 0x00A1 => try handlePicIn(vcpu, qual),
@@ -45,7 +45,7 @@ fn handleIoOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     switch (qual.port) {
         0x0020, 0x0021 => try handlePicOut(vcpu, qual),
         0x0040...0x0047 => try handlePitOut(vcpu, qual),
-        0x0060...0x0064 => {}, // Keyboard. Unimplemented.
+        0x0060...0x64 => {}, // PS/2. Unimplemented.
         0x0070, 0x0071 => {}, // RTC. Unimplemented.
         0x0080...0x008F => {}, // DMA. Unimplemented.
         0x00A0, 0x00A1 => try handlePicOut(vcpu, qual),
@@ -71,17 +71,17 @@ fn handleSerialIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     const regs = &vcpu.guest_regs;
     switch (qual.port) {
         // Receive buffer.
-        0x3F8 => regs.rax = 0, // not implemented
+        0x3F8 => regs.rax = am.inb(qual.port), // pass-through
         // Interrupt Enable Register (DLAB=1) / Divisor Latch High Register (DLAB=0).
         0x3F9 => regs.rax = vcpu.serial.ier,
         // Interrupt Identification Register.
-        0x3FA => regs.rax = 0x00,
+        0x3FA => regs.rax = am.inb(qual.port), // pass-through
         // Line Control Register (MSB is DLAB).
         0x3FB => regs.rax = 0x00, // ignore
         // Modem Control Register.
         0x3FC => regs.rax = vcpu.serial.mcr,
         // Line Status Register.
-        0x3FD => regs.rax = 0b0110_0000, // THRE / TEMT. Always DR clear.
+        0x3FD => regs.rax = am.inb(qual.port), // pass-through
         // Modem Status Register.
         0x3FE => regs.rax = vcpu.serial.msr,
         // Scratch Register.

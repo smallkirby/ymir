@@ -103,16 +103,17 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     log.info("Initialized PIC.", .{});
 
     // Enable PIT.
-    arch.intr.registerHandler(idefs.pic_timer, blobTimerHandler);
+    arch.intr.registerHandler(idefs.pic_timer, blobIrqHandler);
     arch.pic.unsetMask(.Timer);
     log.info("Enabled PIT.", .{});
 
     // Find RSDP.
     arch.initAcpi(acpi_table);
 
-    // Init keyboard.
-    kbd.init(.{ .serial = sr }); // TODO: make this configurable
-    log.info("Initialized keyboard.", .{});
+    // Unmask serial interrupt.
+    arch.intr.registerHandler(idefs.pic_serial1, blobIrqHandler);
+    arch.pic.unsetMask(.Serial1);
+    arch.serial.enableInterrupt(.com1);
 
     // Check if VMX is supported.
     arch.enableCpuid();
@@ -169,7 +170,7 @@ fn validateBootInfo(boot_info: surtr.BootInfo) !void {
     }
 }
 
-// TODO: temporary
-fn blobTimerHandler(_: *arch.intr.Context) void {
-    arch.pic.notifyEoi(.Timer);
+fn blobIrqHandler(ctx: *arch.intr.Context) void {
+    const vector: u16 = @intCast(ctx.vector - idefs.user_intr_base);
+    arch.pic.notifyEoi(@enumFromInt(vector));
 }
