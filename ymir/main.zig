@@ -62,10 +62,8 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
         return error.InvalidBootInfo;
     };
 
-    // Copy boot_info into Ymir's stack sice it becomes inaccessible soon.
+    // Copy boot_info into Ymir's stack since it becomes inaccessible soon.
     const guest_info = bs_boot_info.guest_info;
-    const acpi_table = bs_boot_info.acpi_table;
-    _ = acpi_table; // autofix
     const memory_map = bs_boot_info.memory_map;
 
     // Initialize GDT.

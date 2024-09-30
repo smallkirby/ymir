@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const am = @import("asm.zig");
 
 /// Maximum number of GDT entries.
@@ -5,7 +7,7 @@ const max_num_gdt = 0x10;
 
 /// Global Descriptor Table.
 var gdt: [max_num_gdt]SegmentDescriptor align(16) = [_]SegmentDescriptor{
-    SegmentDescriptor.new_null(),
+    SegmentDescriptor.newNull(),
 } ** max_num_gdt;
 /// GDT Register.
 var gdtr = GdtRegister{
@@ -31,26 +33,30 @@ pub fn init() void {
     // Init GDT.
     gdtr.base = &gdt;
 
-    gdt[null_desc_index] = SegmentDescriptor.new_null();
+    gdt[null_desc_index] = SegmentDescriptor.newNull();
     gdt[kernel_cs_index] = SegmentDescriptor.new(
-        .CodeER,
+        true,
+        false,
+        true,
         0,
-        0xfffff,
+        std.math.maxInt(u20),
         0,
-        .KByte,
+        .kbyte,
     );
     gdt[kernel_ds_index] = SegmentDescriptor.new(
-        .DataRW,
+        true,
+        false,
+        false,
         0,
-        0xfffff,
+        std.math.maxInt(u20),
         0,
-        .KByte,
+        .kbyte,
     );
     gdt[kernel_tss_index] = SegmentDescriptor.newTss(
         0,
         0,
         0,
-        .KByte,
+        .kbyte,
     );
 
     am.lgdt(@intFromPtr(&gdtr));
@@ -64,7 +70,7 @@ pub fn init() void {
 }
 
 /// Load the kernel data segment selector.
-/// This function leads to flush the changes of DS in the GDT.
+/// This function flushes the changes of DS in the GDT.
 fn loadKernelDs() void {
     asm volatile (
         \\mov %[kernel_ds], %di
@@ -82,8 +88,8 @@ fn loadKernelDs() void {
 }
 
 /// Load the kernel code segment selector.
-/// This function leads to flush the changes of CS in the GDT.
-/// CS cannot be loaded directly by mov, so we use far return.
+/// This function flushes the changes of CS in the GDT.
+/// CS cannot be loaded directly by mov, so we use far-return.
 fn loadKernelCs() void {
     asm volatile (
         \\
@@ -123,15 +129,28 @@ fn loadKernelTss() void {
 pub const SegmentDescriptor = packed struct(u64) {
     limit_low: u16,
     base_low: u24,
-    /// Segment type that specifies the kinds of access to the segment.
-    /// The interpretation of this field depends on the descriptor type (CS/DS, system).
-    segment_type: SegmentType,
+
+    /// Segment is accessed.
+    /// You should set to true in case the descriptor is stored in the read-only pages.
+    accessed: bool = true,
+    /// Readable / Writable.
+    /// For code segment, true means the segment is readable (write access is not allowed for CS).
+    /// For data segment, true means the segment is writable (read access is always allowed for DS).
+    rw: bool,
+    /// Direction / Conforming.
+    /// For code selectors, conforming bit. If set to 1, code in the segment can be executed from an equal or lower privilege level.
+    /// For data selectors, direction bit. If set to 0, the segment grows up; if set to 1, the segment grows down.
+    dc: bool,
+    /// Executable.
+    /// If set to true, code segment. If set to false, data segment.
+    executable: bool,
     /// Descriptor type.
     desc_type: DescriptorType,
-    /// DPL.
+    /// Descriptor Privilege Level.
     dpl: u2,
     /// Segment present.
     present: bool = true,
+
     limit_high: u4,
     /// Available for use by system software.
     avl: u1 = 0,
@@ -139,6 +158,7 @@ pub const SegmentDescriptor = packed struct(u64) {
     /// If set to true, the code segment contains native 64-bit code.
     /// For data segments, this bit must be cleared to 0.
     long: bool,
+    /// Size flag.
     db: u1,
     /// Granularity.
     /// If set to .Byte, the segment limit is interpreted in byte units.
@@ -148,30 +168,33 @@ pub const SegmentDescriptor = packed struct(u64) {
     base_high: u8,
 
     /// Create a null segment selector.
-    pub fn new_null() SegmentDescriptor {
+    pub fn newNull() SegmentDescriptor {
         return @bitCast(@as(u64, 0));
     }
 
     /// Create a new segment descriptor.
     pub fn new(
-        segment_type: SegmentType,
+        rw: bool,
+        dc: bool,
+        executable: bool,
         base: u32,
         limit: u20,
         dpl: u2,
         granularity: Granularity,
     ) SegmentDescriptor {
-        const long = if (@intFromEnum(segment_type) >= 0b1000) true else false;
         return SegmentDescriptor{
             .limit_low = @truncate(limit),
             .base_low = @truncate(base),
-            .segment_type = segment_type,
-            .desc_type = .CodeOrData,
+            .rw = rw,
+            .dc = dc,
+            .executable = executable,
+            .desc_type = .code_data,
             .dpl = dpl,
             .present = true,
             .limit_high = @truncate(limit >> 16),
             .avl = 0,
-            .long = long,
-            .db = @intFromBool(!long),
+            .long = executable,
+            .db = @intFromBool(!executable),
             .granularity = granularity,
             .base_high = @truncate(base >> 24),
         };
@@ -184,12 +207,14 @@ pub const SegmentDescriptor = packed struct(u64) {
         dpl: u2,
         granularity: Granularity,
     ) SegmentDescriptor {
-        const segment_type: SegmentType = @enumFromInt(9); // TSS64 not busy
         return SegmentDescriptor{
             .limit_low = @truncate(limit),
             .base_low = @truncate(base),
-            .segment_type = segment_type,
-            .desc_type = .System,
+            .accessed = true,
+            .rw = false,
+            .dc = false,
+            .executable = true,
+            .desc_type = .system,
             .dpl = dpl,
             .present = true,
             .limit_high = @truncate(limit >> 16),
@@ -202,46 +227,22 @@ pub const SegmentDescriptor = packed struct(u64) {
     }
 };
 
+/// Descriptor Type.
 pub const DescriptorType = enum(u1) {
     /// System Descriptor.
     /// Must be System for TSS.
-    System = 0,
+    system = 0,
     /// Application Descriptor.
-    CodeOrData = 1,
+    code_data = 1,
 };
 
+/// Granularity of the descriptor.
 pub const Granularity = enum(u1) {
-    Byte = 0,
-    KByte = 1,
+    byte = 0,
+    kbyte = 1,
 };
 
-pub const SegmentType = enum(u4) {
-    // R: Read-Only
-    // W: Write
-    // A: Accessed
-    // E(Data): Execute
-    // E(Code): Expand Down
-    // C: Conforming
-
-    DataR = 0,
-    DataRA = 1,
-    DataRW = 2,
-    DataRWA = 3,
-    DataRE = 4,
-    DataRAE = 5,
-    DataRWE = 6,
-    DataRWAE = 7,
-
-    CodeE = 8,
-    CodeEA = 9,
-    CodeER = 10,
-    CodeERA = 11,
-    CodeEC = 12,
-    CodeECA = 13,
-    CodeERC = 14,
-    CodeERCA = 15,
-};
-
+/// Segment selector.
 pub const SegmentSelector = packed struct(u16) {
     /// Requested Privilege Level.
     rpl: u2,
@@ -255,6 +256,7 @@ pub const SegmentSelector = packed struct(u16) {
     }
 };
 
+/// GDTR.
 const GdtRegister = packed struct {
     limit: u16,
     base: *[max_num_gdt]SegmentDescriptor,

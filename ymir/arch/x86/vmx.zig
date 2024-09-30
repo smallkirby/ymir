@@ -1001,34 +1001,43 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
 
         // Access Rights
         const cs_right = vmcs.SegmentRights{
-            .type = .CodeERA,
-            .s = .CodeOrData,
+            .rw = true,
+            .dc = false,
+            .executable = true,
+            .s = .code_data,
             .dpl = 0,
-            .g = .KByte,
+            .g = .kbyte,
             .long = false,
             .db = 1,
         };
         const ds_right = vmcs.SegmentRights{
-            .type = .DataRWA,
-            .s = .CodeOrData,
+            .rw = true,
+            .dc = false,
+            .executable = false,
+            .s = .code_data,
             .dpl = 0,
-            .g = .KByte,
+            .g = .kbyte,
             .long = false,
             .db = 1,
         };
         const tr_right = vmcs.SegmentRights{
-            .type = .CodeERA,
-            .s = .System,
+            .rw = true,
+            .dc = false,
+            .executable = true,
+            .s = .system,
             .dpl = 0,
-            .g = .Byte,
+            .g = .byte,
             .long = false,
             .db = 0,
         };
         const ldtr_right = vmcs.SegmentRights{
-            .type = .DataRW,
-            .s = .System,
+            .accessed = false,
+            .rw = true,
+            .dc = false,
+            .executable = false,
+            .s = .system,
             .dpl = 0,
-            .g = .Byte,
+            .g = .byte,
             .long = false,
             .db = 0,
         };
@@ -1555,27 +1564,27 @@ fn partialCheckGuest() VmxError!void {
     const fs_limit = try vmcs.vmread(vmcs.Guest.fs_limit);
     const gs_limit = try vmcs.vmread(vmcs.Guest.gs_limit);
     //  type
-    if (cs_ar.type != .CodeEA and cs_ar.type != .CodeERA and cs_ar.type != .CodeECA and cs_ar.type != .CodeERCA) @panic("CS.rights: Invalid value");
-    if (!ss_ar.unusable and (ss_ar.type != .DataRWA and ss_ar.type != .DataRWAE)) @panic("SS.rights: Invalid value");
-    if (!ds_ar.unusable and @intFromEnum(ds_ar.type) & 1 == 0) @panic("DS.rights: Invalid value (accessed)");
-    if (!es_ar.unusable and @intFromEnum(es_ar.type) & 1 == 0) @panic("ES.rights: Invalid value (accessed)");
-    if (!fs_ar.unusable and @intFromEnum(fs_ar.type) & 1 == 0) @panic("FS.rights: Invalid value (accessed)");
-    if (!gs_ar.unusable and @intFromEnum(gs_ar.type) & 1 == 0) @panic("GS.rights: Invalid value (accessed)");
-    if (!ds_ar.unusable and (@intFromEnum(ds_ar.type) & 0b1000 != 0 and @intFromEnum(ds_ar.type) & 0b10 == 0)) @panic("DS.rights: Invalid value (code)");
-    if (!es_ar.unusable and (@intFromEnum(es_ar.type) & 0b1000 != 0 and @intFromEnum(es_ar.type) & 0b10 == 0)) @panic("ES.rights: Invalid value (code)");
-    if (!fs_ar.unusable and (@intFromEnum(fs_ar.type) & 0b1000 != 0 and @intFromEnum(fs_ar.type) & 0b10 == 0)) @panic("FS.rights: Invalid value (code)");
-    if (!gs_ar.unusable and (@intFromEnum(gs_ar.type) & 0b1000 != 0 and @intFromEnum(gs_ar.type) & 0b10 == 0)) @panic("GS.rights: Invalid value (code)");
+    if (!cs_ar.accessed or !cs_ar.executable) @panic("CS.rights: CS must be accessed and executable");
+    if (!ss_ar.unusable and (!ss_ar.rw or ss_ar.executable)) @panic("SS.rights: Invalid value");
+    if (!ds_ar.unusable and !ds_ar.accessed) @panic("DS.rights: Invalid value (accessed)");
+    if (!es_ar.unusable and !es_ar.accessed) @panic("ES.rights: Invalid value (accessed)");
+    if (!fs_ar.unusable and !fs_ar.accessed) @panic("FS.rights: Invalid value (accessed)");
+    if (!gs_ar.unusable and !gs_ar.accessed) @panic("GS.rights: Invalid value (accessed)");
+    if (!ds_ar.unusable and (ds_ar.executable and !ds_ar.rw)) @panic("DS.rights: Invalid value (code)");
+    if (!es_ar.unusable and (es_ar.executable and !es_ar.rw)) @panic("ES.rights: Invalid value (code)");
+    if (!fs_ar.unusable and (fs_ar.executable and !fs_ar.rw)) @panic("FS.rights: Invalid value (code)");
+    if (!gs_ar.unusable and (gs_ar.executable and !gs_ar.rw)) @panic("GS.rights: Invalid value (code)");
     //  s
-    if (cs_ar.s != .CodeOrData) @panic("CS.rights: Invalid value (code)");
-    if (!ss_ar.unusable and ss_ar.s != .CodeOrData) @panic("SS.rights: Invalid value (code)");
-    if (!ds_ar.unusable and ds_ar.s != .CodeOrData) @panic("DS.rights: Invalid value (code)");
-    if (!es_ar.unusable and es_ar.s != .CodeOrData) @panic("ES.rights: Invalid value (code)");
-    if (!fs_ar.unusable and fs_ar.s != .CodeOrData) @panic("FS.rights: Invalid value (code)");
-    if (!gs_ar.unusable and gs_ar.s != .CodeOrData) @panic("GS.rights: Invalid value (code)");
+    if (cs_ar.s != .code_data) @panic("CS.rights: Invalid value (code)");
+    if (!ss_ar.unusable and ss_ar.s != .code_data) @panic("SS.rights: Invalid value (code)");
+    if (!ds_ar.unusable and ds_ar.s != .code_data) @panic("DS.rights: Invalid value (code)");
+    if (!es_ar.unusable and es_ar.s != .code_data) @panic("ES.rights: Invalid value (code)");
+    if (!fs_ar.unusable and fs_ar.s != .code_data) @panic("FS.rights: Invalid value (code)");
+    if (!gs_ar.unusable and gs_ar.s != .code_data) @panic("GS.rights: Invalid value (code)");
     // DPL
-    if (cs_ar.type == .DataRWA and cs_ar.dpl != 0) @panic("CS.rights: Invalid value (DPL)");
-    if ((cs_ar.type == .CodeEA or cs_ar.type == .CodeERA) and cs_ar.dpl != ss_ar.dpl) @panic("CS.rights: Invalid value (DPL)");
-    if ((cs_ar.type == .CodeECA or cs_ar.type == .CodeERCA) and cs_ar.dpl > ss_ar.dpl) @panic("CS.rights: Invalid value (DPL)");
+    if ((cs_ar.accessed and cs_ar.rw and !cs_ar.dc and !cs_ar.executable) and cs_ar.dpl != 0) @panic("CS.rights: Invalid value (DPL)");
+    if ((cs_ar.accessed and !cs_ar.dc and cs_ar.executable) and cs_ar.dpl != ss_ar.dpl) @panic("CS.rights: Invalid value (DPL)");
+    if ((cs_ar.accessed and cs_ar.dc and cs_ar.executable) and cs_ar.dpl > ss_ar.dpl) @panic("CS.rights: Invalid value (DPL)");
     if (ss_ar.dpl != ss_sel.rpl) @panic("SS.rights: DPL must be equal to RPL");
     // TODO: The DPL of SS must be 0 either if ...
     if (ds_ar.dpl < ds_sel.rpl) @panic("DS.rights: Invalid value (DPL)");
@@ -1593,22 +1602,26 @@ fn partialCheckGuest() VmxError!void {
     // D/B
     if ((entry_ctrl.ia32e_mode_guest and cs_ar.long) and cs_ar.db != 0) @panic("CS.rights: D/B must be zero when IA-32e mode is enabled");
     // G.
-    if (cs_limit & 0xFFF != 0xFFF and cs_ar.g != .Byte) @panic("CS.rights: G must be clear when CS.limit is not page-aligned");
-    if (!ss_ar.unusable and ss_limit & 0xFFF != 0xFFF and ss_ar.g != .Byte) @panic("SS.rights: G must be clear when SS.limit is not page-aligned");
-    if (!ds_ar.unusable and ds_limit & 0xFFF != 0xFFF and ds_ar.g != .Byte) @panic("DS.rights: G must be clear when DS.limit is not page-aligned");
-    if (!es_ar.unusable and es_limit & 0xFFF != 0xFFF and es_ar.g != .Byte) @panic("ES.rights: G must be clear when ES.limit is not page-aligned");
-    if (!fs_ar.unusable and fs_limit & 0xFFF != 0xFFF and fs_ar.g != .Byte) @panic("FS.rights: G must be clear when FS.limit is not page-aligned");
-    if (!gs_ar.unusable and gs_limit & 0xFFF != 0xFFF and gs_ar.g != .Byte) @panic("GS.rights: G must be clear when GS.limit is not page-aligned");
-    if (cs_limit >> 20 != 0 and cs_ar.g != .KByte) @panic("CS.rights: G must be set.");
-    if (!ss_ar.unusable and ss_limit >> 20 != 0 and ss_ar.g != .KByte) @panic("SS.rights: G must be set.");
-    if (!ds_ar.unusable and ds_limit >> 20 != 0 and ds_ar.g != .KByte) @panic("DS.rights: G must be set.");
-    if (!es_ar.unusable and es_limit >> 20 != 0 and es_ar.g != .KByte) @panic("ES.rights: G must be set.");
-    if (!fs_ar.unusable and fs_limit >> 20 != 0 and fs_ar.g != .KByte) @panic("FS.rights: G must be set.");
-    if (!gs_ar.unusable and gs_limit >> 20 != 0 and gs_ar.g != .KByte) @panic("GS.rights: G must be set.");
+    if (cs_limit & 0xFFF != 0xFFF and cs_ar.g != .byte) @panic("CS.rights: G must be clear when CS.limit is not page-aligned");
+    if (!ss_ar.unusable and ss_limit & 0xFFF != 0xFFF and ss_ar.g != .byte) @panic("SS.rights: G must be clear when SS.limit is not page-aligned");
+    if (!ds_ar.unusable and ds_limit & 0xFFF != 0xFFF and ds_ar.g != .byte) @panic("DS.rights: G must be clear when DS.limit is not page-aligned");
+    if (!es_ar.unusable and es_limit & 0xFFF != 0xFFF and es_ar.g != .byte) @panic("ES.rights: G must be clear when ES.limit is not page-aligned");
+    if (!fs_ar.unusable and fs_limit & 0xFFF != 0xFFF and fs_ar.g != .byte) @panic("FS.rights: G must be clear when FS.limit is not page-aligned");
+    if (!gs_ar.unusable and gs_limit & 0xFFF != 0xFFF and gs_ar.g != .byte) @panic("GS.rights: G must be clear when GS.limit is not page-aligned");
+    if (cs_limit >> 20 != 0 and cs_ar.g != .kbyte) @panic("CS.rights: G must be set.");
+    if (!ss_ar.unusable and ss_limit >> 20 != 0 and ss_ar.g != .kbyte) @panic("SS.rights: G must be set.");
+    if (!ds_ar.unusable and ds_limit >> 20 != 0 and ds_ar.g != .kbyte) @panic("DS.rights: G must be set.");
+    if (!es_ar.unusable and es_limit >> 20 != 0 and es_ar.g != .kbyte) @panic("ES.rights: G must be set.");
+    if (!fs_ar.unusable and fs_limit >> 20 != 0 and fs_ar.g != .kbyte) @panic("FS.rights: G must be set.");
+    if (!gs_ar.unusable and gs_limit >> 20 != 0 and gs_ar.g != .kbyte) @panic("GS.rights: G must be set.");
     // TODO: Reserved bits must be zero.
-
     // TODO: TR
-    // TODO: LDTR
+    // LDTR
+    const ldtr_ar = vmcs.SegmentRights.from(try vmcs.vmread(vmcs.Guest.ldtr_rights));
+    if (ldtr_ar.accessed or !ldtr_ar.rw or ldtr_ar.dc or ldtr_ar.executable) @panic("LDTR.rights: Invalid value");
+    if (ldtr_ar.s != .system) @panic("LDTR.rights: Invalid value");
+    if (!ldtr_ar.p) @panic("LDTR.rights: P must be set");
+    if (ldtr_ar._reserved1 != 0) @panic("LDTR.rights: Reserved bits must be zero");
 
     // == Checks on Guest Descriptor-Table Registers.
     // cf. SDM Vol 3C 27.3.1.3.

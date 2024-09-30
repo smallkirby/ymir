@@ -717,8 +717,16 @@ pub const EntryCtrl = packed struct(u32) {
 pub const SegmentRights = packed struct(u32) {
     const gdt = @import("../gdt.zig");
 
-    /// Segment type.
-    type: gdt.SegmentType,
+    // TODO: duplication of gdt.SegmentDescriptor
+
+    /// Segment is accessed.
+    accessed: bool = true,
+    /// Readable / Writable.
+    rw: bool,
+    /// Direction / Conforming.
+    dc: bool,
+    /// Executable.
+    executable: bool,
     /// Descriptor type.
     s: gdt.DescriptorType,
     /// DPL.
