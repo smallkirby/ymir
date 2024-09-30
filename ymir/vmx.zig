@@ -120,11 +120,6 @@ pub const Vm = struct {
         log.info("Guest memory is made read-only for Ymir.", .{});
     }
 
-    /// Maps the RSDP region to the guest physical memory.
-    pub fn mapRsdpRegion(self: *Self, allocator: Allocator) Error!void {
-        self.vcpu.mapRsdpRegion(0x000E0000, allocator); // TODO: magic number
-    }
-
     /// Virtualize APIC (xAPIC).
     pub fn virtualizeApic(self: *Self, allocator: Allocator) Error!void {
         self.vcpu.virtualizeApic(allocator) catch return Error.OutOfMemory;

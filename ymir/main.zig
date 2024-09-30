@@ -65,6 +65,7 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     // Copy boot_info into Ymir's stack sice it becomes inaccessible soon.
     const guest_info = bs_boot_info.guest_info;
     const acpi_table = bs_boot_info.acpi_table;
+    _ = acpi_table; // autofix
     const memory_map = bs_boot_info.memory_map;
 
     // Initialize GDT.
@@ -107,9 +108,6 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     arch.pic.unsetMask(.Timer);
     log.info("Enabled PIT.", .{});
 
-    // Find RSDP.
-    arch.initAcpi(acpi_table);
-
     // Unmask serial interrupt.
     arch.intr.registerHandler(idefs.pic_serial1, blobIrqHandler);
     arch.pic.unsetMask(.Serial1);
@@ -144,10 +142,6 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
         &ymir.mem.page_allocator_instance,
     );
     log.info("Setup guest memory.", .{});
-
-    // Pass-through ACPI tables.
-    // TODO
-    //try vm.mapRsdpRegion(ymir.mem.general_allocator);
 
     // Virtualize APIC.
     try vm.virtualizeApic(ymir.mem.general_allocator);

@@ -14,7 +14,6 @@ pub const serial = @import("serial.zig");
 pub const apic = @import("apic.zig");
 
 const cpuid = @import("cpuid.zig");
-const acpi = @import("acpi.zig");
 const am = @import("asm.zig");
 
 /// Pause a CPU for a short period of time.
@@ -104,11 +103,6 @@ pub fn enableXstateFeature() void {
     const ext_info = am.cpuidEcx(0xD, 0); // Processor extended state enumeration
     const max_features = ((@as(u64, ext_info.edx) & 0xFFFF_FFFF) << 32) + ext_info.eax;
     am.xsetbv(0, max_features); // XCR0 enabled mask
-}
-
-/// Initialize ACPI.
-pub fn initAcpi(rsdp: *anyopaque) void {
-    acpi.init(@ptrFromInt(mem.phys2virt(rsdp)));
 }
 
 test {
