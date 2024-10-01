@@ -29,11 +29,6 @@ const vmwrite = vmcs.vmwrite;
 const vmread = vmcs.vmread;
 const isCanonical = @import("page.zig").isCanonical;
 
-/// Size of VM-exit trampoline stack.
-const vmexit_stack_size: usize = 4096;
-/// VM-exit trampoline stack.
-var vmexit_stack: [vmexit_stack_size + 0x30]u8 align(0x10) = [_]u8{0} ** (vmexit_stack_size + 0x30);
-
 pub const VmxError = error{
     /// VMCS pointer is invalid. No status available.
     VmxStatusUnavailable,
@@ -89,8 +84,6 @@ pub const Vcpu = struct {
     pci: io.Pci = io.Pci.new(),
     /// 8250 serial port.
     serial: io.Serial = io.Serial.new(),
-    /// TSC value on VM-exit.
-    tsc_on_exit: u64 = 0,
     /// Pending IRQ.
     pending_irq: u16 = 0,
     /// I/O bitmap.
@@ -160,17 +153,9 @@ pub const Vcpu = struct {
     }
 
     /// Enter VMX root operation and allocate VMCS region for this LP.
-    pub fn virtualize(self: *Self, page_allocator: Allocator) VmxError!void {
+    pub fn virtualize(self: *Self, allocator: Allocator) VmxError!void {
         // Enter VMX root operation.
-        self.vmxon_region = try vmxon(page_allocator);
-
-        // Set up VMCS region.
-        const vmcs_region = try VmcsRegion.new(page_allocator);
-        vmcs_region.vmcs_revision_id = getVmcsRevisionId();
-        self.vmcs_region = vmcs_region;
-
-        // Subscribe to interrupts.
-        intr.subscribe(self, intrSubscriptorCallback) catch return VmxError.InterruptFull;
+        self.vmxon_region = try vmxon(allocator);
     }
 
     /// Exit VMX operation.
@@ -180,6 +165,11 @@ pub const Vcpu = struct {
 
     /// Set up VMCS for a logical processor.
     pub fn setupVmcs(self: *Self, allocator: Allocator) VmxError!void {
+        // Initialize VMCS region.
+        const vmcs_region = try VmcsRegion.new(allocator);
+        vmcs_region.vmcs_revision_id = getVmcsRevisionId();
+        self.vmcs_region = vmcs_region;
+
         // Reset VMCS.
         try resetVmcs(self.vmcs_region);
 
@@ -193,7 +183,7 @@ pub const Vcpu = struct {
     }
 
     /// Maps guest physical memory to host physical memory.
-    pub fn initGuestMap(self: *Self, host_pages: []u8, allocator: Allocator) !void {
+    pub fn initGuestMap(self: *Self, host_pages: []u8, allocator: Allocator) VmxError!void {
         const lv4tbl = try ept.initEpt(
             0,
             ymir.mem.virt2phys(host_pages.ptr),
@@ -209,12 +199,14 @@ pub const Vcpu = struct {
 
     /// Start executing vCPU.
     pub fn loop(self: *Self) VmxError!void {
+        // Subscribe to interrupts.
+        intr.subscribe(self, intrSubscriptorCallback) catch return VmxError.InterruptFull;
+
+        // Start endless VM-entry / VM-exit loop.
         while (true) {
             if (ymir.is_debug) {
                 try dbg.partialCheckGuest();
             }
-
-            try self.adjustTsc();
 
             storeHostMsrs(self);
             try updateVmcsMsrs(self);
@@ -227,16 +219,9 @@ pub const Vcpu = struct {
                 }
                 self.abort();
             };
-            self.tsc_on_exit = am.rdtsc();
 
             try self.handleExit(try getExitReason());
         }
-    }
-
-    fn adjustTsc(self: *Self) VmxError!void {
-        const last_tsc_offset = try vmread(vmcs.Ctrl.tsc_offset);
-        const offset = if (self.tsc_on_exit != 0) am.rdtsc() -% self.tsc_on_exit else 0;
-        try vmwrite(vmcs.Ctrl.tsc_offset, last_tsc_offset -% offset); // XXX
     }
 
     /// Maps 4KiB page to EPT of this vCPU.
@@ -762,9 +747,9 @@ fn getVmcsRevisionId() u31 {
 }
 
 /// Puts the logical processor in VMX operation with no VMCS loaded.
-fn vmxon(page_allocator: Allocator) VmxError!*VmxonRegion {
+fn vmxon(allocator: Allocator) VmxError!*VmxonRegion {
     // Set up VMXON region.
-    const vmxon_region = try VmxonRegion.new(page_allocator);
+    const vmxon_region = try VmxonRegion.new(allocator);
     vmxon_region.vmcs_revision_id = getVmcsRevisionId();
     log.debug("VMCS revision ID: 0x{X:0>8}", .{vmxon_region.vmcs_revision_id});
 
@@ -772,7 +757,7 @@ fn vmxon(page_allocator: Allocator) VmxError!*VmxonRegion {
     log.debug("VMXON region physical address: 0x{X:0>16}", .{vmxon_phys});
 
     am.vmxon(vmxon_phys) catch |err| {
-        vmxon_region.deinit(page_allocator);
+        vmxon_region.deinit(allocator);
         return err;
     };
 
@@ -853,7 +838,7 @@ fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
     ppb_exec_ctrl.use_io_bitmap = true;
     ppb_exec_ctrl.hlt = true;
     ppb_exec_ctrl.use_tpr_shadow = true;
-    ppb_exec_ctrl.tsc_offsetting = true;
+    ppb_exec_ctrl.tsc_offsetting = false;
     ppb_exec_ctrl.cr3load = true;
     ppb_exec_ctrl.cr3store = true;
     ppb_exec_ctrl.invlpg = true; // exit on INVLPG and INVPCID
@@ -939,7 +924,6 @@ fn setupHostState(_: *Vcpu) VmxError!void {
 
     // General registers.
     try vmwrite(vmcs.Host.rip, &Vcpu.asmVmExit);
-    try vmwrite(vmcs.Host.rsp, @intFromPtr(&vmexit_stack) + vmexit_stack_size);
 
     // Segment registers.
     try vmwrite(vmcs.Host.cs_sel, am.readSegSelector(.cs));

@@ -10,6 +10,7 @@ const PageAllocator = mem.PageAllocator;
 const vmx = ymir.vmx;
 const linux = ymir.linux;
 const BootParams = linux.BootParams;
+const spin = ymir.spin;
 
 const impl = switch (builtin.target.cpu.arch) {
     .x86_64 => @import("arch/x86/vmx.zig"),
@@ -28,6 +29,8 @@ const Error = VmError;
 
 /// Next virtual processor ID.
 var vpid_next: u16 = 0;
+/// Global VMX lock.
+var global_lock = spin.SpinLock{};
 
 /// Virtual machine instance.
 /// TODO: currently, supports only single CPU.
@@ -59,8 +62,10 @@ pub const Vm = struct {
             return Error.SystemNotSupported;
         }
 
+        const irq = global_lock.lockSaveIrq();
         const vpid = vpid_next;
         vpid_next += 1;
+        global_lock.unlockRestoreIrq(irq);
 
         const vcpu = impl.Vcpu.new(vpid);
         return Self{
