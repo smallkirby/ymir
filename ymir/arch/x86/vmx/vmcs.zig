@@ -713,11 +713,9 @@ pub const EntryCtrl = packed struct(u32) {
     }
 };
 
-/// Segment rights that can be set in guest-state area.
+/// Access rights of segments that can be set in guest-state area.
 pub const SegmentRights = packed struct(u32) {
     const gdt = @import("../gdt.zig");
-
-    // TODO: duplication of gdt.SegmentDescriptor
 
     /// Segment is accessed.
     accessed: bool = true,
@@ -728,21 +726,21 @@ pub const SegmentRights = packed struct(u32) {
     /// Executable.
     executable: bool,
     /// Descriptor type.
-    s: gdt.DescriptorType,
-    /// DPL.
+    desc_type: gdt.DescriptorType,
+    /// Descriptor privilege level.
     dpl: u2,
     /// Present.
-    p: bool = true,
+    present: bool = true,
     /// Reserved.
     _reserved1: u4 = 0,
-    /// AVL.
+    /// Available for use by system software.
     avl: bool = false,
     /// Long mode.
     long: bool = false,
-    /// D/B
+    /// Size flag.
     db: u1,
     /// Granularity.
-    g: gdt.Granularity,
+    granularity: gdt.Granularity,
     /// Unusable.
     unusable: bool = false,
     /// Reserved.

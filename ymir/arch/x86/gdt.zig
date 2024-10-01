@@ -127,7 +127,9 @@ fn loadKernelTss() void {
 /// Segment Descriptor Entry.
 /// SDM Vol.3A 3.4.5
 pub const SegmentDescriptor = packed struct(u64) {
+    /// Lower 16 bits of the segment limit.
     limit_low: u16,
+    /// Lower 24 bits of the base address.
     base_low: u24,
 
     /// Segment is accessed.
@@ -151,6 +153,7 @@ pub const SegmentDescriptor = packed struct(u64) {
     /// Segment present.
     present: bool = true,
 
+    /// Upper 4 bits of the segment limit.
     limit_high: u4,
     /// Available for use by system software.
     avl: u1 = 0,
@@ -165,6 +168,7 @@ pub const SegmentDescriptor = packed struct(u64) {
     /// Otherwise, the limit is interpreted in 4-KByte units.
     /// This field is ignored in 64-bit mode.
     granularity: Granularity,
+    /// Upper 8 bits of the base address.
     base_high: u8,
 
     /// Create a null segment selector.
