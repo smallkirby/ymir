@@ -19,7 +19,7 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
     const msr_kind: am.Msr = @enumFromInt(rcx);
 
     switch (msr_kind) {
-        .apic_base => setReturnVal(vcpu, @bitCast(vcpu.apic_base)),
+        .apic_base => setReturnVal(vcpu, 0xFFFFFFFF_FFFFFFFF),
         .efer => setReturnVal(vcpu, try vmread(vmcs.Guest.efer)),
         .fs_base => setReturnVal(vcpu, try vmread(vmcs.Guest.fs_base)),
         .gs_base => setReturnVal(vcpu, try vmread(vmcs.Guest.gs_base)),

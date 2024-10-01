@@ -141,9 +141,6 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     );
     log.info("Setup guest memory.", .{});
 
-    // Virtualize APIC.
-    try vm.virtualizeApic(ymir.mem.general_allocator);
-
     // Launch
     log.info("Starting the virtual machine...", .{});
     try vm.loop();

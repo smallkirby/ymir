@@ -22,7 +22,6 @@ const msr = @import("vmx/msr.zig");
 const cr = @import("vmx/cr.zig");
 const pg = @import("vmx/page.zig");
 const io = @import("vmx/io.zig");
-const lapic = @import("vmx/lapic.zig");
 const dbg = @import("vmx/dbg.zig");
 
 const vmwrite = vmcs.vmwrite;
@@ -70,10 +69,6 @@ pub const Vcpu = struct {
     eptp: ept.Eptp = undefined,
     /// Host physical address where the guest is mapped.
     guest_base: Phys = 0,
-    /// Virtual APIC registers (kinda shadow page of APIC).
-    virt_apic_regs: lapic.VirtApicRegisters = undefined,
-    /// APIC_BASE MSR.
-    apic_base: lapic.ApicBase = undefined,
     /// Host saved MSRs.
     host_msr: msr.MsrPage = undefined,
     /// Guest saved MSRs.
@@ -128,7 +123,6 @@ pub const Vcpu = struct {
             .vmxon_region = undefined,
             .vmcs_region = undefined,
             .guest_base = undefined,
-            .apic_base = lapic.ApicBase.new(id == 0, false), // TODO: enable LAPIC
         };
     }
 
@@ -230,24 +224,6 @@ pub const Vcpu = struct {
         try ept.map4k(guest, host, lv4tbl, allocator);
     }
 
-    /// Setup vAPIC.
-    pub fn virtualizeApic(self: *Self, allocator: Allocator) !void {
-        // Setup virtual-APIC page.
-        self.virt_apic_regs = try lapic.VirtApicRegisters.new(allocator);
-        self.virt_apic_regs.set(.local_apic_id, 0xAA << 24); // TODO: should read the real value from CPU.
-
-        // Maps APIC-access page.
-        // VM-exit due to vAPIC access is lower than page fault or EPT violation.
-        // So we have to map the page (this page might not be mapped when the guest memory is small).
-        const apic_access_page = try allocator.alloc(u8, mem.page_size_4k);
-        const apic_access_page_hpa = mem.virt2phys(apic_access_page.ptr);
-        try self.map4k(apic_access_page_hpa, 0xFEE0_0000, allocator);
-
-        // Set VMCS.
-        try vmwrite(vmcs.Ctrl.apic_access_address, apic_access_page_hpa);
-        try vmwrite(vmcs.Ctrl.virtual_apic_address, self.virt_apic_regs.hpa());
-    }
-
     // Enter VMX non-root operation.
     fn vmentry(self: *Self) VmxError!void {
         const success = asm volatile (
@@ -337,16 +313,6 @@ pub const Vcpu = struct {
             },
             .wrmsr => {
                 try msr.handleWrmsrExit(self);
-                try self.stepNextInst();
-            },
-            .apic => {
-                const offset = try vmread(vmcs.Ro.exit_qual);
-                try lapic.handleLapic(self, offset);
-                try self.stepNextInst();
-            },
-            .apic_write => {
-                const offset = try vmread(vmcs.Ro.exit_qual);
-                try lapic.handleLapicWrite(self, offset);
                 try self.stepNextInst();
             },
             .extintr => {

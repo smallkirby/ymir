@@ -125,11 +125,6 @@ pub const Vm = struct {
         log.info("Guest memory is made read-only for Ymir.", .{});
     }
 
-    /// Virtualize APIC (xAPIC).
-    pub fn virtualizeApic(self: *Self, allocator: Allocator) Error!void {
-        self.vcpu.virtualizeApic(allocator) catch return Error.OutOfMemory;
-    }
-
     /// Kick off the virtual machine.
     pub fn loop(self: *Self) Error!void {
         arch.disableIntr();
