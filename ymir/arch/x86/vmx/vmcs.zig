@@ -709,7 +709,3 @@ pub const EntryCtrl = packed struct(u32) {
         return @bitCast(val);
     }
 };
-
-test {
-    std.testing.refAllDeclsRecursive(@This());
-}

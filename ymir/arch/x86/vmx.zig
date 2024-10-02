@@ -1400,5 +1400,4 @@ const IoBitmap = struct {
 
 test {
     std.testing.refAllDeclsRecursive(@This());
-    std.testing.refAllDeclsRecursive(@import("vmx/vmcs.zig"));
 }
