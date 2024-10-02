@@ -183,7 +183,7 @@ pub fn partialCheckGuest() VmxError!void {
     // == Checks on Guest RIP, RFLAGS, and SSP
     // cf. SDM Vol 3C 27.3.1.4.
     const rip = try vmx.vmread(vmcs.guest.rip);
-    const intr_info = try @import("../vmx.zig").getEntryIntrInfo(); // TODO: import
+    const intr_info = try vmx.InterruptInfo.load(.entry);
     const rflags: am.FlagsRegister = @bitCast(try vmx.vmread(vmcs.guest.rflags));
 
     if ((!entry_ctrl.ia32e_mode_guest or !cs_ar.long) and (rip >> 32) != 0) @panic("RIP: Upper address must be all zeros");
@@ -204,7 +204,7 @@ pub fn partialCheckGuest() VmxError!void {
     // TODO: other checks
 
     // Interruptibility state.
-    const is = try @import("../vmx.zig").getInterruptibilityState(); // TODO: import
+    const is = try vmx.InterruptibilityState.load();
     const eflags: am.FlagsRegister = @bitCast(try vmx.vmread(vmcs.guest.rflags));
     const pin_exec_ctrl = try vmcs.PinExecCtrl.store();
     if (is._reserved != 0) {
