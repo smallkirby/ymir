@@ -6,7 +6,7 @@ const ymir = @import("ymir");
 const mem = ymir.mem;
 const Phys = mem.Phys;
 const Virt = mem.Virt;
-const vmx = @import("vmx.zig");
+const vmx = @import("vmx/common.zig");
 const VmxError = vmx.VmxError;
 const vmxerr = vmx.vmxtry;
 

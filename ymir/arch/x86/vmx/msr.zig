@@ -3,13 +3,11 @@ const log = std.log.scoped(.vmmsr);
 const Allocator = std.mem.Allocator;
 
 const ymir = @import("ymir");
-const vmx = @import("../vmx.zig");
-const Vcpu = vmx.Vcpu;
+const vmx = @import("common.zig");
+const Vcpu = @import("../vmx.zig").Vcpu; // TODO: import
 const VmxError = vmx.VmxError;
 const am = @import("../asm.zig");
 const vmcs = @import("vmcs.zig");
-const vmwrite = vmcs.vmwrite;
-const vmread = vmcs.vmread;
 
 /// Handle VM-exit caused by RDMSR instruction.
 /// Note that this function does not increment the RIP.
@@ -20,9 +18,9 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
 
     switch (msr_kind) {
         .apic_base => setReturnVal(vcpu, 0xFFFFFFFF_FFFFFFFF),
-        .efer => setReturnVal(vcpu, try vmread(vmcs.Guest.efer)),
-        .fs_base => setReturnVal(vcpu, try vmread(vmcs.Guest.fs_base)),
-        .gs_base => setReturnVal(vcpu, try vmread(vmcs.Guest.gs_base)),
+        .efer => setReturnVal(vcpu, try vmx.vmread(vmcs.guest.efer)),
+        .fs_base => setReturnVal(vcpu, try vmx.vmread(vmcs.guest.fs_base)),
+        .gs_base => setReturnVal(vcpu, try vmx.vmread(vmcs.guest.gs_base)),
         .kernel_gs_base,
         => shadowRead(vcpu, msr_kind),
         else => {
@@ -48,12 +46,12 @@ pub fn handleWrmsrExit(vcpu: *Vcpu) VmxError!void {
         .fmask,
         .kernel_gs_base,
         => shadowWrite(vcpu, msr_kind),
-        .sysenter_cs => try vmwrite(vmcs.Guest.sysenter_cs, value),
-        .sysenter_eip => try vmwrite(vmcs.Guest.sysenter_eip, value),
-        .sysenter_esp => try vmwrite(vmcs.Guest.sysenter_esp, value),
-        .efer => try vmwrite(vmcs.Guest.efer, value),
-        .gs_base => try vmwrite(vmcs.Guest.gs_base, value),
-        .fs_base => try vmwrite(vmcs.Guest.fs_base, value),
+        .sysenter_cs => try vmx.vmwrite(vmcs.guest.sysenter_cs, value),
+        .sysenter_eip => try vmx.vmwrite(vmcs.guest.sysenter_eip, value),
+        .sysenter_esp => try vmx.vmwrite(vmcs.guest.sysenter_esp, value),
+        .efer => try vmx.vmwrite(vmcs.guest.efer, value),
+        .gs_base => try vmx.vmwrite(vmcs.guest.gs_base, value),
+        .fs_base => try vmx.vmwrite(vmcs.guest.fs_base, value),
         else => {
             log.err("Unhandled WRMSR: {?}", .{msr_kind});
             vcpu.abort();

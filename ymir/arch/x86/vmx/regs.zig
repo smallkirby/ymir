@@ -42,16 +42,16 @@ pub const HostCregs = struct {
     cr4: u64,
 
     pub fn load(self: HostCregs) VmxError!void {
-        try vmcs.vmwrite(vmcs.Host.cr0, self.cr0);
-        try vmcs.vmwrite(vmcs.Host.cr3, self.cr3);
-        try vmcs.vmwrite(vmcs.Host.cr4, self.cr4);
+        try vmcs.vmwrite(vmcs.host.cr0, self.cr0);
+        try vmcs.vmwrite(vmcs.host.cr3, self.cr3);
+        try vmcs.vmwrite(vmcs.host.cr4, self.cr4);
     }
 
     pub fn get() VmxError!HostCregs {
         return .{
-            .cr0 = try vmcs.vmread(vmcs.Host.cr0),
-            .cr3 = try vmcs.vmread(vmcs.Host.cr3),
-            .cr4 = try vmcs.vmread(vmcs.Host.cr4),
+            .cr0 = try vmcs.vmread(vmcs.host.cr0),
+            .cr3 = try vmcs.vmread(vmcs.host.cr3),
+            .cr4 = try vmcs.vmread(vmcs.host.cr4),
         };
     }
 };

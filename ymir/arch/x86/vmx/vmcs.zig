@@ -1,279 +1,278 @@
 const std = @import("std");
 
 const am = @import("../asm.zig");
-const vmx = @import("../vmx.zig");
+const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
 const VmxError = vmx.VmxError;
-const err = vmx.vmxtry;
 
-/// VMREAD.
-/// `field` is a encoded VMCS field.
-/// If the operation succeeds, the value of the field is returned.
-/// Regardless of the field length, this function returns a 64-bit value.
-/// If the operation fails, an error is returned.
-pub fn vmread(field: anytype) VmxError!u64 {
-    var rflags: u64 = undefined;
-    const ret = asm volatile (
-        \\vmread %[field], %[ret]
-        \\pushf
-        \\popq %[rflags]
-        : [ret] "={rax}" (-> u64),
-          [rflags] "=r" (rflags),
-        : [field] "r" (@as(u64, @intFromEnum(field))),
-    );
-    try err(rflags);
-    return ret;
-}
-
-/// VMWRITE.
-/// `field` is a encoded VMCS field.
-/// `value` is a value to write to the field.
-/// `value` can be either of the following types:
-///     - integer (including comptime value)
-///     - pointer
-///     - structure (up to 8 bytes)
-/// `value` is automatically casted to an appropriate-width integer.
-/// If the operation fails, an error is returned.
-pub fn vmwrite(field: anytype, value: anytype) VmxError!void {
-    const value_int = switch (@typeInfo(@TypeOf(value))) {
-        .Int, .ComptimeInt => @as(u64, value),
-        .Struct => switch (@sizeOf(@TypeOf(value))) {
-            1 => @as(u8, @bitCast(value)),
-            2 => @as(u16, @bitCast(value)),
-            4 => @as(u32, @bitCast(value)),
-            8 => @as(u64, @bitCast(value)),
-            else => @compileError("Unsupported structure size for vmwrite"),
-        },
-        .Pointer => @as(u64, @intFromPtr(value)),
-        else => @compileError("Unsupported type for vmwrite"),
-    };
-
-    const rflags = asm volatile (
-        \\vmwrite %[value], %[field]
-        \\pushf
-        \\popq %[rflags]
-        : [rflags] "=r" (-> u64),
-        : [field] "r" (@as(u64, @intFromEnum(field))),
-          [value] "r" (@as(u64, value_int)),
-    );
-    try err(rflags);
-}
+// TODO: Rename enum fields when https://github.com/zigtools/zls/issues/2042 is fixed.
 
 /// Guest state area encodings.
 /// cf. SDM Vol.3C 25.4, Appendix B.
-pub const Guest = enum(u32) {
+pub const guest = enum(u32) {
     // Natural-width fields.
-    cr0 = encode(.guest_state, 0, .full, .natural),
-    cr3 = encode(.guest_state, 1, .full, .natural),
-    cr4 = encode(.guest_state, 2, .full, .natural),
-    es_base = encode(.guest_state, 3, .full, .natural),
-    cs_base = encode(.guest_state, 4, .full, .natural),
-    ss_base = encode(.guest_state, 5, .full, .natural),
-    ds_base = encode(.guest_state, 6, .full, .natural),
-    fs_base = encode(.guest_state, 7, .full, .natural),
-    gs_base = encode(.guest_state, 8, .full, .natural),
-    ldtr_base = encode(.guest_state, 9, .full, .natural),
-    tr_base = encode(.guest_state, 10, .full, .natural),
-    gdtr_base = encode(.guest_state, 11, .full, .natural),
-    idtr_base = encode(.guest_state, 12, .full, .natural),
-    dr7 = encode(.guest_state, 13, .full, .natural),
-    rsp = encode(.guest_state, 14, .full, .natural),
-    rip = encode(.guest_state, 15, .full, .natural),
-    rflags = encode(.guest_state, 16, .full, .natural),
-    pending_debug_exceptions = encode(.guest_state, 17, .full, .natural),
-    sysenter_esp = encode(.guest_state, 18, .full, .natural),
-    sysenter_eip = encode(.guest_state, 19, .full, .natural),
-    s_cet = encode(.guest_state, 20, .full, .natural),
-    ssp = encode(.guest_state, 21, .full, .natural),
-    interrupt_ssp_table_addr = encode(.guest_state, 22, .full, .natural),
+    cr0 = eg(0, .full, .natural),
+    cr3 = eg(1, .full, .natural),
+    cr4 = eg(2, .full, .natural),
+    es_base = eg(3, .full, .natural),
+    cs_base = eg(4, .full, .natural),
+    ss_base = eg(5, .full, .natural),
+    ds_base = eg(6, .full, .natural),
+    fs_base = eg(7, .full, .natural),
+    gs_base = eg(8, .full, .natural),
+    ldtr_base = eg(9, .full, .natural),
+    tr_base = eg(10, .full, .natural),
+    gdtr_base = eg(11, .full, .natural),
+    idtr_base = eg(12, .full, .natural),
+    dr7 = eg(13, .full, .natural),
+    rsp = eg(14, .full, .natural),
+    rip = eg(15, .full, .natural),
+    rflags = eg(16, .full, .natural),
+    pending_debug_exceptions = eg(17, .full, .natural),
+    sysenter_esp = eg(18, .full, .natural),
+    sysenter_eip = eg(19, .full, .natural),
+    s_cet = eg(20, .full, .natural),
+    ssp = eg(21, .full, .natural),
+    interrupt_ssp_table_addr = eg(22, .full, .natural),
     // 16-bit fields.
-    es_sel = encode(.guest_state, 0, .full, .word),
-    cs_sel = encode(.guest_state, 1, .full, .word),
-    ss_sel = encode(.guest_state, 2, .full, .word),
-    ds_sel = encode(.guest_state, 3, .full, .word),
-    fs_sel = encode(.guest_state, 4, .full, .word),
-    gs_sel = encode(.guest_state, 5, .full, .word),
-    ldtr_sel = encode(.guest_state, 6, .full, .word),
-    tr_sel = encode(.guest_state, 7, .full, .word),
-    interrupt_status = encode(.guest_state, 8, .full, .word),
-    pml_index = encode(.guest_state, 9, .full, .word),
-    uinv = encode(.guest_state, 10, .full, .word),
+    es_sel = eg(0, .full, .word),
+    cs_sel = eg(1, .full, .word),
+    ss_sel = eg(2, .full, .word),
+    ds_sel = eg(3, .full, .word),
+    fs_sel = eg(4, .full, .word),
+    gs_sel = eg(5, .full, .word),
+    ldtr_sel = eg(6, .full, .word),
+    tr_sel = eg(7, .full, .word),
+    interrupt_status = eg(8, .full, .word),
+    pml_index = eg(9, .full, .word),
+    uinv = eg(10, .full, .word),
     // 32-bit fields.
-    es_limit = encode(.guest_state, 0, .full, .dword),
-    cs_limit = encode(.guest_state, 1, .full, .dword),
-    ss_limit = encode(.guest_state, 2, .full, .dword),
-    ds_limit = encode(.guest_state, 3, .full, .dword),
-    fs_limit = encode(.guest_state, 4, .full, .dword),
-    gs_limit = encode(.guest_state, 5, .full, .dword),
-    ldtr_limit = encode(.guest_state, 6, .full, .dword),
-    tr_limit = encode(.guest_state, 7, .full, .dword),
-    gdtr_limit = encode(.guest_state, 8, .full, .dword),
-    idtr_limit = encode(.guest_state, 9, .full, .dword),
-    es_rights = encode(.guest_state, 10, .full, .dword),
-    cs_rights = encode(.guest_state, 11, .full, .dword),
-    ss_rights = encode(.guest_state, 12, .full, .dword),
-    ds_rights = encode(.guest_state, 13, .full, .dword),
-    fs_rights = encode(.guest_state, 14, .full, .dword),
-    gs_rights = encode(.guest_state, 15, .full, .dword),
-    ldtr_rights = encode(.guest_state, 16, .full, .dword),
-    tr_rights = encode(.guest_state, 17, .full, .dword),
-    interruptibility_state = encode(.guest_state, 18, .full, .dword),
-    activity_state = encode(.guest_state, 19, .full, .dword),
-    smbase = encode(.guest_state, 20, .full, .dword),
-    sysenter_cs = encode(.guest_state, 21, .full, .dword),
-    preemp_timer = encode(.guest_state, 22, .full, .dword),
+    es_limit = eg(0, .full, .dword),
+    cs_limit = eg(1, .full, .dword),
+    ss_limit = eg(2, .full, .dword),
+    ds_limit = eg(3, .full, .dword),
+    fs_limit = eg(4, .full, .dword),
+    gs_limit = eg(5, .full, .dword),
+    ldtr_limit = eg(6, .full, .dword),
+    tr_limit = eg(7, .full, .dword),
+    gdtr_limit = eg(8, .full, .dword),
+    idtr_limit = eg(9, .full, .dword),
+    es_rights = eg(10, .full, .dword),
+    cs_rights = eg(11, .full, .dword),
+    ss_rights = eg(12, .full, .dword),
+    ds_rights = eg(13, .full, .dword),
+    fs_rights = eg(14, .full, .dword),
+    gs_rights = eg(15, .full, .dword),
+    ldtr_rights = eg(16, .full, .dword),
+    tr_rights = eg(17, .full, .dword),
+    interruptibility_state = eg(18, .full, .dword),
+    activity_state = eg(19, .full, .dword),
+    smbase = eg(20, .full, .dword),
+    sysenter_cs = eg(21, .full, .dword),
+    preemp_timer = eg(22, .full, .dword),
     // 64-bit fields.
-    vmcs_link_pointer = encode(.guest_state, 0, .full, .qword),
-    dbgctl = encode(.guest_state, 1, .full, .qword),
-    pat = encode(.guest_state, 2, .full, .qword),
-    efer = encode(.guest_state, 3, .full, .qword),
-    perf_global_ctrl = encode(.guest_state, 4, .full, .qword),
-    pdpte0 = encode(.guest_state, 5, .full, .qword),
-    pdpte1 = encode(.guest_state, 6, .full, .qword),
-    pdpte2 = encode(.guest_state, 7, .full, .qword),
-    pdpte3 = encode(.guest_state, 8, .full, .qword),
-    bndcfgs = encode(.guest_state, 9, .full, .qword),
-    rtit_ctl = encode(.guest_state, 10, .full, .qword),
-    lbr_ctl = encode(.guest_state, 11, .full, .qword),
-    pkrs = encode(.guest_state, 12, .full, .qword),
+    vmcs_link_pointer = eg(0, .full, .qword),
+    dbgctl = eg(1, .full, .qword),
+    pat = eg(2, .full, .qword),
+    efer = eg(3, .full, .qword),
+    perf_global_ctrl = eg(4, .full, .qword),
+    pdpte0 = eg(5, .full, .qword),
+    pdpte1 = eg(6, .full, .qword),
+    pdpte2 = eg(7, .full, .qword),
+    pdpte3 = eg(8, .full, .qword),
+    bndcfgs = eg(9, .full, .qword),
+    rtit_ctl = eg(10, .full, .qword),
+    lbr_ctl = eg(11, .full, .qword),
+    pkrs = eg(12, .full, .qword),
 };
 
 /// Host state area encodings.
 /// cf. SDM Vol.3C 25.4, Appendix B.
-pub const Host = enum(u32) {
+pub const host = enum(u32) {
     // Natural-width fields.
-    cr0 = encode(.host_state, 0, .full, .natural),
-    cr3 = encode(.host_state, 1, .full, .natural),
-    cr4 = encode(.host_state, 2, .full, .natural),
-    fs_base = encode(.host_state, 3, .full, .natural),
-    gs_base = encode(.host_state, 4, .full, .natural),
-    tr_base = encode(.host_state, 5, .full, .natural),
-    gdtr_base = encode(.host_state, 6, .full, .natural),
-    idtr_base = encode(.host_state, 7, .full, .natural),
-    sysenter_esp = encode(.host_state, 8, .full, .natural),
-    sysenter_eip = encode(.host_state, 9, .full, .natural),
-    rsp = encode(.host_state, 10, .full, .natural),
-    rip = encode(.host_state, 11, .full, .natural),
-    s_cet = encode(.host_state, 12, .full, .natural),
-    ssp = encode(.host_state, 13, .full, .natural),
-    interrupt_ssp_table_addr = encode(.host_state, 14, .full, .natural),
+    cr0 = eh(0, .full, .natural),
+    cr3 = eh(1, .full, .natural),
+    cr4 = eh(2, .full, .natural),
+    fs_base = eh(3, .full, .natural),
+    gs_base = eh(4, .full, .natural),
+    tr_base = eh(5, .full, .natural),
+    gdtr_base = eh(6, .full, .natural),
+    idtr_base = eh(7, .full, .natural),
+    sysenter_esp = eh(8, .full, .natural),
+    sysenter_eip = eh(9, .full, .natural),
+    rsp = eh(10, .full, .natural),
+    rip = eh(11, .full, .natural),
+    s_cet = eh(12, .full, .natural),
+    ssp = eh(13, .full, .natural),
+    interrupt_ssp_table_addr = eh(14, .full, .natural),
     // 16-bit fields.
-    es_sel = encode(.host_state, 0, .full, .word),
-    cs_sel = encode(.host_state, 1, .full, .word),
-    ss_sel = encode(.host_state, 2, .full, .word),
-    ds_sel = encode(.host_state, 3, .full, .word),
-    fs_sel = encode(.host_state, 4, .full, .word),
-    gs_sel = encode(.host_state, 5, .full, .word),
-    tr_sel = encode(.host_state, 6, .full, .word),
+    es_sel = eh(0, .full, .word),
+    cs_sel = eh(1, .full, .word),
+    ss_sel = eh(2, .full, .word),
+    ds_sel = eh(3, .full, .word),
+    fs_sel = eh(4, .full, .word),
+    gs_sel = eh(5, .full, .word),
+    tr_sel = eh(6, .full, .word),
     // 32-bit fields.
-    sysenter_cs = encode(.host_state, 0, .full, .dword),
+    sysenter_cs = eh(0, .full, .dword),
     // 64-bit fields.
-    pat = encode(.host_state, 0, .full, .qword),
-    efer = encode(.host_state, 1, .full, .qword),
-    perf_global_ctrl = encode(.host_state, 2, .full, .qword),
-    pkrs = encode(.host_state, 3, .full, .qword),
+    pat = eh(0, .full, .qword),
+    efer = eh(1, .full, .qword),
+    perf_global_ctrl = eh(2, .full, .qword),
+    pkrs = eh(3, .full, .qword),
 };
 
 /// Control area encodings.
 /// cf. SDM Vol.3C 25.4, Appendix B.
-pub const Ctrl = enum(u32) {
+pub const ctrl = enum(u32) {
     // Natural-width fields.
-    cr0_mask = encode(.control, 0, .full, .natural),
-    cr4_mask = encode(.control, 1, .full, .natural),
-    cr0_read_shadow = encode(.control, 2, .full, .natural),
-    cr4_read_shadow = encode(.control, 3, .full, .natural),
-    cr3_target0 = encode(.control, 4, .full, .natural),
-    cr3_target1 = encode(.control, 5, .full, .natural),
-    cr3_target2 = encode(.control, 6, .full, .natural),
-    cr3_target3 = encode(.control, 7, .full, .natural),
+    cr0_mask = ec(0, .full, .natural),
+    cr4_mask = ec(1, .full, .natural),
+    cr0_read_shadow = ec(2, .full, .natural),
+    cr4_read_shadow = ec(3, .full, .natural),
+    cr3_target0 = ec(4, .full, .natural),
+    cr3_target1 = ec(5, .full, .natural),
+    cr3_target2 = ec(6, .full, .natural),
+    cr3_target3 = ec(7, .full, .natural),
     // 16-bit fields.
-    vpid = encode(.control, 0, .full, .word),
-    posted_interrupt_notification_vector = encode(.control, 1, .full, .word),
-    eptp_index = encode(.control, 2, .full, .word),
-    hlat_prefix_size = encode(.control, 3, .full, .word),
-    pid_pointer_index = encode(.control, 4, .full, .word),
+    vpid = ec(0, .full, .word),
+    posted_interrupt_notification_vector = ec(1, .full, .word),
+    eptp_index = ec(2, .full, .word),
+    hlat_prefix_size = ec(3, .full, .word),
+    pid_pointer_index = ec(4, .full, .word),
     // 32-bit fields.
-    pinbased_vmexec_controls = encode(.control, 0, .full, .dword),
-    procbased_vmexec_controls = encode(.control, 1, .full, .dword),
-    exception_bitmap = encode(.control, 2, .full, .dword),
-    pagefault_error_code_mask = encode(.control, 3, .full, .dword),
-    pagefault_error_code_match = encode(.control, 4, .full, .dword),
-    cr3_target_count = encode(.control, 5, .full, .dword),
-    primary_vmexit_controls = encode(.control, 6, .full, .dword),
-    vmexit_msr_store_count = encode(.control, 7, .full, .dword),
-    vmexit_msr_load_count = encode(.control, 8, .full, .dword),
-    vmentry_controls = encode(.control, 9, .full, .dword),
-    vmentry_msr_load_count = encode(.control, 10, .full, .dword),
-    vmentry_interrupt_information_field = encode(.control, 11, .full, .dword),
-    vmentry_exception_error_code = encode(.control, 12, .full, .dword),
-    vmentry_instruction_length = encode(.control, 13, .full, .dword),
-    tpr_threshold = encode(.control, 14, .full, .dword),
-    secondary_procbased_vmexec_controls = encode(.control, 15, .full, .dword),
-    ple_gap = encode(.control, 16, .full, .dword),
-    ple_window = encode(.control, 17, .full, .dword),
-    instruction_timeouts = encode(.control, 18, .full, .dword),
+    pinbased_vmexec_controls = ec(0, .full, .dword),
+    procbased_vmexec_controls = ec(1, .full, .dword),
+    exception_bitmap = ec(2, .full, .dword),
+    pagefault_error_code_mask = ec(3, .full, .dword),
+    pagefault_error_code_match = ec(4, .full, .dword),
+    cr3_target_count = ec(5, .full, .dword),
+    primary_vmexit_controls = ec(6, .full, .dword),
+    vmexit_msr_store_count = ec(7, .full, .dword),
+    vmexit_msr_load_count = ec(8, .full, .dword),
+    vmentry_controls = ec(9, .full, .dword),
+    vmentry_msr_load_count = ec(10, .full, .dword),
+    vmentry_interrupt_information_field = ec(11, .full, .dword),
+    vmentry_exception_error_code = ec(12, .full, .dword),
+    vmentry_instruction_length = ec(13, .full, .dword),
+    tpr_threshold = ec(14, .full, .dword),
+    secondary_procbased_vmexec_controls = ec(15, .full, .dword),
+    ple_gap = ec(16, .full, .dword),
+    ple_window = ec(17, .full, .dword),
+    instruction_timeouts = ec(18, .full, .dword),
     // 64-bit fields.
-    io_bitmap_a = encode(.control, 0, .full, .qword),
-    io_bitmap_b = encode(.control, 1, .full, .qword),
-    msr_bitmap = encode(.control, 2, .full, .qword),
-    vmexit_msr_store_address = encode(.control, 3, .full, .qword),
-    vmexit_msr_load_address = encode(.control, 4, .full, .qword),
-    vmentry_msr_load_address = encode(.control, 5, .full, .qword),
-    executive_vmcs_pointer = encode(.control, 6, .full, .qword),
-    pml_address = encode(.control, 7, .full, .qword),
-    tsc_offset = encode(.control, 8, .full, .qword),
-    virtual_apic_address = encode(.control, 9, .full, .qword),
-    apic_access_address = encode(.control, 10, .full, .qword),
-    posted_interrupt_descriptor_address = encode(.control, 11, .full, .qword),
-    vm_function_controls = encode(.control, 12, .full, .qword),
-    eptp = encode(.control, 13, .full, .qword),
-    eoi_exit_bitmap0 = encode(.control, 14, .full, .qword),
-    eoi_exit_bitmap1 = encode(.control, 15, .full, .qword),
-    eoi_exit_bitmap2 = encode(.control, 16, .full, .qword),
-    eoi_exit_bitmap3 = encode(.control, 17, .full, .qword),
-    eptp_list_address = encode(.control, 18, .full, .qword),
-    vmread_bitmap = encode(.control, 19, .full, .qword),
-    vmwrite_bitmap = encode(.control, 20, .full, .qword),
-    vexception_information_address = encode(.control, 21, .full, .qword),
-    xss_exiting_bitmap = encode(.control, 22, .full, .qword),
-    encls_exiting_bitmap = encode(.control, 23, .full, .qword),
-    sub_page_permission_table_pointer = encode(.control, 24, .full, .qword),
-    tsc_multiplier = encode(.control, 25, .full, .qword),
-    tertiary_processor_based_vmexec_controls = encode(.control, 26, .full, .qword),
-    enclv_exiting_bitmap = encode(.control, 27, .full, .qword),
-    low_pasid_directory = encode(.control, 28, .full, .qword),
-    high_pasid_directory = encode(.control, 29, .full, .qword),
-    shared_eptp = encode(.control, 30, .full, .qword),
-    pconfig_exiting_bitmap = encode(.control, 31, .full, .qword),
-    hlatp = encode(.control, 32, .full, .qword),
-    pid_pointer_table = encode(.control, 33, .full, .qword),
-    secondary_vmexit_controls = encode(.control, 34, .full, .qword),
-    spec_ctrl_mask = encode(.control, 37, .full, .qword),
-    spec_ctrl_shadow = encode(.control, 38, .full, .qword),
+    io_bitmap_a = ec(0, .full, .qword),
+    io_bitmap_b = ec(1, .full, .qword),
+    msr_bitmap = ec(2, .full, .qword),
+    vmexit_msr_store_address = ec(3, .full, .qword),
+    vmexit_msr_load_address = ec(4, .full, .qword),
+    vmentry_msr_load_address = ec(5, .full, .qword),
+    executive_vmcs_pointer = ec(6, .full, .qword),
+    pml_address = ec(7, .full, .qword),
+    tsc_offset = ec(8, .full, .qword),
+    virtual_apic_address = ec(9, .full, .qword),
+    apic_access_address = ec(10, .full, .qword),
+    posted_interrupt_descriptor_address = ec(11, .full, .qword),
+    vm_function_controls = ec(12, .full, .qword),
+    eptp = ec(13, .full, .qword),
+    eoi_exit_bitmap0 = ec(14, .full, .qword),
+    eoi_exit_bitmap1 = ec(15, .full, .qword),
+    eoi_exit_bitmap2 = ec(16, .full, .qword),
+    eoi_exit_bitmap3 = ec(17, .full, .qword),
+    eptp_list_address = ec(18, .full, .qword),
+    vmread_bitmap = ec(19, .full, .qword),
+    vmwrite_bitmap = ec(20, .full, .qword),
+    vexception_information_address = ec(21, .full, .qword),
+    xss_exiting_bitmap = ec(22, .full, .qword),
+    encls_exiting_bitmap = ec(23, .full, .qword),
+    sub_page_permission_table_pointer = ec(24, .full, .qword),
+    tsc_multiplier = ec(25, .full, .qword),
+    tertiary_processor_based_vmexec_controls = ec(26, .full, .qword),
+    enclv_exiting_bitmap = ec(27, .full, .qword),
+    low_pasid_directory = ec(28, .full, .qword),
+    high_pasid_directory = ec(29, .full, .qword),
+    shared_eptp = ec(30, .full, .qword),
+    pconfig_exiting_bitmap = ec(31, .full, .qword),
+    hlatp = ec(32, .full, .qword),
+    pid_pointer_table = ec(33, .full, .qword),
+    secondary_vmexit_controls = ec(34, .full, .qword),
+    spec_ctrl_mask = ec(37, .full, .qword),
+    spec_ctrl_shadow = ec(38, .full, .qword),
 };
 
 /// Read-only area encodings.
 /// cf. SDM Vol.3C 25.4, Appendix B.
-pub const Ro = enum(u32) {
+pub const ro = enum(u32) {
     // Natural-width fields.
-    exit_qual = encode(.vmexit, 0, .full, .natural),
-    io_rcx = encode(.vmexit, 1, .full, .natural),
-    io_rsi = encode(.vmexit, 2, .full, .natural),
-    io_rdi = encode(.vmexit, 3, .full, .natural),
-    io_rip = encode(.vmexit, 4, .full, .natural),
-    guest_linear_address = encode(.vmexit, 5, .full, .natural),
+    exit_qual = er(0, .full, .natural),
+    io_rcx = er(1, .full, .natural),
+    io_rsi = er(2, .full, .natural),
+    io_rdi = er(3, .full, .natural),
+    io_rip = er(4, .full, .natural),
+    guest_linear_address = er(5, .full, .natural),
     // 32-bit fields.
-    vminstruction_error = encode(.vmexit, 0, .full, .dword),
-    vmexit_reason = encode(.vmexit, 1, .full, .dword),
-    vmexit_interruption_information = encode(.vmexit, 2, .full, .dword),
-    vmexit_interruption_error_code = encode(.vmexit, 3, .full, .dword),
-    idt_vectoring_information = encode(.vmexit, 4, .full, .dword),
-    idt_vectoring_error_code = encode(.vmexit, 5, .full, .dword),
-    vmexit_instruction_length = encode(.vmexit, 6, .full, .dword),
-    vmexit_instruction_information = encode(.vmexit, 7, .full, .dword),
+    vminstruction_error = er(0, .full, .dword),
+    vmexit_reason = er(1, .full, .dword),
+    vmexit_interruption_information = er(2, .full, .dword),
+    vmexit_interruption_error_code = er(3, .full, .dword),
+    idt_vectoring_information = er(4, .full, .dword),
+    idt_vectoring_error_code = er(5, .full, .dword),
+    vmexit_instruction_length = er(6, .full, .dword),
+    vmexit_instruction_information = er(7, .full, .dword),
     // 64-bit fields.
-    guest_physical_address = encode(.vmexit, 0, .full, .qword),
+    guest_physical_address = er(0, .full, .qword),
 };
+
+/// Encodes a VMCS field.
+fn encode(
+    comptime field_type: FieldType,
+    comptime index: u9,
+    comptime access_type: AccessType,
+    comptime width: Width,
+) u32 {
+    return @bitCast(ComponentEncoding{
+        .access_type = access_type,
+        .index = index,
+        .field_type = field_type,
+        .width = width,
+    });
+}
+
+/// Encodes a VMCS field for guest state area.
+fn eg(
+    comptime index: u9,
+    comptime access_type: AccessType,
+    comptime width: Width,
+) u32 {
+    return encode(.guest_state, index, access_type, width);
+}
+
+/// Encodes a VMCS field for host state area.
+fn eh(
+    comptime index: u9,
+    comptime access_type: AccessType,
+    comptime width: Width,
+) u32 {
+    return encode(.host_state, index, access_type, width);
+}
+
+/// Encodes a VMCS field for control area.
+fn ec(
+    comptime index: u9,
+    comptime access_type: AccessType,
+    comptime width: Width,
+) u32 {
+    return encode(.control, index, access_type, width);
+}
+
+/// Encodes a VMCS field for read-only area.
+fn er(
+    comptime index: u9,
+    comptime access_type: AccessType,
+    comptime width: Width,
+) u32 {
+    return encode(.vmexit, index, access_type, width);
+}
 
 /// Access type for VMCS fields.
 /// cf. SDM Vol.3C 25.11.2
@@ -319,24 +318,12 @@ const ComponentEncoding = packed struct(u32) {
     _reserved2: u17 = 0,
 };
 
-fn encode(
-    comptime field_type: FieldType,
-    comptime index: u9,
-    comptime access_type: AccessType,
-    comptime width: Width,
-) u32 {
-    return @bitCast(ComponentEncoding{
-        .access_type = access_type,
-        .index = index,
-        .field_type = field_type,
-        .width = width,
-    });
-}
-
 /// Pin-Based VM-Execution Controls.
 /// Governs the handling of asynchronous events (e.g., interrupts).
 /// cf: SDM Vol3C 25.6.
 pub const PinExecCtrl = packed struct(u32) {
+    const Self = @This();
+
     /// If set to true, external interrupts cause VM exits.
     /// If set to false, they're delivered normally through the guest IDT.
     external_interrupt: bool,
@@ -362,17 +349,17 @@ pub const PinExecCtrl = packed struct(u32) {
     /// to determine how to set reserved bits.
     _reserved3: u24,
 
-    pub fn new() PinExecCtrl {
-        return std.mem.zeroes(PinExecCtrl);
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
     }
 
     pub fn load(self: PinExecCtrl) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmcs.vmwrite(vmcs.Ctrl.pinbased_vmexec_controls, val);
+        try vmx.vmwrite(ctrl.pinbased_vmexec_controls, val);
     }
 
-    pub fn store() VmxError!PinExecCtrl {
-        const val: u32 = @truncate(try vmcs.vmread(vmcs.Ctrl.pinbased_vmexec_controls));
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.pinbased_vmexec_controls));
         return @bitCast(val);
     }
 };
@@ -381,6 +368,8 @@ pub const PinExecCtrl = packed struct(u32) {
 /// Governs the handling of synchronous events (e.g., instructions).
 /// cf. SDM Vol3C 25.6.2.
 pub const PrimaryProcExecCtrl = packed struct(u32) {
+    const Self = @This();
+
     /// Reserved.
     /// You MUST consult IA32_VMX_PROCBASED_CTLS and IA32_VMX_TRUE_PROCBASED_CTLS
     /// to determine how to set reserved bits.
@@ -443,17 +432,17 @@ pub const PrimaryProcExecCtrl = packed struct(u32) {
     /// If set to true, secondary processor-based VM-execution controls are used.
     activate_secondary_controls: bool,
 
-    pub fn new() PrimaryProcExecCtrl {
-        return std.mem.zeroes(PrimaryProcExecCtrl);
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
     }
 
-    pub fn load(self: PrimaryProcExecCtrl) VmxError!void {
+    pub fn load(self: Self) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmcs.vmwrite(vmcs.Ctrl.procbased_vmexec_controls, val);
+        try vmx.vmwrite(ctrl.procbased_vmexec_controls, val);
     }
 
-    pub fn store() VmxError!PrimaryProcExecCtrl {
-        const val: u32 = @truncate(try vmcs.vmread(vmcs.Ctrl.procbased_vmexec_controls));
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.procbased_vmexec_controls));
         return @bitCast(val);
     }
 };
@@ -462,6 +451,8 @@ pub const PrimaryProcExecCtrl = packed struct(u32) {
 /// Governs the handling of synchronous events (e.g., instructions).
 /// cf. SDM Vol3C 25.6.2.
 pub const SecondaryProcExecCtrl = packed struct(u32) {
+    const Self = @This();
+
     /// If set to true, the logical processor treats specially accesses to the page with APIC access address.
     virtualize_apic_accesses: bool,
     /// If set to true, EPT is enabled.
@@ -529,17 +520,17 @@ pub const SecondaryProcExecCtrl = packed struct(u32) {
     ///
     instruction_timeout: bool,
 
-    pub fn new() SecondaryProcExecCtrl {
-        return std.mem.zeroes(SecondaryProcExecCtrl);
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
     }
 
-    pub fn load(self: SecondaryProcExecCtrl) VmxError!void {
+    pub fn load(self: Self) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmcs.vmwrite(vmcs.Ctrl.secondary_procbased_vmexec_controls, val);
+        try vmx.vmwrite(ctrl.secondary_procbased_vmexec_controls, val);
     }
 
-    pub fn store() VmxError!SecondaryProcExecCtrl {
-        const val: u32 = @truncate(try vmcs.vmread(vmcs.Ctrl.secondary_procbased_vmexec_controls));
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.secondary_procbased_vmexec_controls));
         return @bitCast(val);
     }
 };
@@ -577,6 +568,8 @@ pub const ExceptionBitmap = packed struct(u32) {
 
 /// Primary VM-Exit Controls.
 pub const PrimaryExitCtrl = packed struct(u32) {
+    const Self = @This();
+
     /// Reserved.
     /// You MUST consult IA32_VMX_EXIT_CTLS and IA32_VMX_TRUE_EXIT_CTLS
     /// to determine how to set reserved bits.
@@ -627,23 +620,25 @@ pub const PrimaryExitCtrl = packed struct(u32) {
     /// If set to true, the secondary VM-exit controls are used.
     activate_secondary_controls: bool,
 
-    pub fn new() PrimaryExitCtrl {
-        return std.mem.zeroes(PrimaryExitCtrl);
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
     }
 
-    pub fn load(self: PrimaryExitCtrl) VmxError!void {
+    pub fn load(self: Self) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmcs.vmwrite(vmcs.Ctrl.primary_vmexit_controls, val);
+        try vmx.vmwrite(ctrl.primary_vmexit_controls, val);
     }
 
-    pub fn store() VmxError!PrimaryExitCtrl {
-        const val: u32 = @truncate(try vmcs.vmread(vmcs.Ctrl.primary_vmexit_controls));
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.primary_vmexit_controls));
         return @bitCast(val);
     }
 };
 
 /// Secondary VM-Exit Controls.
 pub const SecondaryExitCtrl = packed struct(u64) {
+    const Self = @This();
+
     /// Reserved.
     /// You MUST consult IA32_VMX_EXIT_CTLS2 to determine how to set reserved bits.
     _reserved1: u3,
@@ -652,13 +647,15 @@ pub const SecondaryExitCtrl = packed struct(u64) {
     /// Reserved.
     _reserved2: u60,
 
-    pub fn new() SecondaryExitCtrl {
-        return std.mem.zeroes(SecondaryExitCtrl);
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
     }
 };
 
 /// VM-Entry Controls.
 pub const EntryCtrl = packed struct(u32) {
+    pub const Self = @This();
+
     /// Reserved.
     /// You MUST consult IA32_VMX_ENTRY_CTLS and IA32_VMX_TRUE_ENTRY_CTLS
     /// to determine how to set reserved bits.
@@ -698,56 +695,18 @@ pub const EntryCtrl = packed struct(u32) {
     /// Reserved.
     _reserved4: u9,
 
-    pub fn new() EntryCtrl {
-        return std.mem.zeroes(EntryCtrl);
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
     }
 
-    pub fn load(self: EntryCtrl) VmxError!void {
+    pub fn load(self: Self) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmcs.vmwrite(vmcs.Ctrl.vmentry_controls, val);
+        try vmx.vmwrite(ctrl.vmentry_controls, val);
     }
 
-    pub fn store() VmxError!EntryCtrl {
-        const val: u32 = @truncate(try vmcs.vmread(vmcs.Ctrl.vmentry_controls));
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.vmentry_controls));
         return @bitCast(val);
-    }
-};
-
-/// Access rights of segments that can be set in guest-state area.
-pub const SegmentRights = packed struct(u32) {
-    const gdt = @import("../gdt.zig");
-
-    /// Segment is accessed.
-    accessed: bool = true,
-    /// Readable / Writable.
-    rw: bool,
-    /// Direction / Conforming.
-    dc: bool,
-    /// Executable.
-    executable: bool,
-    /// Descriptor type.
-    desc_type: gdt.DescriptorType,
-    /// Descriptor privilege level.
-    dpl: u2,
-    /// Present.
-    present: bool = true,
-    /// Reserved.
-    _reserved1: u4 = 0,
-    /// Available for use by system software.
-    avl: bool = false,
-    /// Long mode.
-    long: bool = false,
-    /// Size flag.
-    db: u1,
-    /// Granularity.
-    granularity: gdt.Granularity,
-    /// Unusable.
-    unusable: bool = false,
-    /// Reserved.
-    _reserved2: u15 = 0,
-
-    pub fn from(val: anytype) SegmentRights {
-        return @bitCast(@as(u32, @truncate(val)));
     }
 };
 

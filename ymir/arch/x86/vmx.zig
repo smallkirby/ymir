@@ -22,29 +22,14 @@ const msr = @import("vmx/msr.zig");
 const cr = @import("vmx/cr.zig");
 const pg = @import("vmx/page.zig");
 const io = @import("vmx/io.zig");
+const vmx = @import("vmx/common.zig");
 const dbg = @import("vmx/dbg.zig");
 
-const vmwrite = vmcs.vmwrite;
-const vmread = vmcs.vmread;
+const vmwrite = vmx.vmwrite;
+const vmread = vmx.vmread;
 const isCanonical = @import("page.zig").isCanonical;
 
-pub const VmxError = error{
-    /// VMCS pointer is invalid. No status available.
-    VmxStatusUnavailable,
-    /// VMCS pointer is valid but the operation failed.
-    /// If a current VMCS is active, error status is stored in VM-instruction error field.
-    VmxStatusAvailable,
-    /// Failed to allocate memory.
-    OutOfMemory,
-    /// Failed to subscribe to interrupts.
-    InterruptFull,
-};
-
-/// Read RFLAGS and checks if a VMX instruction has failed.
-pub fn vmxtry(rflags: u64) VmxError!void {
-    const flags: am.FlagsRegister = @bitCast(rflags);
-    return if (flags.cf) VmxError.VmxStatusUnavailable else if (flags.zf) VmxError.VmxStatusAvailable;
-}
+pub const VmxError = vmx.VmxError;
 
 /// Virtual logical CPU.
 /// TODO: must be per-CPU variable. Currently, it only supports single CPU.
@@ -188,7 +173,7 @@ pub const Vcpu = struct {
         self.eptp = eptp;
         self.guest_base = ymir.mem.virt2phys(host_pages.ptr);
 
-        try vmwrite(vmcs.Ctrl.eptp, eptp);
+        try vmwrite(vmcs.ctrl.eptp, eptp);
     }
 
     /// Start executing vCPU.
@@ -241,7 +226,7 @@ pub const Vcpu = struct {
         if (success) {
             return;
         } else {
-            const inst_err = try vmcs.vmread(vmcs.Ro.vminstruction_error);
+            const inst_err = try vmread(vmcs.ro.vminstruction_error);
             return if (inst_err != 0) VmxError.VmxStatusAvailable else VmxError.VmxStatusUnavailable;
         }
     }
@@ -276,8 +261,8 @@ pub const Vcpu = struct {
                     );
                 }
 
-                try vmwrite(vmcs.Guest.activity_state, 0);
-                try vmwrite(vmcs.Guest.interruptibility_state, 0);
+                try vmwrite(vmcs.guest.activity_state, 0);
+                try vmwrite(vmcs.guest.interruptibility_state, 0);
                 try self.stepNextInst();
             },
             .invlpg, .invpcid => { // TODO: should not flush entire TLB for INVLPG
@@ -297,8 +282,8 @@ pub const Vcpu = struct {
             .ept => {
                 const q = try getExitQual(qual.QualEptViolation);
                 log.err("EPT violation: {?}", .{q});
-                const lin = try vmread(vmcs.Ro.guest_linear_address);
-                const phys = try vmread(vmcs.Ro.guest_physical_address);
+                const lin = try vmread(vmcs.ro.guest_linear_address);
+                const phys = try vmread(vmcs.ro.guest_physical_address);
                 log.err("Guest linear address: 0x{X:0>16}", .{lin});
                 log.err("Guest physical address: 0x{X:0>16}", .{phys});
                 self.abort();
@@ -350,9 +335,9 @@ pub const Vcpu = struct {
 
         const page = @import("page.zig");
         var rbp = self.guest_regs.rbp;
-        var rip = try vmread(vmcs.Guest.rip);
+        var rip = try vmread(vmcs.guest.rip);
         var i: usize = 0;
-        const cr3 = try vmread(vmcs.Guest.cr3);
+        const cr3 = try vmread(vmcs.guest.cr3);
 
         while (true) : (i += 1) {
             log.err("#{d:0>2}: 0x{X:0>16}", .{ i, rip });
@@ -374,8 +359,8 @@ pub const Vcpu = struct {
         log.err("=== vCPU Information ===", .{});
         log.err("[Guest State]", .{});
         log.err("IA32-e: {}", .{self.ia32_enabled});
-        log.err("RIP: 0x{X:0>16}", .{try vmread(vmcs.Guest.rip)});
-        log.err("RSP: 0x{X:0>16}", .{try vmread(vmcs.Guest.rsp)});
+        log.err("RIP: 0x{X:0>16}", .{try vmread(vmcs.guest.rip)});
+        log.err("RSP: 0x{X:0>16}", .{try vmread(vmcs.guest.rsp)});
         log.err("RAX: 0x{X:0>16}", .{self.guest_regs.rax});
         log.err("RBX: 0x{X:0>16}", .{self.guest_regs.rbx});
         log.err("RCX: 0x{X:0>16}", .{self.guest_regs.rcx});
@@ -391,16 +376,16 @@ pub const Vcpu = struct {
         log.err("R13: 0x{X:0>16}", .{self.guest_regs.r13});
         log.err("R14: 0x{X:0>16}", .{self.guest_regs.r14});
         log.err("R15: 0x{X:0>16}", .{self.guest_regs.r15});
-        log.err("CR0: 0x{X:0>16}", .{try vmread(vmcs.Guest.cr0)});
-        log.err("CR3: 0x{X:0>16}", .{try vmread(vmcs.Guest.cr3)});
-        log.err("CR4: 0x{X:0>16}", .{try vmread(vmcs.Guest.cr4)});
-        log.err("EFER:0x{X:0>16}", .{try vmread(vmcs.Guest.efer)});
+        log.err("CR0: 0x{X:0>16}", .{try vmread(vmcs.guest.cr0)});
+        log.err("CR3: 0x{X:0>16}", .{try vmread(vmcs.guest.cr3)});
+        log.err("CR4: 0x{X:0>16}", .{try vmread(vmcs.guest.cr4)});
+        log.err("EFER:0x{X:0>16}", .{try vmread(vmcs.guest.efer)});
         log.err(
             "CS : 0x{X:0>4} 0x{X:0>16} 0x{X:0>8}",
             .{
-                try vmread(vmcs.Guest.cs_sel),
-                try vmread(vmcs.Guest.cs_base),
-                try vmread(vmcs.Guest.cs_limit),
+                try vmread(vmcs.guest.cs_sel),
+                try vmread(vmcs.guest.cs_base),
+                try vmread(vmcs.guest.cs_limit),
             },
         );
         log.err("Guest physical base: 0x{X:0>16}", .{self.guest_base});
@@ -408,8 +393,8 @@ pub const Vcpu = struct {
 
     /// Increment RIP by the length of the current instruction.
     fn stepNextInst(_: *Self) VmxError!void {
-        const rip = try vmread(vmcs.Guest.rip);
-        try vmwrite(vmcs.Guest.rip, rip + try vmread(vmcs.Ro.vmexit_instruction_length));
+        const rip = try vmread(vmcs.guest.rip);
+        try vmwrite(vmcs.guest.rip, rip + try vmread(vmcs.ro.vmexit_instruction_length));
     }
 
     /// Inject external interrupt to the guest if possible.
@@ -426,7 +411,7 @@ pub const Vcpu = struct {
         if (self.pic.primary_phase != .inited) return false;
 
         // Guest is blocking interrupts.
-        const eflags: am.FlagsRegister = @bitCast(try vmread(vmcs.Guest.rflags));
+        const eflags: am.FlagsRegister = @bitCast(try vmread(vmcs.guest.rflags));
         if (!eflags.ief) return false;
 
         // Iterate all possible IRQs and inject one if possible.
@@ -457,7 +442,7 @@ pub const Vcpu = struct {
                 .nmi_unblocking = false,
                 .valid = true,
             };
-            try vmwrite(vmcs.Ctrl.vmentry_interrupt_information_field, intr_info);
+            try vmwrite(vmcs.ctrl.vmentry_interrupt_information_field, intr_info);
 
             // Clear the pending IRQ.
             self.pending_irq &= ~irq_bit;
@@ -748,9 +733,9 @@ fn storeHostMsrs(vcpu: *Vcpu) void {
 
 /// Update MSR count fields in VMCS.
 fn updateVmcsMsrs(vcpu: *Vcpu) VmxError!void {
-    try vmwrite(vmcs.Ctrl.vmexit_msr_load_count, vcpu.host_msr.num_ents);
-    try vmwrite(vmcs.Ctrl.vmexit_msr_store_count, vcpu.guest_msr.num_ents);
-    try vmwrite(vmcs.Ctrl.vmentry_msr_load_count, vcpu.guest_msr.num_ents);
+    try vmwrite(vmcs.ctrl.vmexit_msr_load_count, vcpu.host_msr.num_ents);
+    try vmwrite(vmcs.ctrl.vmexit_msr_store_count, vcpu.guest_msr.num_ents);
+    try vmwrite(vmcs.ctrl.vmentry_msr_load_count, vcpu.guest_msr.num_ents);
 }
 
 /// Register host-saved and guest-saved MSRs.
@@ -778,9 +763,9 @@ fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
     gm.set(.kernel_gs_base, 0);
 
     // Setup VMCS.
-    try vmwrite(vmcs.Ctrl.vmexit_msr_load_address, hm.phys());
-    try vmwrite(vmcs.Ctrl.vmexit_msr_store_address, gm.phys());
-    try vmwrite(vmcs.Ctrl.vmentry_msr_load_address, gm.phys());
+    try vmwrite(vmcs.ctrl.vmexit_msr_load_address, hm.phys());
+    try vmwrite(vmcs.ctrl.vmexit_msr_store_address, gm.phys());
+    try vmwrite(vmcs.ctrl.vmentry_msr_load_address, gm.phys());
     try updateVmcsMsrs(vcpu);
 }
 
@@ -830,17 +815,17 @@ fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
         ppb_exec_ctrl2,
         am.readMsr(.vmx_procbased_ctls2),
     ).load();
-    try vmwrite(vmcs.Ctrl.xss_exiting_bitmap, 0); // Don't exit on XSAVES/XRSTORS.
+    try vmwrite(vmcs.ctrl.xss_exiting_bitmap, 0); // Don't exit on XSAVES/XRSTORS.
 
     // Exit on access to CR0/CR4.
-    try vmwrite(vmcs.Ctrl.cr0_mask, std.math.maxInt(u64));
-    try vmwrite(vmcs.Ctrl.cr4_mask, std.math.maxInt(u64));
-    try vmwrite(vmcs.Ctrl.cr3_target_count, 0);
+    try vmwrite(vmcs.ctrl.cr0_mask, std.math.maxInt(u64));
+    try vmwrite(vmcs.ctrl.cr4_mask, std.math.maxInt(u64));
+    try vmwrite(vmcs.ctrl.cr3_target_count, 0);
 
     // Exception bitmap
     var exception_bitmap: u32 = 0;
     exception_bitmap |= 1 << 13; // General protection fault
-    try vmwrite(vmcs.Ctrl.exception_bitmap, exception_bitmap);
+    try vmwrite(vmcs.ctrl.exception_bitmap, exception_bitmap);
 }
 
 /// Set up VM-Exit control fields.
@@ -859,8 +844,8 @@ fn setupExitCtrls(_: *Vcpu) VmxError!void {
         if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls),
     ).load();
 
-    try vmwrite(vmcs.Ctrl.vmexit_msr_load_count, 0);
-    try vmwrite(vmcs.Ctrl.vmexit_msr_store_count, 0);
+    try vmwrite(vmcs.ctrl.vmexit_msr_load_count, 0);
+    try vmwrite(vmcs.ctrl.vmexit_msr_store_count, 0);
 }
 
 /// Set up VM-Entry control fields.
@@ -877,36 +862,36 @@ fn setupEntryCtrls(_: *Vcpu) VmxError!void {
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
     ).load();
 
-    try vmwrite(vmcs.Ctrl.vmentry_msr_load_count, 0);
+    try vmwrite(vmcs.ctrl.vmentry_msr_load_count, 0);
 }
 
 /// Set up host state.
 /// cf. SDM Vol.3C 27.2.2.
 fn setupHostState(_: *Vcpu) VmxError!void {
     // Control registers.
-    try vmwrite(vmcs.Host.cr0, am.readCr0());
-    try vmwrite(vmcs.Host.cr3, am.readCr3());
-    try vmwrite(vmcs.Host.cr4, am.readCr4());
+    try vmwrite(vmcs.host.cr0, am.readCr0());
+    try vmwrite(vmcs.host.cr3, am.readCr3());
+    try vmwrite(vmcs.host.cr4, am.readCr4());
 
     // General registers.
-    try vmwrite(vmcs.Host.rip, &Vcpu.asmVmExit);
+    try vmwrite(vmcs.host.rip, &Vcpu.asmVmExit);
 
     // Segment registers.
-    try vmwrite(vmcs.Host.cs_sel, am.readSegSelector(.cs));
-    try vmwrite(vmcs.Host.ss_sel, am.readSegSelector(.ss));
-    try vmwrite(vmcs.Host.ds_sel, am.readSegSelector(.ds));
-    try vmwrite(vmcs.Host.es_sel, am.readSegSelector(.es));
-    try vmwrite(vmcs.Host.fs_sel, am.readSegSelector(.fs));
-    try vmwrite(vmcs.Host.gs_sel, am.readSegSelector(.gs));
-    try vmwrite(vmcs.Host.tr_sel, am.readSegSelector(.tr));
-    try vmwrite(vmcs.Host.gs_base, am.readMsr(.gs_base));
-    try vmwrite(vmcs.Host.fs_base, am.readMsr(.fs_base));
-    try vmwrite(vmcs.Host.tr_base, 0); // Not used in Ymir.
-    try vmwrite(vmcs.Host.gdtr_base, am.sgdt().base);
-    try vmwrite(vmcs.Host.idtr_base, am.sidt().base);
+    try vmwrite(vmcs.host.cs_sel, am.readSegSelector(.cs));
+    try vmwrite(vmcs.host.ss_sel, am.readSegSelector(.ss));
+    try vmwrite(vmcs.host.ds_sel, am.readSegSelector(.ds));
+    try vmwrite(vmcs.host.es_sel, am.readSegSelector(.es));
+    try vmwrite(vmcs.host.fs_sel, am.readSegSelector(.fs));
+    try vmwrite(vmcs.host.gs_sel, am.readSegSelector(.gs));
+    try vmwrite(vmcs.host.tr_sel, am.readSegSelector(.tr));
+    try vmwrite(vmcs.host.gs_base, am.readMsr(.gs_base));
+    try vmwrite(vmcs.host.fs_base, am.readMsr(.fs_base));
+    try vmwrite(vmcs.host.tr_base, 0); // Not used in Ymir.
+    try vmwrite(vmcs.host.gdtr_base, am.sgdt().base);
+    try vmwrite(vmcs.host.idtr_base, am.sidt().base);
 
     // MSR.
-    try vmwrite(vmcs.Host.efer, am.readMsr(.efer));
+    try vmwrite(vmcs.host.efer, am.readMsr(.efer));
 }
 
 fn setupGuestState(vcpu: *Vcpu) VmxError!void {
@@ -916,42 +901,42 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
     cr0.ne = true; // Numeric error
     cr0.et = true; // Extension type
     cr0.pg = false; // Paging
-    var cr4: am.Cr4 = @bitCast(try vmread(vmcs.Guest.cr4));
+    var cr4: am.Cr4 = @bitCast(try vmread(vmcs.guest.cr4));
     cr4.pae = false;
     cr4.vmxe = true; // TODO: Should we expose this bit to guest?? (this is requirement for successful VM-entry)
-    try vmwrite(vmcs.Guest.cr0, cr0);
-    try vmwrite(vmcs.Ctrl.cr0_read_shadow, cr0);
-    try vmwrite(vmcs.Guest.cr4, cr4);
-    try vmwrite(vmcs.Ctrl.cr4_read_shadow, cr4);
+    try vmwrite(vmcs.guest.cr0, cr0);
+    try vmwrite(vmcs.ctrl.cr0_read_shadow, cr0);
+    try vmwrite(vmcs.guest.cr4, cr4);
+    try vmwrite(vmcs.ctrl.cr4_read_shadow, cr4);
 
     // Segment registers.
     {
         // Base
-        try vmwrite(vmcs.Guest.cs_base, 0);
-        try vmwrite(vmcs.Guest.ss_base, 0);
-        try vmwrite(vmcs.Guest.ds_base, 0);
-        try vmwrite(vmcs.Guest.es_base, 0);
-        try vmwrite(vmcs.Guest.fs_base, 0);
-        try vmwrite(vmcs.Guest.gs_base, 0);
-        try vmwrite(vmcs.Guest.tr_base, 0);
-        try vmwrite(vmcs.Guest.gdtr_base, 0);
-        try vmwrite(vmcs.Guest.idtr_base, 0);
-        try vmwrite(vmcs.Guest.ldtr_base, 0xDEAD00); // Marker to indicate the guest.
+        try vmwrite(vmcs.guest.cs_base, 0);
+        try vmwrite(vmcs.guest.ss_base, 0);
+        try vmwrite(vmcs.guest.ds_base, 0);
+        try vmwrite(vmcs.guest.es_base, 0);
+        try vmwrite(vmcs.guest.fs_base, 0);
+        try vmwrite(vmcs.guest.gs_base, 0);
+        try vmwrite(vmcs.guest.tr_base, 0);
+        try vmwrite(vmcs.guest.gdtr_base, 0);
+        try vmwrite(vmcs.guest.idtr_base, 0);
+        try vmwrite(vmcs.guest.ldtr_base, 0xDEAD00); // Marker to indicate the guest.
 
         // Limit
-        try vmwrite(vmcs.Guest.cs_limit, @as(u64, std.math.maxInt(u32)));
-        try vmwrite(vmcs.Guest.ss_limit, @as(u64, std.math.maxInt(u32)));
-        try vmwrite(vmcs.Guest.ds_limit, @as(u64, std.math.maxInt(u32)));
-        try vmwrite(vmcs.Guest.es_limit, @as(u64, std.math.maxInt(u32)));
-        try vmwrite(vmcs.Guest.fs_limit, @as(u64, std.math.maxInt(u32)));
-        try vmwrite(vmcs.Guest.gs_limit, @as(u64, std.math.maxInt(u32)));
-        try vmwrite(vmcs.Guest.tr_limit, 0);
-        try vmwrite(vmcs.Guest.ldtr_limit, 0);
-        try vmwrite(vmcs.Guest.idtr_limit, 0);
-        try vmwrite(vmcs.Guest.gdtr_limit, 0);
+        try vmwrite(vmcs.guest.cs_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.guest.ss_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.guest.ds_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.guest.es_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.guest.fs_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.guest.gs_limit, @as(u64, std.math.maxInt(u32)));
+        try vmwrite(vmcs.guest.tr_limit, 0);
+        try vmwrite(vmcs.guest.ldtr_limit, 0);
+        try vmwrite(vmcs.guest.idtr_limit, 0);
+        try vmwrite(vmcs.guest.gdtr_limit, 0);
 
         // Access Rights
-        const cs_right = vmcs.SegmentRights{
+        const cs_right = vmx.SegmentRights{
             .rw = true,
             .dc = false,
             .executable = true,
@@ -961,7 +946,7 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
             .long = false,
             .db = 1,
         };
-        const ds_right = vmcs.SegmentRights{
+        const ds_right = vmx.SegmentRights{
             .rw = true,
             .dc = false,
             .executable = false,
@@ -971,7 +956,7 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
             .long = false,
             .db = 1,
         };
-        const tr_right = vmcs.SegmentRights{
+        const tr_right = vmx.SegmentRights{
             .rw = true,
             .dc = false,
             .executable = true,
@@ -981,7 +966,7 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
             .long = false,
             .db = 0,
         };
-        const ldtr_right = vmcs.SegmentRights{
+        const ldtr_right = vmx.SegmentRights{
             .accessed = false,
             .rw = true,
             .dc = false,
@@ -992,49 +977,49 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
             .long = false,
             .db = 0,
         };
-        try vmwrite(vmcs.Guest.cs_rights, cs_right);
-        try vmwrite(vmcs.Guest.ss_rights, ds_right);
-        try vmwrite(vmcs.Guest.ds_rights, ds_right);
-        try vmwrite(vmcs.Guest.es_rights, ds_right);
-        try vmwrite(vmcs.Guest.fs_rights, ds_right);
-        try vmwrite(vmcs.Guest.gs_rights, ds_right);
-        try vmwrite(vmcs.Guest.tr_rights, tr_right);
-        try vmwrite(vmcs.Guest.ldtr_rights, ldtr_right);
+        try vmwrite(vmcs.guest.cs_rights, cs_right);
+        try vmwrite(vmcs.guest.ss_rights, ds_right);
+        try vmwrite(vmcs.guest.ds_rights, ds_right);
+        try vmwrite(vmcs.guest.es_rights, ds_right);
+        try vmwrite(vmcs.guest.fs_rights, ds_right);
+        try vmwrite(vmcs.guest.gs_rights, ds_right);
+        try vmwrite(vmcs.guest.tr_rights, tr_right);
+        try vmwrite(vmcs.guest.ldtr_rights, ldtr_right);
 
         // Selector
-        try vmwrite(vmcs.Guest.cs_sel, 0);
-        try vmwrite(vmcs.Guest.ss_sel, 0);
-        try vmwrite(vmcs.Guest.ds_sel, 0);
-        try vmwrite(vmcs.Guest.es_sel, 0);
-        try vmwrite(vmcs.Guest.fs_sel, 0);
-        try vmwrite(vmcs.Guest.gs_sel, 0);
-        try vmwrite(vmcs.Guest.tr_sel, 0);
-        try vmwrite(vmcs.Guest.ldtr_sel, 0);
+        try vmwrite(vmcs.guest.cs_sel, 0);
+        try vmwrite(vmcs.guest.ss_sel, 0);
+        try vmwrite(vmcs.guest.ds_sel, 0);
+        try vmwrite(vmcs.guest.es_sel, 0);
+        try vmwrite(vmcs.guest.fs_sel, 0);
+        try vmwrite(vmcs.guest.gs_sel, 0);
+        try vmwrite(vmcs.guest.tr_sel, 0);
+        try vmwrite(vmcs.guest.ldtr_sel, 0);
 
         // FS/GS base
-        try vmwrite(vmcs.Guest.fs_base, 0);
-        try vmwrite(vmcs.Guest.gs_base, 0);
+        try vmwrite(vmcs.guest.fs_base, 0);
+        try vmwrite(vmcs.guest.gs_base, 0);
     }
 
     // MSR
-    try vmwrite(vmcs.Guest.sysenter_cs, 0);
-    try vmwrite(vmcs.Guest.sysenter_esp, 0);
-    try vmwrite(vmcs.Guest.sysenter_eip, 0);
-    try vmwrite(vmcs.Guest.efer, 0);
+    try vmwrite(vmcs.guest.sysenter_cs, 0);
+    try vmwrite(vmcs.guest.sysenter_esp, 0);
+    try vmwrite(vmcs.guest.sysenter_eip, 0);
+    try vmwrite(vmcs.guest.efer, 0);
 
     // General registers.
-    try vmwrite(vmcs.Guest.rflags, am.FlagsRegister.new());
+    try vmwrite(vmcs.guest.rflags, am.FlagsRegister.new());
 
     // Other crucial fields.
-    try vmwrite(vmcs.Guest.vmcs_link_pointer, std.math.maxInt(u64));
-    try vmwrite(vmcs.Guest.rip, linux.layout.kernel_base);
+    try vmwrite(vmcs.guest.vmcs_link_pointer, std.math.maxInt(u64));
+    try vmwrite(vmcs.guest.rip, linux.layout.kernel_base);
     vcpu.guest_regs.rsi = linux.layout.bootparam;
 }
 
 /// Set host stack pointer.
 /// This function is called directly from assembly.
 export fn setHostStack(rsp: u64) callconv(.C) void {
-    vmcs.vmwrite(vmcs.Host.rsp, rsp) catch {};
+    vmwrite(vmcs.host.rsp, rsp) catch {};
 }
 
 /// Adjust mandatory bits of a control field.
@@ -1048,37 +1033,37 @@ fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
 
 /// Get a instruction error number from VMCS.
 fn getInstError() VmxError!InstructionError {
-    return @enumFromInt(@as(u32, @truncate(try vmread(vmcs.Ro.vminstruction_error))));
+    return @enumFromInt(@as(u32, @truncate(try vmread(vmcs.ro.vminstruction_error))));
 }
 
 /// Get a VM-exit reason from VMCS.
 fn getExitReason() VmxError!ExitInformation {
-    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_reason))));
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.ro.vmexit_reason))));
 }
 
 /// Get a VM-exit qualification from VMCS.
 fn getExitQual(T: anytype) VmxError!T {
-    return @bitCast(@as(u64, try vmread(vmcs.Ro.exit_qual)));
+    return @bitCast(@as(u64, try vmread(vmcs.ro.exit_qual)));
 }
 
 /// Get a VM-entry interrupt information from VMCS.
 pub fn getEntryIntrInfo() VmxError!InterruptInfo {
-    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ctrl.vmentry_interrupt_information_field))));
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.ctrl.vmentry_interrupt_information_field))));
 }
 
 /// Get a VM-exit interrupt information from VMCS.
 fn getExitIntrInfo() VmxError!InterruptInfo {
-    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.vmexit_interruption_information))));
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.ro.vmexit_interruption_information))));
 }
 
 /// Get a IDT-vectoring information from VMCS.
 fn getIdtVecInfo() VmxError!InterruptInfo {
-    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Ro.idt_vectoring_information))));
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.ro.idt_vectoring_information))));
 }
 
 /// Get a interruptibility state from VMCS.
 pub fn getInterruptibilityState() VmxError!InterruptibilityState {
-    return @bitCast(@as(u32, @truncate(try vmread(vmcs.Guest.interruptibility_state))));
+    return @bitCast(@as(u32, @truncate(try vmread(vmcs.guest.interruptibility_state))));
 }
 
 const VmxonRegion = packed struct {
@@ -1390,8 +1375,8 @@ const IoBitmap = struct {
         @memset(map_a, 0xFF);
         @memset(map_b, 0xFF);
 
-        try vmwrite(vmcs.Ctrl.io_bitmap_a, mem.virt2phys(map_a.ptr));
-        try vmwrite(vmcs.Ctrl.io_bitmap_b, mem.virt2phys(map_b.ptr));
+        try vmwrite(vmcs.ctrl.io_bitmap_a, mem.virt2phys(map_a.ptr));
+        try vmwrite(vmcs.ctrl.io_bitmap_b, mem.virt2phys(map_b.ptr));
 
         return IoBitmap{
             .map_a = map_a,
