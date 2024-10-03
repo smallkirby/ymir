@@ -1,23 +1,23 @@
 const is_test = @import("builtin").is_test;
 
+const atomic = @import("std").atomic;
+
 const ymir = @import("ymir");
 const arch = ymir.arch;
 
 pub const SpinLock = struct {
-    _lock: State = .unlocked,
+    const State = atomic.Value(bool);
 
-    pub const State = enum(u1) {
-        unlocked = 0,
-        locked = 1,
-    };
+    /// State of the spin lock.
+    /// true when locked, false when unlocked.
+    _state: State = State.init(false),
 
     /// Lock the spin lock.
     pub inline fn lock(self: *SpinLock) void {
-        while (@cmpxchgWeak(
-            @TypeOf(self._lock),
-            &self._lock,
-            .unlocked,
-            .locked,
+        atomic.spinLoopHint();
+        while (self._state.cmpxchgWeak(
+            false,
+            true,
             .acq_rel,
             .monotonic,
         ) != null) {
@@ -41,14 +41,7 @@ pub const SpinLock = struct {
 
     /// Unlock the spin lock.
     pub inline fn unlock(self: *SpinLock) void {
-        _ = @cmpxchgWeak(
-            @TypeOf(self._lock),
-            &self._lock,
-            .locked,
-            .unlocked,
-            .acq_rel,
-            .monotonic,
-        );
+        self._state.store(false, .release);
     }
 
     /// Unlock the spin lock and restore IRQ mask.
