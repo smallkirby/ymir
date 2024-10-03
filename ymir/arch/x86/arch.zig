@@ -63,7 +63,7 @@ pub inline fn enableCpuid() void {
 
 pub fn getCpuVendorId() [12]u8 {
     var ret: [12]u8 = undefined;
-    const regs = am.cpuid(cpuid.functions.vendor_id);
+    const regs = cpuid.Leaf.maximum_input.query(null);
 
     for (0..4) |i| {
         const b: usize = (regs.ebx >> @truncate(i * 8));
@@ -80,16 +80,11 @@ pub fn getCpuVendorId() [12]u8 {
     return ret;
 }
 
-/// Get the feature information from CPUID.
-pub fn getFeatureInformation() cpuid.CpuidInformation {
-    const eflags = am.readEflags();
-    if (!eflags.id) @panic("CPUID is not enabled");
-
-    const regs = am.cpuid(cpuid.functions.feature_information);
-    return cpuid.CpuidInformation{
-        .ecx = @bitCast(regs.ecx),
-        .edx = @bitCast(regs.edx),
-    };
+/// Check if virtualization technology is supported.
+pub fn isVmxSupported() bool {
+    const regs = cpuid.Leaf.maximum_input.query(null);
+    const ecx: cpuid.FeatureInfoEcx = @bitCast(regs.ecx);
+    return ecx.vmx;
 }
 
 /// Enable supported XSAVE features.
@@ -100,7 +95,7 @@ pub fn enableXstateFeature() void {
     am.loadCr4(cr4);
 
     // Enable supported XSAVE features.
-    const ext_info = am.cpuidEcx(0xD, 0); // Processor extended state enumeration
+    const ext_info = cpuid.Leaf.ext_enumeration.query(0);
     const max_features = ((@as(u64, ext_info.edx) & 0xFFFF_FFFF) << 32) + ext_info.eax;
     am.xsetbv(0, max_features); // XCR0 enabled mask
 }

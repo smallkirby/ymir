@@ -14,7 +14,6 @@ const gdt = @import("gdt.zig");
 const serial = @import("serial.zig");
 const intr = @import("interrupt.zig");
 const vmcs = @import("vmx/vmcs.zig");
-const regs = @import("vmx/regs.zig");
 const qual = @import("vmx/qual.zig");
 const ept = @import("vmx/ept.zig");
 const cpuid = @import("vmx/cpuid.zig");

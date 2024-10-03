@@ -2,20 +2,19 @@
 //! Information returned by CPUID instruction is listed in SDM Chapter 3.3 Table 3-8.
 
 const std = @import("std");
-const log = std.log.scoped(.cpuid);
+const log = std.log.scoped(.vmcpuid);
 
 const vmx = @import("../vmx.zig");
 const Vcpu = vmx.Vcpu;
 const VmxError = vmx.VmxError;
 const cpuid = @import("../cpuid.zig");
+const Leaf = cpuid.Leaf;
 const am = @import("../asm.zig");
 
-// CPUID[Leaf=1] return value.
-// Linux defines the mandatory features in this leaf.
-const feature_info_ecx = cpuid.FeatureInformationEcx{
+const feature_info_ecx = cpuid.FeatureInfoEcx{
     .pcid = true,
 };
-const feature_info_edx = cpuid.FeatureInformationEdx{
+const feature_info_edx = cpuid.FeatureInfoEdx{
     .fpu = true,
     .vme = true,
     .de = true,
@@ -27,12 +26,11 @@ const feature_info_edx = cpuid.FeatureInformationEdx{
     .pge = true,
     .cmov = true,
     .pse36 = true,
-    .acpi = true, // TODO
+    .acpi = false,
     .fxsr = true,
     .sse = true,
     .sse2 = true,
 };
-// CPUID[Leaf=7,Sub=0] return value.
 const ext_feature0_ebx = cpuid.ExtFeatureEbx0{
     .fsgsbase = false, // NOTE: rdfsbase seemingly cannot be intercepted.
     .smep = true,
@@ -53,7 +51,7 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
             setValue(&regs.rdx, 0x72_69_6D_59); // Ymir
         },
         .version_info => {
-            const orig = am.cpuid(1);
+            const orig = Leaf.query(.version_info, null);
             setValue(&regs.rax, orig.eax); // Version information.
             setValue(&regs.rbx, orig.ebx); // Brand index / CLFLUSH line size / Addressable IDs / Initial APIC ID
             setValue(&regs.rcx, @as(u32, @bitCast(feature_info_ecx)));
@@ -66,7 +64,7 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
             setValue(&regs.rdx, 0); // Reserved.
         },
         .extended_processor_signature => {
-            const orig = am.cpuid(@intFromEnum(Leaf.extended_processor_signature));
+            const orig = Leaf.extended_processor_signature.query(null);
             setValue(&regs.rax, 0); // Extended processor signature and feature bits.
             setValue(&regs.rbx, 0); // Reserved.
             setValue(&regs.rcx, orig.ecx); // LAHF in 64-bit mode / LZCNT / PREFETCHW
@@ -109,6 +107,7 @@ fn setValue(reg: *u64, val: u64) void {
     @as(*u32, @ptrCast(reg)).* = @as(u32, @truncate(val));
 }
 
+/// Set an invalid value to the registers.
 fn invalid(vcpu: *Vcpu) void {
     const gregs = &vcpu.guest_regs;
     setValue(&gregs.rax, 0);
@@ -116,29 +115,3 @@ fn invalid(vcpu: *Vcpu) void {
     setValue(&gregs.rcx, 0);
     setValue(&gregs.rdx, 0);
 }
-
-/// SDM Vol2A Chapter 3.3 Table 3-8.
-const Leaf = enum(u32) {
-    /// Maximum input value for basic CPUID.
-    maximum_input = 0x0,
-    /// Version information.
-    version_info = 0x1,
-    /// Thermal and power management.
-    thermal_power = 0x6,
-    /// Structured extended feature enumeration.
-    /// Output depends on the value of ECX.
-    ext_feature = 0x7,
-    /// Processor extended state enumeration.
-    /// Output depends on the ECX input value.
-    ext_enumeration = 0xD,
-    /// Maximum input value for extended function CPUID information.
-    extended_function = 0x80000000,
-    /// EAX: Extended processor signature and feature bits.
-    extended_processor_signature = 0x80000001,
-    /// Unimplemented
-    _,
-
-    pub fn from(rax: u64) Leaf {
-        return @enumFromInt(rax);
-    }
-};

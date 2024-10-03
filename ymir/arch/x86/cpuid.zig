@@ -1,18 +1,79 @@
-/// List of CPUID functions set to EAX on CPUID instruction.
-pub const functions = enum(u32) {
-    pub const vendor_id = 0x0000_0000;
-    pub const feature_information = 0x0000_0001;
-    pub const structure_extended_feature_flags = 0x0000_0007;
+/// CPUID Leaf.
+/// SDM Vol2A Chapter 3.3 Table 3-8.
+pub const Leaf = enum(u32) {
+    /// Maximum input value for basic CPUID.
+    maximum_input = 0x0,
+    /// Version information.
+    version_info = 0x1,
+    /// Thermal and power management.
+    thermal_power = 0x6,
+    /// Structured extended feature enumeration.
+    /// Output depends on the value of ECX.
+    ext_feature = 0x7,
+    /// Processor extended state enumeration.
+    /// Output depends on the ECX input value.
+    ext_enumeration = 0xD,
+    /// Maximum input value for extended function CPUID information.
+    extended_function = 0x80000000,
+    /// EAX: Extended processor signature and feature bits.
+    extended_processor_signature = 0x80000001,
+    /// Unimplemented
+    _,
+
+    /// Convert u64 to Leaf.
+    pub fn from(rax: u64) Leaf {
+        return @enumFromInt(rax);
+    }
+
+    /// Issues CPUID instruction to query the leaf and sub-leaf.
+    pub fn query(self: Leaf, subleaf: ?u32) CpuidRegisters {
+        return cpuid(@intFromEnum(self), subleaf orelse 0);
+    }
 };
 
-pub const CpuidInformation = packed struct {
-    ecx: FeatureInformationEcx,
-    edx: FeatureInformationEdx,
+/// Return value of CPUID.
+const CpuidRegisters = struct {
+    eax: u32,
+    ebx: u32,
+    ecx: u32,
+    edx: u32,
 };
 
-/// CPUID Feature Flags bitfield.
-/// This value is returned by the CPUID instruction in the ECX when EAX is 1.
-pub const FeatureInformationEcx = packed struct(u32) {
+/// Asm CPUID instruction.
+fn cpuid(leaf: u32, subleaf: u32) CpuidRegisters {
+    var eax: u32 = undefined;
+    var ebx: u32 = undefined;
+    var ecx: u32 = undefined;
+    var edx: u32 = undefined;
+
+    asm volatile (
+        \\mov %[leaf], %%eax
+        \\mov %[subleaf], %%ecx
+        \\cpuid
+        \\mov %%eax, %[eax]
+        \\mov %%ebx, %[ebx]
+        \\mov %%ecx, %[ecx]
+        \\mov %%edx, %[edx]
+        : [eax] "=r" (eax),
+          [ebx] "=r" (ebx),
+          [ecx] "=r" (ecx),
+          [edx] "=r" (edx),
+        : [leaf] "r" (leaf),
+          [subleaf] "r" (subleaf),
+        : "rax", "rbx", "rcx", "rdx"
+    );
+
+    return .{
+        .eax = eax,
+        .ebx = ebx,
+        .ecx = ecx,
+        .edx = edx,
+    };
+}
+
+/// CPUID Feature Flags bitfield for ECX.
+/// Leaf=1, Sub-Leaf=null,
+pub const FeatureInfoEcx = packed struct(u32) {
     /// Streaming SIMD Extensions 3 (SSE3).
     sse3: bool = false,
     /// PCLMULQDQ.
@@ -79,9 +140,9 @@ pub const FeatureInformationEcx = packed struct(u32) {
     hypervisor: bool = false,
 };
 
-/// CPUID Feature Flags bitfield.
-/// This value is returned by the CPUID instruction in the EDX when EAX is 1.
-pub const FeatureInformationEdx = packed struct(u32) {
+/// CPUID Feature Flags bitfield for ECX.
+/// Leaf=1, Sub-Leaf=null,
+pub const FeatureInfoEdx = packed struct(u32) {
     /// x87 FPU.
     fpu: bool = false,
     /// Virtual 8086 mode enhancements.
@@ -148,12 +209,8 @@ pub const FeatureInformationEdx = packed struct(u32) {
     pbe: bool = false,
 };
 
-const FeatureInfoEbx = packed struct(u32) {
-    clflush_line: u16,
-    num_ids: u8,
-    initial_apic_id: u8,
-};
-
+/// CPUID Extended Feature Flags bitfield for EBX.
+/// Leaf=7, Sub-Leaf=0,
 pub const ExtFeatureEbx0 = packed struct(u32) {
     fsgsbase: bool = false,
     tsc_adjust: bool = false,

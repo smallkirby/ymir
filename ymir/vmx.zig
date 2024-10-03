@@ -56,8 +56,7 @@ pub const Vm = struct {
         }
 
         // Check if VMX is supported.
-        const feature = arch.getFeatureInformation();
-        if (!feature.ecx.vmx) {
+        if (!arch.isVmxSupported()) {
             log.err("Virtualization is not supported.", .{});
             return Error.SystemNotSupported;
         }
