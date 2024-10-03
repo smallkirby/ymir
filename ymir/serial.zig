@@ -1,5 +1,3 @@
-//! This module provides a serial interface.
-
 const ymir = @import("ymir");
 const spin = ymir.spin;
 const arch = ymir.arch;
@@ -28,20 +26,21 @@ pub const Serial = struct {
         self._write_fn(c);
     }
 
-    fn write_unlocked(self: Self, c: u8) void {
+    fn writeUnlocked(self: Self, c: u8) void {
         self._write_fn(c);
     }
 
     /// Write a string to the serial console.
-    pub fn write_string(self: Self, s: []const u8) void {
+    pub fn writeString(self: Self, s: []const u8) void {
         const mask = spin_lock.lockSaveIrq();
         defer spin_lock.unlockRestoreIrq(mask);
         for (s) |c| {
-            self.write_unlocked(c);
+            self.writeUnlocked(c);
         }
     }
 
-    /// Read a character from the serial console.
+    /// Try to read a character from the serial console.
+    /// Returns null if no character is available in Rx-buffer.
     pub fn tryRead(self: Self) ?u8 {
         const mask = spin_lock.lockSaveIrq();
         defer spin_lock.unlockRestoreIrq(mask);

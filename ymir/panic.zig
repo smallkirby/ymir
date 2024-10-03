@@ -46,7 +46,7 @@ fn write(comptime fmt: []const u8, args: anytype) void {
 }
 
 fn writerFunction(_: void, bytes: []const u8) PanicError!usize {
-    sr.write_string(bytes);
+    sr.writeString(bytes);
     return bytes.len;
 }
 

@@ -36,7 +36,7 @@ pub fn init(ser: Serial) void {
 }
 
 fn writer_function(_: void, bytes: []const u8) LogError!usize {
-    serial.write_string(bytes);
+    serial.writeString(bytes);
     return bytes.len;
 }
 
