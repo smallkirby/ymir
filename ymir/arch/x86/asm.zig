@@ -602,6 +602,8 @@ pub const Msr = enum(u32) {
     tsc_aux = 0xC0000103,
     /// IA32_EFER MSR.
     efer = 0xC0000080,
+
+    _,
 };
 
 /// IA32_FEATURE_CONTROL MSR.
