@@ -11,14 +11,18 @@ const Serial = ymir.serial.Serial;
 /// Instance of the initialized serial console.
 var serial: Serial = undefined;
 
+/// Skeleton for the error type.
+/// Not used but required by std.io.Writer interface.
 const LogError = error{};
 
 const Writer = std.io.Writer(
     void,
     LogError,
-    writer_function,
+    write,
 );
 
+/// Log options.
+/// Can be configured by compile-time options. See build.zig.
 pub const default_log_options = std.Options{
     .log_level = switch (option.log_level) {
         .debug => .debug,
@@ -35,14 +39,14 @@ pub fn init(ser: Serial) void {
     serial = ser;
 }
 
-fn writer_function(_: void, bytes: []const u8) LogError!usize {
+fn write(_: void, bytes: []const u8) LogError!usize {
     serial.writeString(bytes);
     return bytes.len;
 }
 
 fn log(
     comptime level: stdlog.Level,
-    scope: @Type(.EnumLiteral),
+    comptime scope: @Type(.EnumLiteral),
     comptime fmt: []const u8,
     args: anytype,
 ) void {
