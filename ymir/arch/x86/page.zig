@@ -196,7 +196,7 @@ pub fn cloneUefiPageTables() !void {
         if (lv4_entry.present) {
             const lv3_table = getLv3PageTable(lv4_entry.address());
             const new_lv3_table = try cloneLevel3Table(lv3_table);
-            lv4_entry.phys = @truncate(@as(u64, @intFromPtr(new_lv3_table.ptr)) >> page_shift_4k);
+            lv4_entry.phys = @truncate(virt2phys(new_lv3_table.ptr) >> page_shift_4k);
         }
     }
 
@@ -214,7 +214,7 @@ fn cloneLevel3Table(lv3_table: []Lv3PageTableEntry) ![]Lv3PageTableEntry {
 
         const lv2_table = getLv2PageTable(lv3_entry.address());
         const new_lv2_table = try cloneLevel2Table(lv2_table);
-        lv3_entry.phys = @truncate(@as(u64, @intFromPtr(new_lv2_table.ptr)) >> page_shift_4k);
+        lv3_entry.phys = @truncate(virt2phys(new_lv2_table.ptr) >> page_shift_4k);
     }
 
     return new_lv3_table;
@@ -231,7 +231,7 @@ fn cloneLevel2Table(lv2_table: []Lv2PageTableEntry) ![]Lv2PageTableEntry {
 
         const lv1_table = getLv1PageTable(lv2_entry.address());
         const new_lv1_table = try cloneLevel1Table(lv1_table);
-        lv2_entry.phys = @truncate(@as(u64, @intFromPtr(new_lv1_table.ptr)) >> page_shift_4k);
+        lv2_entry.phys = @truncate(virt2phys(new_lv1_table.ptr) >> page_shift_4k);
     }
 
     return new_lv2_table;

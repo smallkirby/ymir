@@ -168,10 +168,13 @@ pub fn partialCheckGuest() VmxError!void {
     // TODO: TR
     // LDTR
     const ldtr_ar = vmx.SegmentRights.from(try vmx.vmread(vmcs.guest.ldtr_rights));
-    if (ldtr_ar.accessed or !ldtr_ar.rw or ldtr_ar.dc or ldtr_ar.executable) @panic("LDTR.rights: Invalid value");
-    if (ldtr_ar.desc_type != .system) @panic("LDTR.rights: Invalid value");
-    if (!ldtr_ar.present) @panic("LDTR.rights: P must be set");
-    if (ldtr_ar._reserved1 != 0) @panic("LDTR.rights: Reserved bits must be zero");
+    if (!ldtr_ar.unusable) {
+        if (ldtr_ar.accessed or !ldtr_ar.rw or ldtr_ar.dc or ldtr_ar.executable)
+            @panic("LDTR.rights: Invalid value: {}");
+        if (ldtr_ar.desc_type != .system) @panic("LDTR.rights: Invalid descriptor type");
+        if (!ldtr_ar.present) @panic("LDTR.rights: P must be set");
+        if (ldtr_ar._reserved1 != 0) @panic("LDTR.rights: Reserved bits must be zero");
+    }
 
     // == Checks on Guest Descriptor-Table Registers.
     // cf. SDM Vol 3C 27.3.1.3.

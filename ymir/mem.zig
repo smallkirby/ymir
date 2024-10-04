@@ -17,6 +17,7 @@
 //! If the VA is in the kernel text mapping region, the PA can be calculated by subtracting the kernel base.
 
 const std = @import("std");
+const atomic = std.atomic;
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.mem);
 const surtr = @import("surtr");
@@ -78,9 +79,17 @@ pub const page_mask_2mb: u64 = page_size_2mb - 1;
 /// Mask for a 1G page.
 pub const page_mask_1gb: u64 = page_size_1gb - 1;
 
-/// If set to false, the initial direct mapping is in use.
-/// If set to true, the initial direct mapping is discarded and the new page tables are uesd.
-var mapping_reconstructed = false;
+/// Status of the page table construction.
+const MappingStatus = enum(u8) {
+    /// Using the direct mapping provided by UEFI.
+    uninited,
+    /// Remapping is in progress.
+    remapping,
+    /// Using the new page tables.
+    inited,
+};
+/// Current status.
+var mapping_reconstructed = atomic.Value(MappingStatus).init(.uninited);
 
 /// Initialize the page allocator.
 /// You MUST call this function before using `page_allocator`.
@@ -101,7 +110,12 @@ pub fn reconstructMapping() !void {
     arch.disableIntr();
     defer arch.enableIntr();
 
-    if (mapping_reconstructed) {
+    if (mapping_reconstructed.cmpxchgWeak(
+        .uninited,
+        .remapping,
+        .acq_rel,
+        .monotonic,
+    ) != null) {
         @panic("Mapping reconstruction is being called twice.");
     }
 
@@ -115,7 +129,7 @@ pub fn reconstructMapping() !void {
     try arch.page.unmapStraightMap();
     // --- The initial direct mapping is discarded. ---
 
-    mapping_reconstructed = true;
+    mapping_reconstructed.store(.inited, .release);
 }
 
 /// Translate the given virtual address to physical address.
@@ -127,7 +141,7 @@ pub fn virt2phys(addr: anytype) Phys {
         .Pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
-    return if (!mapping_reconstructed) b: {
+    return if (mapping_reconstructed.load(.acquire) != .inited) b: {
         break :b value;
     } else if (value < ymir.kernel_base) b: {
         // Direct mapping region.
@@ -147,7 +161,7 @@ pub fn phys2virt(addr: anytype) Virt {
         .Pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
-    return if (!mapping_reconstructed) b: {
+    return if (mapping_reconstructed.load(.acquire) != .inited) b: {
         break :b value;
     } else b: {
         break :b value + ymir.direct_map_base;
@@ -166,7 +180,7 @@ test "address translation" {
     const direct_map_base = ymir.direct_map_base;
     const kernel_base = ymir.kernel_base;
 
-    mapping_reconstructed = true;
+    mapping_reconstructed.store(.inited, .release);
 
     // virt -> phys
     try testing.expectEqual(0x0, virt2phys(direct_map_base));
