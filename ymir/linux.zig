@@ -98,7 +98,7 @@ pub const SetupHeader = extern struct {
     }
 
     /// Instantiate a header from bzImage.
-    pub fn from_bytes(bytes: []u8) @This() {
+    pub fn from(bytes: []u8) @This() {
         var hdr = std.mem.bytesToValue(
             @This(),
             bytes[HeaderOffset .. HeaderOffset + @sizeOf(@This())],
@@ -112,7 +112,7 @@ pub const SetupHeader = extern struct {
 
     /// Get the version string.
     /// Caller must free the returned string.
-    pub fn get_version_string(self: @This(), allocator: std.mem.Allocator) ![]const u8 {
+    pub fn getVersionString(self: @This(), allocator: std.mem.Allocator) ![]const u8 {
         const minor = self.version & 0xFF;
         const major = (self.version >> 8) & 0xFF;
         return try std.fmt.allocPrint(
@@ -125,7 +125,7 @@ pub const SetupHeader = extern struct {
     /// Get the offset of the protected-mode kernel code.
     /// Real-mode code consists of the boot sector (1 sector == 512 bytes)
     /// plus the setup code (`setup_sects` sectors).
-    pub fn get_protected_code_offset(self: @This()) usize {
+    pub fn getProtectedCodeOffset(self: @This()) usize {
         return (@as(usize, self.setup_sects) + 1) * 512;
     }
 };
@@ -157,7 +157,7 @@ pub const E820Entry = extern struct {
 /// Note that fields prefixed with `_` are not implemented and have incorrect types.
 pub const BootParams = extern struct {
     /// Maximum number of entries in the E820 map.
-    const E280MAX = 128;
+    const e820max = 128;
 
     _screen_info: [0x40]u8 align(1),
     _apm_bios_info: [0x14]u8 align(1),
@@ -185,7 +185,7 @@ pub const BootParams = extern struct {
     _pad7: [0x290 - SetupHeader.HeaderOffset - @sizeOf(SetupHeader)]u8 align(1),
     _edd_mbr_sig_buffer: [0x10]u32 align(1),
     /// System memory map that can be retrieved by INT 15, E820h.
-    e820_map: [E280MAX]E820Entry align(1),
+    e820_map: [e820max]E820Entry align(1),
     _unimplemented: [0x330]u8 align(1), // TODO: implement this.
 
     comptime {
@@ -195,7 +195,7 @@ pub const BootParams = extern struct {
     }
 
     /// Instantiate a boot params from bzImage.
-    pub fn from_bytes(bytes: []u8) @This() {
+    pub fn from(bytes: []u8) @This() {
         return std.mem.bytesToValue(
             @This(),
             bytes[0..@sizeOf(@This())],
@@ -203,7 +203,7 @@ pub const BootParams = extern struct {
     }
 
     /// Add an entry to the E820 map.
-    pub fn add_e820_entry(
+    pub fn addE820entry(
         self: *@This(),
         addr: u64,
         size: u64,

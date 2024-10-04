@@ -138,7 +138,7 @@ pub const Vm = struct {
             return Error.OutOfMemory;
         }
 
-        var boot_params = BootParams.from_bytes(kernel);
+        var boot_params = BootParams.from(kernel);
 
         // Setup necessary fields
         boot_params.hdr.type_of_loader = 0xFF;
@@ -151,8 +151,8 @@ pub const Vm = struct {
         boot_params.hdr.vid_mode = 0xFFFF; // VGA (normal)
 
         // Setup E820 map
-        boot_params.add_e820_entry(0, linux.layout.kernel_base, .ram);
-        boot_params.add_e820_entry(
+        boot_params.addE820entry(0, linux.layout.kernel_base, .ram);
+        boot_params.addE820entry(
             linux.layout.kernel_base,
             guest_mem.len - linux.layout.kernel_base,
             .ram,
@@ -183,7 +183,7 @@ pub const Vm = struct {
         );
 
         // Load protected-mode kernel code
-        const code_offset = boot_params.hdr.get_protected_code_offset();
+        const code_offset = boot_params.hdr.getProtectedCodeOffset();
         const code_size = kernel.len - code_offset;
         try loadImage(
             guest_mem,
