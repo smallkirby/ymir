@@ -27,8 +27,3 @@ pub fn getLapicId() u8 {
     const addr: *u32 = @ptrFromInt(p2v(lapic_id_register));
     return @truncate(addr.* >> 24);
 }
-
-/// Notify the LAPIC that the interrupt has been handled.
-pub fn notifyEoi() void {
-    @as(*volatile u32, @ptrFromInt(eoi)).* = 0;
-}

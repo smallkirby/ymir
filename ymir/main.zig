@@ -6,7 +6,6 @@ const log = std.log.scoped(.main);
 const surtr = @import("surtr");
 
 const ymir = @import("ymir");
-const kbd = @import("keyboard.zig");
 const idefs = ymir.intr;
 const serial = ymir.serial;
 const klog = ymir.klog;

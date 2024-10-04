@@ -1,5 +1,3 @@
-//! This module provides a set of functions corresponding to x64 asm instructions.
-
 const std = @import("std");
 
 const ymir = @import("ymir");

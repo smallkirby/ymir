@@ -101,6 +101,5 @@ pub fn enableXstateFeature() void {
 }
 
 test {
-    const testing = @import("std").testing;
-    testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDeclsRecursive(@This());
 }

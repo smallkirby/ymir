@@ -113,32 +113,6 @@ pub fn notifyEoi(irq: IrqLine) void {
     }
 }
 
-/// Read a scan code from the PS/2 keyboard.
-pub fn ps2ReadScanCode() u8 {
-    while (am.inb(ps2_status_port) & 1 == 0) {
-        am.relax();
-    }
-    return am.inb(ps2_data_port);
-}
-
-/// Read a IRR (Interrupt Request Register) from the PIC.
-pub fn getIrr() u16 {
-    am.outb(0x0A, primary_command_port);
-    am.outb(0x0A, secondary_command_port);
-    const val1: u16 = am.inb(primary_command_port);
-    const val2: u16 = am.inb(secondary_command_port);
-    return (val2 << 8) | val1;
-}
-
-/// Read a ISR (In-Service Register) from the PIC.
-pub fn getIsr() u16 {
-    am.outb(0x0B, primary_command_port);
-    am.outb(0x0B, secondary_command_port);
-    const val1: u16 = am.inb(primary_command_port);
-    const val2: u16 = am.inb(secondary_command_port);
-    return (val2 << 8) | val1;
-}
-
 /// Get IRQ mask from the PIC.
 pub inline fn getIrqMask() u16 {
     const val1: u16 = am.inb(primary_data_port);
