@@ -366,7 +366,7 @@ pub const Vcpu = struct {
     /// Increment RIP by the length of the current instruction.
     fn stepNextInst(_: *Self) VmxError!void {
         const rip = try vmread(vmcs.guest.rip);
-        try vmwrite(vmcs.guest.rip, rip + try vmread(vmcs.ro.vmexit_instruction_length));
+        try vmwrite(vmcs.guest.rip, rip + try vmread(vmcs.ro.exit_inst_len));
     }
 
     /// Inject external interrupt to the guest if possible.
@@ -414,7 +414,7 @@ pub const Vcpu = struct {
                 .nmi_unblocking = false,
                 .valid = true,
             };
-            try vmwrite(vmcs.ctrl.vmentry_interrupt_information_field, intr_info);
+            try vmwrite(vmcs.ctrl.entry_intr_info, intr_info);
 
             // Clear the pending IRQ.
             self.pending_irq &= ~irq_bit;
@@ -705,9 +705,9 @@ fn storeHostMsrs(vcpu: *Vcpu) void {
 
 /// Update MSR count fields in VMCS.
 fn updateVmcsMsrs(vcpu: *Vcpu) VmxError!void {
-    try vmwrite(vmcs.ctrl.vmexit_msr_load_count, vcpu.host_msr.num_ents);
-    try vmwrite(vmcs.ctrl.vmexit_msr_store_count, vcpu.guest_msr.num_ents);
-    try vmwrite(vmcs.ctrl.vmentry_msr_load_count, vcpu.guest_msr.num_ents);
+    try vmwrite(vmcs.ctrl.vexit_msr_load_count, vcpu.host_msr.num_ents);
+    try vmwrite(vmcs.ctrl.exit_msr_store_count, vcpu.guest_msr.num_ents);
+    try vmwrite(vmcs.ctrl.entry_msr_load_count, vcpu.guest_msr.num_ents);
 }
 
 /// Register host-saved and guest-saved MSRs.
@@ -735,9 +735,9 @@ fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
     gm.set(.kernel_gs_base, 0);
 
     // Setup VMCS.
-    try vmwrite(vmcs.ctrl.vmexit_msr_load_address, hm.phys());
-    try vmwrite(vmcs.ctrl.vmexit_msr_store_address, gm.phys());
-    try vmwrite(vmcs.ctrl.vmentry_msr_load_address, gm.phys());
+    try vmwrite(vmcs.ctrl.exit_msr_load_address, hm.phys());
+    try vmwrite(vmcs.ctrl.exit_msr_store_address, gm.phys());
+    try vmwrite(vmcs.ctrl.entry_msr_load_address, gm.phys());
     try updateVmcsMsrs(vcpu);
 }
 
@@ -816,8 +816,8 @@ fn setupExitCtrls(_: *Vcpu) VmxError!void {
         if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls),
     ).load();
 
-    try vmwrite(vmcs.ctrl.vmexit_msr_load_count, 0);
-    try vmwrite(vmcs.ctrl.vmexit_msr_store_count, 0);
+    try vmwrite(vmcs.ctrl.vexit_msr_load_count, 0);
+    try vmwrite(vmcs.ctrl.exit_msr_store_count, 0);
 }
 
 /// Set up VM-Entry control fields.
@@ -834,7 +834,7 @@ fn setupEntryCtrls(_: *Vcpu) VmxError!void {
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
     ).load();
 
-    try vmwrite(vmcs.ctrl.vmentry_msr_load_count, 0);
+    try vmwrite(vmcs.ctrl.entry_msr_load_count, 0);
 }
 
 /// Set up host state.

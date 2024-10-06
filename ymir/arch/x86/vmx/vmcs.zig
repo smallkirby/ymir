@@ -33,7 +33,7 @@ pub const guest = enum(u32) {
     sysenter_eip = eg(19, .full, .natural),
     s_cet = eg(20, .full, .natural),
     ssp = eg(21, .full, .natural),
-    interrupt_ssp_table_addr = eg(22, .full, .natural),
+    intr_ssp_table_addr = eg(22, .full, .natural),
     // 16-bit fields.
     es_sel = eg(0, .full, .word),
     cs_sel = eg(1, .full, .word),
@@ -43,7 +43,7 @@ pub const guest = enum(u32) {
     gs_sel = eg(5, .full, .word),
     ldtr_sel = eg(6, .full, .word),
     tr_sel = eg(7, .full, .word),
-    interrupt_status = eg(8, .full, .word),
+    intr_status = eg(8, .full, .word),
     pml_index = eg(9, .full, .word),
     uinv = eg(10, .full, .word),
     // 32-bit fields.
@@ -104,7 +104,7 @@ pub const host = enum(u32) {
     rip = eh(11, .full, .natural),
     s_cet = eh(12, .full, .natural),
     ssp = eh(13, .full, .natural),
-    interrupt_ssp_table_addr = eh(14, .full, .natural),
+    intr_ssp_table_addr = eh(14, .full, .natural),
     // 16-bit fields.
     es_sel = eh(0, .full, .word),
     cs_sel = eh(1, .full, .word),
@@ -136,27 +136,27 @@ pub const ctrl = enum(u32) {
     cr3_target3 = ec(7, .full, .natural),
     // 16-bit fields.
     vpid = ec(0, .full, .word),
-    posted_interrupt_notification_vector = ec(1, .full, .word),
+    posted_intr_notif_vector = ec(1, .full, .word),
     eptp_index = ec(2, .full, .word),
     hlat_prefix_size = ec(3, .full, .word),
     pid_pointer_index = ec(4, .full, .word),
     // 32-bit fields.
-    pinbased_vmexec_controls = ec(0, .full, .dword),
-    procbased_vmexec_controls = ec(1, .full, .dword),
+    pin_exec_ctrl = ec(0, .full, .dword),
+    proc_exec_ctrl = ec(1, .full, .dword),
     exception_bitmap = ec(2, .full, .dword),
-    pagefault_error_code_mask = ec(3, .full, .dword),
-    pagefault_error_code_match = ec(4, .full, .dword),
+    pf_ec_mask = ec(3, .full, .dword),
+    pf_ec_match = ec(4, .full, .dword),
     cr3_target_count = ec(5, .full, .dword),
-    primary_vmexit_controls = ec(6, .full, .dword),
-    vmexit_msr_store_count = ec(7, .full, .dword),
-    vmexit_msr_load_count = ec(8, .full, .dword),
-    vmentry_controls = ec(9, .full, .dword),
-    vmentry_msr_load_count = ec(10, .full, .dword),
-    vmentry_interrupt_information_field = ec(11, .full, .dword),
-    vmentry_exception_error_code = ec(12, .full, .dword),
-    vmentry_instruction_length = ec(13, .full, .dword),
+    primary_exit_ctrl = ec(6, .full, .dword),
+    exit_msr_store_count = ec(7, .full, .dword),
+    vexit_msr_load_count = ec(8, .full, .dword),
+    entry_ctrl = ec(9, .full, .dword),
+    entry_msr_load_count = ec(10, .full, .dword),
+    entry_intr_info = ec(11, .full, .dword),
+    entry_exception_ec = ec(12, .full, .dword),
+    entry_inst_len = ec(13, .full, .dword),
     tpr_threshold = ec(14, .full, .dword),
-    secondary_procbased_vmexec_controls = ec(15, .full, .dword),
+    secondary_proc_exec_ctrl = ec(15, .full, .dword),
     ple_gap = ec(16, .full, .dword),
     ple_window = ec(17, .full, .dword),
     instruction_timeouts = ec(18, .full, .dword),
@@ -164,15 +164,15 @@ pub const ctrl = enum(u32) {
     io_bitmap_a = ec(0, .full, .qword),
     io_bitmap_b = ec(1, .full, .qword),
     msr_bitmap = ec(2, .full, .qword),
-    vmexit_msr_store_address = ec(3, .full, .qword),
-    vmexit_msr_load_address = ec(4, .full, .qword),
-    vmentry_msr_load_address = ec(5, .full, .qword),
+    exit_msr_store_address = ec(3, .full, .qword),
+    exit_msr_load_address = ec(4, .full, .qword),
+    entry_msr_load_address = ec(5, .full, .qword),
     executive_vmcs_pointer = ec(6, .full, .qword),
     pml_address = ec(7, .full, .qword),
     tsc_offset = ec(8, .full, .qword),
     virtual_apic_address = ec(9, .full, .qword),
     apic_access_address = ec(10, .full, .qword),
-    posted_interrupt_descriptor_address = ec(11, .full, .qword),
+    posted_intr_desc_addr = ec(11, .full, .qword),
     vm_function_controls = ec(12, .full, .qword),
     eptp = ec(13, .full, .qword),
     eoi_exit_bitmap0 = ec(14, .full, .qword),
@@ -187,7 +187,7 @@ pub const ctrl = enum(u32) {
     encls_exiting_bitmap = ec(23, .full, .qword),
     sub_page_permission_table_pointer = ec(24, .full, .qword),
     tsc_multiplier = ec(25, .full, .qword),
-    tertiary_processor_based_vmexec_controls = ec(26, .full, .qword),
+    tertiary_proc_exec_ctrl = ec(26, .full, .qword),
     enclv_exiting_bitmap = ec(27, .full, .qword),
     low_pasid_directory = ec(28, .full, .qword),
     high_pasid_directory = ec(29, .full, .qword),
@@ -195,7 +195,7 @@ pub const ctrl = enum(u32) {
     pconfig_exiting_bitmap = ec(31, .full, .qword),
     hlatp = ec(32, .full, .qword),
     pid_pointer_table = ec(33, .full, .qword),
-    secondary_vmexit_controls = ec(34, .full, .qword),
+    secondary_exit_ctrl = ec(34, .full, .qword),
     spec_ctrl_mask = ec(37, .full, .qword),
     spec_ctrl_shadow = ec(38, .full, .qword),
 };
@@ -213,11 +213,11 @@ pub const ro = enum(u32) {
     // 32-bit fields.
     vminstruction_error = er(0, .full, .dword),
     vmexit_reason = er(1, .full, .dword),
-    vmexit_interruption_information = er(2, .full, .dword),
-    vmexit_interruption_error_code = er(3, .full, .dword),
-    idt_vectoring_information = er(4, .full, .dword),
-    idt_vectoring_error_code = er(5, .full, .dword),
-    vmexit_instruction_length = er(6, .full, .dword),
+    exit_intr_info = er(2, .full, .dword),
+    exit_intr_ec = er(3, .full, .dword),
+    idt_vectoring_info = er(4, .full, .dword),
+    idt_vectoring_ec = er(5, .full, .dword),
+    exit_inst_len = er(6, .full, .dword),
     vmexit_instruction_information = er(7, .full, .dword),
     // 64-bit fields.
     guest_physical_address = er(0, .full, .qword),
@@ -355,11 +355,11 @@ pub const PinExecCtrl = packed struct(u32) {
 
     pub fn load(self: PinExecCtrl) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmx.vmwrite(ctrl.pinbased_vmexec_controls, val);
+        try vmx.vmwrite(ctrl.pin_exec_ctrl, val);
     }
 
     pub fn store() VmxError!Self {
-        const val: u32 = @truncate(try vmx.vmread(ctrl.pinbased_vmexec_controls));
+        const val: u32 = @truncate(try vmx.vmread(ctrl.pin_exec_ctrl));
         return @bitCast(val);
     }
 };
@@ -438,11 +438,11 @@ pub const PrimaryProcExecCtrl = packed struct(u32) {
 
     pub fn load(self: Self) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmx.vmwrite(ctrl.procbased_vmexec_controls, val);
+        try vmx.vmwrite(ctrl.proc_exec_ctrl, val);
     }
 
     pub fn store() VmxError!Self {
-        const val: u32 = @truncate(try vmx.vmread(ctrl.procbased_vmexec_controls));
+        const val: u32 = @truncate(try vmx.vmread(ctrl.proc_exec_ctrl));
         return @bitCast(val);
     }
 };
@@ -526,11 +526,11 @@ pub const SecondaryProcExecCtrl = packed struct(u32) {
 
     pub fn load(self: Self) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmx.vmwrite(ctrl.secondary_procbased_vmexec_controls, val);
+        try vmx.vmwrite(ctrl.secondary_proc_exec_ctrl, val);
     }
 
     pub fn store() VmxError!Self {
-        const val: u32 = @truncate(try vmx.vmread(ctrl.secondary_procbased_vmexec_controls));
+        const val: u32 = @truncate(try vmx.vmread(ctrl.secondary_proc_exec_ctrl));
         return @bitCast(val);
     }
 };
@@ -626,11 +626,11 @@ pub const PrimaryExitCtrl = packed struct(u32) {
 
     pub fn load(self: Self) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmx.vmwrite(ctrl.primary_vmexit_controls, val);
+        try vmx.vmwrite(ctrl.primary_exit_ctrl, val);
     }
 
     pub fn store() VmxError!Self {
-        const val: u32 = @truncate(try vmx.vmread(ctrl.primary_vmexit_controls));
+        const val: u32 = @truncate(try vmx.vmread(ctrl.primary_exit_ctrl));
         return @bitCast(val);
     }
 };
@@ -701,11 +701,11 @@ pub const EntryCtrl = packed struct(u32) {
 
     pub fn load(self: Self) VmxError!void {
         const val: u32 = @bitCast(self);
-        try vmx.vmwrite(ctrl.vmentry_controls, val);
+        try vmx.vmwrite(ctrl.entry_ctrl, val);
     }
 
     pub fn store() VmxError!Self {
-        const val: u32 = @truncate(try vmx.vmread(ctrl.vmentry_controls));
+        const val: u32 = @truncate(try vmx.vmread(ctrl.entry_ctrl));
         return @bitCast(val);
     }
 };

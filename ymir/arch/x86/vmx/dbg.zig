@@ -202,7 +202,7 @@ pub fn partialCheckGuest() VmxError!void {
     // Activity state.
     const activity_state = try vmx.vmread(vmcs.guest.activity_state);
     if (activity_state != 0) @panic("Unsupported activity state.");
-    const intr_state = try vmx.vmread(vmcs.guest.interrupt_status);
+    const intr_state = try vmx.vmread(vmcs.guest.intr_status);
     if ((intr_state >> 5) != 0) @panic("Unsupported interruptability state.");
     // TODO: other checks
 

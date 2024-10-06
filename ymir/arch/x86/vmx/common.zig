@@ -400,8 +400,8 @@ pub const InterruptInfo = packed struct(u32) {
     /// Get a VM-entry or VM-exit interrupt information from VMCS.
     pub fn load(kind: Kind) VmxError!InterruptInfo {
         return @bitCast(@as(u32, @truncate(switch (kind) {
-            .entry => try vmread(vmcs.ctrl.vmentry_interrupt_information_field),
-            .exit => try vmread(vmcs.ro.vmexit_interruption_information),
+            .entry => try vmread(vmcs.ctrl.entry_intr_info),
+            .exit => try vmread(vmcs.ro.exit_intr_info),
         })));
     }
 };
