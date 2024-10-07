@@ -144,20 +144,20 @@ fn getLv4Entry(addr: Virt, cr3: Phys) *Lv4Entry {
 
 /// Get the level-3 page table entry for the given virtual address.
 /// Requires that the level-4 page table is present.
-fn getLv3Entry(addr: Virt, lv3_table_addr: Phys) *Lv3Entry {
-    return getEntry(Lv3Entry, addr, lv3_table_addr, 0);
+fn getLv3Entry(addr: Virt, lv3tbl_paddr: Phys) *Lv3Entry {
+    return getEntry(Lv3Entry, addr, lv3tbl_paddr, 0);
 }
 
 /// Get the level-2 page table entry for the given virtual address.
 /// Requires that the level-3 page table is present and it reference a level-2 page table.
-fn getLv2Entry(addr: Virt, lv2_table_addr: Phys) *Lv2Entry {
-    return getEntry(Lv2Entry, addr, lv2_table_addr, 0);
+fn getLv2Entry(addr: Virt, lv2tbl_paddr: Phys) *Lv2Entry {
+    return getEntry(Lv2Entry, addr, lv2tbl_paddr, 0);
 }
 
 /// Get the level-1 page table entry for the given virtual address.
 /// Requires that the level-2 page table is present and it reference a level-1 page table.
-fn getLv1Entry(addr: Virt, lv1_table_addr: Phys) *Lv1Entry {
-    return getEntry(Lv1Entry, addr, lv1_table_addr, 0);
+fn getLv1Entry(addr: Virt, lv1tbl_addr: Phys) *Lv1Entry {
+    return getEntry(Lv1Entry, addr, lv1tbl_addr, 0);
 }
 
 /// Get the level-4 page table of the current guest process.
@@ -166,18 +166,18 @@ fn getLv4GuestTable(cr3: Phys, guest_base: u64) []Lv4Entry {
 }
 
 /// Get the level-3 page table at the given address of the guest.
-fn getLv3GuestTable(lv3_table_addr: Phys, guest_base: u64) []Lv3Entry {
-    return getTable(Lv3Entry, lv3_table_addr, guest_base);
+fn getLv3GuestTable(lv3tbl_gpa: Phys, guest_base: u64) []Lv3Entry {
+    return getTable(Lv3Entry, lv3tbl_gpa, guest_base);
 }
 
 /// Get the level-2 page table at the given address of the guest.
-fn getLv2GuestTable(lv2_table_addr: Phys, guest_base: u64) []Lv2Entry {
-    return getTable(Lv2Entry, lv2_table_addr, guest_base);
+fn getLv2GuestTable(lv2tbl_gpa: Phys, guest_base: u64) []Lv2Entry {
+    return getTable(Lv2Entry, lv2tbl_gpa, guest_base);
 }
 
 /// Get the level-1 page table at the given address of the guest.
-fn getLv1GuestTable(lv1_table_addr: Phys, guest_base: u64) []Lv1Entry {
-    return getTable(Lv1Entry, lv1_table_addr, guest_base);
+fn getLv1GuestTable(lv1tbl_gpa: Phys, guest_base: u64) []Lv1Entry {
+    return getTable(Lv1Entry, lv1tbl_gpa, guest_base);
 }
 
 /// Get the level-4 page table entry of the current guest process for the given guest virtual address.
@@ -187,20 +187,20 @@ fn getLv4GuestEntry(gva: Virt, cr3: Phys, guest_base: u64) *Lv4Entry {
 
 /// Get the level-3 page table entry of the current guest process for the given guest virtual address.
 /// Requires that the level-4 page table is present.
-fn getLv3GuestEntry(gva: Virt, lv3_table_addr: Phys, guest_base: u64) *Lv3Entry {
-    return getEntry(Lv3Entry, gva, lv3_table_addr, guest_base);
+fn getLv3GuestEntry(gva: Virt, lv3tbl_gpa: Phys, guest_base: u64) *Lv3Entry {
+    return getEntry(Lv3Entry, gva, lv3tbl_gpa, guest_base);
 }
 
 /// Get the level-2 page table entry of the current guest process for the given guest virtual address.
 /// Requires that the level-3 page table is present and it reference a level-2 page table.
-fn getLv2GuestEntry(gva: Virt, lv2_table_addr: Phys, guest_base: u64) *Lv2Entry {
-    return getEntry(Lv2Entry, gva, lv2_table_addr, guest_base);
+fn getLv2GuestEntry(gva: Virt, lv2tbl_gpa: Phys, guest_base: u64) *Lv2Entry {
+    return getEntry(Lv2Entry, gva, lv2tbl_gpa, guest_base);
 }
 
 /// Get the level-1 page table entry of the current guest process for the given guest virtual address.
 /// Requires that the level-2 page table is present and it reference a level-1 page table.
-fn getLv1GuestEntry(gva: Virt, lv1_table_addr: Phys, guest_base: u64) *Lv1Entry {
-    return getEntry(Lv1Entry, gva, lv1_table_addr, guest_base);
+fn getLv1GuestEntry(gva: Virt, lv1tbl_gpa: Phys, guest_base: u64) *Lv1Entry {
+    return getEntry(Lv1Entry, gva, lv1tbl_gpa, guest_base);
 }
 
 /// Translate the given virtual address to physical address by walking page tables.
@@ -208,24 +208,24 @@ fn getLv1GuestEntry(gva: Virt, lv1_table_addr: Phys, guest_base: u64) *Lv1Entry 
 pub fn translateWalk(addr: Virt) ?Phys {
     if (!isCanonical(addr)) return null;
 
-    const lv4_entry = getLv4Entry(addr, am.readCr3());
-    if (!lv4_entry.present) return null;
+    const lv4ent = getLv4Entry(addr, am.readCr3());
+    if (!lv4ent.present) return null;
 
-    const lv3_entry = getLv3Entry(addr, lv4_entry.address());
-    if (!lv3_entry.present) return null;
-    if (lv3_entry.ps) { // 1GiB page
-        return lv3_entry.address() + (addr & page_mask_1gb);
+    const lv3ent = getLv3Entry(addr, lv4ent.address());
+    if (!lv3ent.present) return null;
+    if (lv3ent.ps) { // 1GiB page
+        return lv3ent.address() + (addr & page_mask_1gb);
     }
 
-    const lv2_entry = getLv2Entry(addr, lv3_entry.address());
-    if (!lv2_entry.present) return null;
-    if (lv2_entry.ps) { // 2MiB page
-        return lv2_entry.address() + (addr & page_mask_4k);
+    const lv2ent = getLv2Entry(addr, lv3ent.address());
+    if (!lv2ent.present) return null;
+    if (lv2ent.ps) { // 2MiB page
+        return lv2ent.address() + (addr & page_mask_4k);
     }
 
-    const lv1_entry = getLv1Entry(addr, lv2_entry.address());
-    if (!lv1_entry.present) return null;
-    return lv1_entry.phys + (addr & page_mask_4k);
+    const lv1ent = getLv1Entry(addr, lv2ent.address());
+    if (!lv1ent.present) return null;
+    return lv1ent.phys + (addr & page_mask_4k);
 }
 
 /// Translate the given guest virtual address to guest physical address.
@@ -250,66 +250,66 @@ pub fn guestTranslateWalk(gva: Virt, cr3: Phys, guest_base: Phys) ?Phys {
 /// Paged used for the old page tables can be safely freed / reused.
 pub fn cloneUefiPageTables() PageError!void {
     // Lv4 table provided by UEFI.
-    const lv4_table = getLv4Table(am.readCr3());
+    const lv4tbl = getLv4Table(am.readCr3());
 
     // New Lv4 table. Assuming the initial direct mapping is still valid and VA is equal to PA.
     if (phys2virt(0) != 0) @panic("Invalid page mapping phase for cloning UEFI page tables");
-    const new_lv4_ptr: [*]Lv4Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
-    const new_lv4_table = new_lv4_ptr[0..num_table_entries];
-    @memcpy(new_lv4_table, lv4_table);
+    const new_lv4ptr: [*]Lv4Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv4tbl = new_lv4ptr[0..num_table_entries];
+    @memcpy(new_lv4tbl, lv4tbl);
 
     // Recursively clone tables.
-    for (new_lv4_table) |*lv4_entry| {
-        if (lv4_entry.present) {
-            const lv3_table = getLv3Table(lv4_entry.address());
-            const new_lv3_table = try cloneLevel3Table(lv3_table);
-            lv4_entry.phys = @truncate(virt2phys(new_lv3_table.ptr) >> page_shift_4k);
+    for (new_lv4tbl) |*lv4ent| {
+        if (lv4ent.present) {
+            const lv3tbl = getLv3Table(lv4ent.address());
+            const new_lv3tbl = try cloneLevel3Table(lv3tbl);
+            lv4ent.phys = @truncate(virt2phys(new_lv3tbl.ptr) >> page_shift_4k);
         }
     }
 
-    am.loadCr3(@intFromPtr(new_lv4_table));
+    am.loadCr3(@intFromPtr(new_lv4tbl));
 }
 
 fn cloneLevel3Table(lv3_table: []Lv3Entry) PageError![]Lv3Entry {
-    const new_lv3_ptr: [*]Lv3Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
-    const new_lv3_table = new_lv3_ptr[0..num_table_entries];
-    @memcpy(new_lv3_table, lv3_table);
+    const new_lv3ptr: [*]Lv3Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv3tbl = new_lv3ptr[0..num_table_entries];
+    @memcpy(new_lv3tbl, lv3_table);
 
-    for (new_lv3_table) |*lv3_entry| {
-        if (!lv3_entry.present) continue;
-        if (lv3_entry.ps) continue;
+    for (new_lv3tbl) |*lv3ent| {
+        if (!lv3ent.present) continue;
+        if (lv3ent.ps) continue;
 
-        const lv2_table = getLv2Table(lv3_entry.address());
-        const new_lv2_table = try cloneLevel2Table(lv2_table);
-        lv3_entry.phys = @truncate(virt2phys(new_lv2_table.ptr) >> page_shift_4k);
+        const lv2tbl = getLv2Table(lv3ent.address());
+        const new_lv2tbl = try cloneLevel2Table(lv2tbl);
+        lv3ent.phys = @truncate(virt2phys(new_lv2tbl.ptr) >> page_shift_4k);
     }
 
-    return new_lv3_table;
+    return new_lv3tbl;
 }
 
 fn cloneLevel2Table(lv2_table: []Lv2Entry) PageError![]Lv2Entry {
-    const new_lv2_ptr: [*]Lv2Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
-    const new_lv2_table = new_lv2_ptr[0..num_table_entries];
-    @memcpy(new_lv2_table, lv2_table);
+    const new_lv2ptr: [*]Lv2Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv2tbl = new_lv2ptr[0..num_table_entries];
+    @memcpy(new_lv2tbl, lv2_table);
 
-    for (new_lv2_table) |*lv2_entry| {
-        if (!lv2_entry.present) continue;
-        if (lv2_entry.ps) continue;
+    for (new_lv2tbl) |*lv2ent| {
+        if (!lv2ent.present) continue;
+        if (lv2ent.ps) continue;
 
-        const lv1_table = getLv1Table(lv2_entry.address());
-        const new_lv1_table = try cloneLevel1Table(lv1_table);
-        lv2_entry.phys = @truncate(virt2phys(new_lv1_table.ptr) >> page_shift_4k);
+        const lv1tbl = getLv1Table(lv2ent.address());
+        const new_lv1tbl = try cloneLevel1Table(lv1tbl);
+        lv2ent.phys = @truncate(virt2phys(new_lv1tbl.ptr) >> page_shift_4k);
     }
 
-    return new_lv2_table;
+    return new_lv2tbl;
 }
 
 fn cloneLevel1Table(lv1_table: []Lv1Entry) PageError![]Lv1Entry {
-    const new_lv1_ptr: [*]Lv1Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
-    const new_lv1_table = new_lv1_ptr[0..num_table_entries];
-    @memcpy(new_lv1_table, lv1_table);
+    const new_lv1ptr: [*]Lv1Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv1tbl = new_lv1ptr[0..num_table_entries];
+    @memcpy(new_lv1tbl, lv1_table);
 
-    return new_lv1_table;
+    return new_lv1tbl;
 }
 
 /// Directly map all memory with offset.
@@ -342,7 +342,7 @@ pub fn directOffsetMap() PageError!void {
         lv4tbl[lv4idx] = Lv4Entry.newMapTable(lv3tbl, true);
     }
 
-    // TODO: this function does not modify CR3. Need to invalidate TLB in other way?
+    // Flush all TLBs.
     reloadCr3();
 }
 
@@ -358,10 +358,11 @@ pub fn unmapStraightMap() PageError!void {
         lv4_entry.present = false;
     }
 
-    // TODO: this function does not modify CR3. Need to invalidate TLB in other way?
+    // Flush all TLBs.
     reloadCr3();
 }
 
+/// Reload CR3 register to flush all TLBs.
 fn reloadCr3() void {
     const lv4_table = getLv4Table(am.readCr3());
     am.loadCr3(virt2phys(lv4_table.ptr));
@@ -370,6 +371,7 @@ fn reloadCr3() void {
 /// Change the page attribute.
 pub fn changePageAttribute(size: PageSize, virt: Virt, attr: PageAttribute, allocator: Allocator) PageError!void {
     if (!isCanonical(virt)) return error.InvalidAddress;
+    if (!isAddrAligned(virt, size)) return error.InvalidAddress;
 
     const rw = switch (attr) {
         .read_only, .executable => false,
@@ -385,7 +387,7 @@ pub fn changePageAttribute(size: PageSize, virt: Virt, attr: PageAttribute, allo
     if (size == .g1) {
         lv3ent.rw = rw;
         lv3ent.xd = xd;
-        return reloadCr3();
+        return am.invlpg(virt);
     }
     if (lv3ent.ps) try splitTable(Lv3Entry, lv3ent, allocator);
 
@@ -394,7 +396,7 @@ pub fn changePageAttribute(size: PageSize, virt: Virt, attr: PageAttribute, allo
     if (size == .m2) {
         lv2ent.rw = rw;
         lv2ent.xd = xd;
-        return reloadCr3();
+        return am.invlpg(virt);
     }
     if (lv2ent.ps) try splitTable(Lv2Entry, lv2ent, allocator);
 
@@ -402,7 +404,17 @@ pub fn changePageAttribute(size: PageSize, virt: Virt, attr: PageAttribute, allo
     if (!lv1ent.present) return error.NotMapped;
     lv1ent.rw = false;
     lv1ent.xd = false;
-    return reloadCr3();
+    return am.invlpg(virt);
+}
+
+/// Check if the given address is page-aligned.
+fn isAddrAligned(addr: u64, size: PageSize) bool {
+    const mask = switch (size) {
+        .k4 => page_mask_4k,
+        .m2 => page_mask_2mb,
+        .g1 => page_mask_1gb,
+    };
+    return (addr & mask) == 0;
 }
 
 /// Split the given page table entry that maps a page.
