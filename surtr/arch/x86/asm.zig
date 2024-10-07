@@ -14,3 +14,12 @@ pub inline fn readCr3() u64 {
     );
     return cr3;
 }
+
+pub inline fn flushTlbSingle(virt: u64) void {
+    asm volatile (
+        \\invlpg (%[virt])
+        :
+        : [virt] "r" (virt),
+        : "memory"
+    );
+}

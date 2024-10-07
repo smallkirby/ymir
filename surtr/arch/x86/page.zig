@@ -19,14 +19,28 @@ pub const PageError = error{
     AlreadyMapped,
 };
 
+pub const kib = 1024;
+pub const mib = 1024 * kib;
+pub const gib = 1024 * mib;
+
 /// Size in bytes of a 4K page.
-const page_size_4k: usize = 4096;
+pub const page_size_4k = 4 * kib;
 /// Size in bytes of a 2M page.
-const page_size_2mb: usize = page_size_4k << 9;
+pub const page_size_2mb = page_size_4k << 9;
 /// Size in bytes of a 1G page.
-const page_size_1gb: usize = page_size_2mb << 9;
-/// Shift in bits for a page.
-const page_shift = 12;
+pub const page_size_1gb = page_size_2mb << 9;
+/// Shift in bits for a 4K page.
+pub const page_shift_4k = 12;
+/// Shift in bits for a 2M page.
+pub const page_shift_2mb = 21;
+/// Shift in bits for a 1G page.
+pub const page_shift_1gb = 30;
+/// Mask for a 4K page.
+pub const page_mask_4k: u64 = page_size_4k - 1;
+/// Mask for a 2M page.
+pub const page_mask_2mb: u64 = page_size_2mb - 1;
+/// Mask for a 1G page.
+pub const page_mask_1gb: u64 = page_size_1gb - 1;
 /// Number of entries in a page table.
 const num_table_entries: usize = 512;
 
@@ -51,13 +65,6 @@ pub const Phys = u64;
 /// Virtual address.
 pub const Virt = u64;
 
-/// Offset from physical to virtual address for page tables.
-/// This value is determined by surtr bootloader and a backing UEFI firmware.
-/// For now, we only assume OVMF as UEFI,
-/// that directly maps available physical memory to virtual memory using 2MiB pages.
-/// Therefore, the offset is 0x0 for OVMF.
-const phys_virt_offset = 0x0;
-
 pub const PageAttribute = enum {
     /// RO
     read_only,
@@ -71,130 +78,6 @@ pub const PageAttribute = enum {
     }
 };
 
-/// Make level-4 page table writable.
-/// The page tables prepared by the bootloader are marked as read-only.
-/// To modify page mappings, this function duplicates the level-4 page table
-/// and load the new level-4 page table to CR3.
-pub fn setLv4PageTableWritable(bs: *BootServices) PageError!void {
-    var new_lv4_table_ptr: [*]Lv4PageTableEntry = undefined;
-    const status = bs.allocatePages(.AllocateAnyPages, .BootServicesData, 1, @ptrCast(&new_lv4_table_ptr));
-    if (status != .Success) return PageError.NoMemory;
-
-    const new_lv4_table = new_lv4_table_ptr[0..num_table_entries];
-    const lv4_table = getLv4PageTable();
-    @memcpy(new_lv4_table, lv4_table);
-
-    am.loadCr3(@intFromPtr(new_lv4_table.ptr));
-}
-
-/// Change page attribute of the page at the given virtual address.
-pub fn changeMap(virt: Virt, attr: PageAttribute) PageError!void {
-    if (virt & 0xFFF != 0) return PageError.InvalidAddress;
-    if (!isCanonical(virt)) return PageError.NotCanonical;
-
-    const lv4_table = getLv4PageTable();
-    const lv4_index = (virt >> lv4_shift) & index_mask;
-    const lv4_entry = &lv4_table[lv4_index];
-    if (!lv4_entry.present) return PageError.NotPresent;
-
-    const lv3_table = getLv3PageTable(lv4_entry.address());
-    const lv3_index = (virt >> lv3_shift) & index_mask;
-    const lv3_entry = &lv3_table[lv3_index];
-    if (!lv3_entry.present) return PageError.NotPresent;
-
-    const lv2_table = getLv2PageTable(lv3_entry.address());
-    const lv2_index = (virt >> lv2_shift) & index_mask;
-    const lv2_entry = &lv2_table[lv2_index];
-    if (!lv2_entry.present) return PageError.NotPresent;
-
-    const lv1_table = getLv1PageTable(lv2_entry.address());
-    const lv1_index = (virt >> lv1_shift) & index_mask;
-    const lv1_entry = &lv1_table[lv1_index];
-    if (!lv1_entry.present) return PageError.NotPresent;
-
-    lv1_entry.rw = switch (attr) {
-        .read_only, .executable => false,
-        .read_write => true,
-    };
-    lv1_entry.xd = attr != .executable;
-
-    flushTlbSingle(virt);
-}
-
-fn flushTlbSingle(virt: Virt) void {
-    asm volatile (
-        \\invlpg (%[virt])
-        :
-        : [virt] "r" (virt),
-        : "memory"
-    );
-}
-
-/// Maps 4KiB page at the given virtual address to the given physical address.
-/// If the mapping already exists, this function modifies the existing mapping.
-/// If the mapping does not exist, this function creates a new mapping,
-/// where new memory is allocated for page tables using BootServices.
-/// New page tables are allocated as 4KiB BootServicesData pages.
-pub fn mapTo(virt: Virt, phys: Phys, attr: PageAttribute, bs: *BootServices) PageError!void {
-    if (virt & 0xFFF != 0) return PageError.InvalidAddress;
-    if (phys & 0xFFF != 0) return PageError.InvalidAddress;
-    if (!isCanonical(virt)) return PageError.NotCanonical;
-
-    const lv4_table = getLv4PageTable();
-    const lv4_index = (virt >> lv4_shift) & index_mask;
-    const lv4_entry = &lv4_table[lv4_index];
-    if (!lv4_entry.present) {
-        var lv3_ptr: Phys = undefined;
-        const status = bs.allocatePages(.AllocateAnyPages, .BootServicesData, 1, @ptrCast(&lv3_ptr));
-        if (status != .Success) return PageError.NoMemory;
-        clearPage(lv3_ptr);
-        lv4_entry.* = Lv4PageTableEntry.new(lv3_ptr);
-    }
-
-    const lv3_table = getLv3PageTable(lv4_entry.address());
-    const lv3_index = (virt >> lv3_shift) & index_mask;
-    const lv3_entry = &lv3_table[lv3_index];
-    if (!lv3_entry.present) {
-        var lv2_ptr: Phys = undefined;
-        const status = bs.allocatePages(.AllocateAnyPages, .BootServicesData, 1, @ptrCast(&lv2_ptr));
-        if (status != .Success) return PageError.NoMemory;
-        clearPage(lv2_ptr);
-        lv3_entry.* = Lv3PageTableEntry.new(lv2_ptr);
-    }
-
-    const lv2_table = getLv2PageTable(lv3_entry.address());
-    const lv2_index = (virt >> lv2_shift) & index_mask;
-    const lv2_entry = &lv2_table[lv2_index];
-    if (!lv2_entry.present) {
-        var lv1_ptr: Phys = undefined;
-        const status = bs.allocatePages(.AllocateAnyPages, .BootServicesData, 1, @ptrCast(&lv1_ptr));
-        if (status != .Success) return PageError.NoMemory;
-        clearPage(lv1_ptr);
-        lv2_entry.* = Lv2PageTableEntry.new(lv1_ptr);
-    }
-    if (lv2_entry.ps) return PageError.AlreadyMapped;
-
-    const lv1_table = getLv1PageTable(lv2_entry.address());
-    const lv1_index = (virt >> lv1_shift) & index_mask;
-    const lv1_entry = &lv1_table[lv1_index];
-    lv1_entry.* = Lv1PageTableEntry{
-        .present = true,
-        .rw = switch (attr) {
-            .read_only, .executable => false,
-            .read_write => true,
-        },
-        .us = false,
-        .pat = false,
-        .phys_addr = @truncate(phys >> page_shift),
-        .xd = attr != .executable,
-    };
-}
-
-fn clearPage(addr: Phys) void {
-    const page_ptr: [*]u8 = @ptrFromInt(addr);
-    @memset(page_ptr[0..page_size_4k], 0);
-}
-
 /// Return true if the given address is canonical form.
 /// The address is in canonical form if address bits 63 through 48 are copies of bit 47.
 pub fn isCanonical(addr: Virt) bool {
@@ -205,271 +88,235 @@ pub fn isCanonical(addr: Virt) bool {
     }
 }
 
-/// Get the level-4 page table of the current process.
-pub fn getLv4PageTable() []Lv4PageTableEntry {
-    const cr3 = am.readCr3() + phys_virt_offset;
-    const lv4_table_ptr: [*]Lv4PageTableEntry = @ptrFromInt(cr3 & ~@as(u64, 0xFFF));
-    return lv4_table_ptr[0..num_table_entries];
+fn getTable(T: type, addr: Phys) []T {
+    const ptr: [*]T = @ptrFromInt(addr & ~page_mask_4k);
+    return ptr[0..num_table_entries];
 }
 
-/// Get the level-3 page table at the given address.
-pub fn getLv3PageTable(lv3_table_addr: Phys) []Lv3PageTableEntry {
-    const lv3_table_ptr: [*]Lv3PageTableEntry = @ptrFromInt(lv3_table_addr + phys_virt_offset);
-    return lv3_table_ptr[0..num_table_entries];
+fn getLv4Table(cr3: Phys) []Lv4Entry {
+    return getTable(Lv4Entry, cr3);
 }
 
-/// Get the level-2 page table at the given address.
-pub fn getLv2PageTable(lv2_table_addr: Phys) []Lv2PageTableEntry {
-    const lv2_table_ptr: [*]Lv2PageTableEntry = @ptrFromInt(lv2_table_addr + phys_virt_offset);
-    return lv2_table_ptr[0..num_table_entries];
+fn getLv3Table(lv3_paddr: Phys) []Lv3Entry {
+    return getTable(Lv3Entry, lv3_paddr);
 }
 
-/// Get the level-1 page table at the given address.
-pub fn getLv1PageTable(lv1_table_addr: Phys) []Lv1PageTableEntry {
-    const lv1_table_ptr: [*]Lv1PageTableEntry = @ptrFromInt(lv1_table_addr + phys_virt_offset);
-    return lv1_table_ptr[0..num_table_entries];
+fn getLv2Table(lv2_paddr: Phys) []Lv2Entry {
+    return getTable(Lv2Entry, lv2_paddr);
 }
 
-/// Level-4 (First) page table entry, PML4E.
-/// This entry can map 512GiB region or reference a level-3 page table.
-const Lv4PageTableEntry = packed struct(u64) {
-    /// Present.
-    present: bool = true,
-    /// Read/Write.
-    /// If set to false, wirte access is not allowed to the 512GB region.
-    rw: bool,
-    /// User/Supervisor.
-    /// If set to false, user-mode access is not allowed to the 512GB region.
-    us: bool,
-    /// Page-level writh-through.
-    /// Indirectly determines the memory type used to access the PDP Table.
-    pwt: bool = false,
-    /// Page-level cache disable.
-    /// Indirectly determines the memory type used to access the PDP Table.
-    pcd: bool = false,
-    /// Accessed.
-    /// Indicates wheter this entry has been used for translation.
-    accessed: bool = false,
-    /// Ignored.
-    _ignored1: u1 = 0,
-    /// ReservedZ.
-    _reserved1: u1 = 0,
-    /// Ignored
-    _ignored2: u3 = 0,
-    /// Ignored except for HLAT paging.
-    restart: bool = false,
-    /// 4KB aligned address of the PDP Table.
-    phys_pdpt: u52,
+fn getLv1Table(lv1_paddr: Phys) []Lv1Entry {
+    return getTable(Lv1Entry, lv1_paddr);
+}
 
-    /// Get a new PML4E entry with the present bit set to false.
-    pub fn new_nopresent() Lv4PageTableEntry {
-        return Lv4PageTableEntry{
-            .present = false,
-            .rw = false,
-            .us = false,
-            .phys_pdpt = 0,
-        };
-    }
+fn getEntry(T: type, vaddr: Virt, paddr: Phys) *T {
+    const table = getTable(T, paddr);
+    const shift = switch (T) {
+        Lv4Entry => lv4_shift,
+        Lv3Entry => lv3_shift,
+        Lv2Entry => lv2_shift,
+        Lv1Entry => lv1_shift,
+        else => @compileError("Unsupported type"),
+    };
+    return &table[(vaddr >> shift) & index_mask];
+}
 
-    /// Get a new PML4E entry.
-    pub fn new(phys_pdpt: Phys) Lv4PageTableEntry {
-        return Lv4PageTableEntry{
-            .present = true,
-            .rw = true,
-            .us = false,
-            .phys_pdpt = @truncate(phys_pdpt >> page_shift),
-        };
-    }
+fn getLv4Entry(addr: Virt, cr3: Phys) *Lv4Entry {
+    return getEntry(Lv4Entry, addr, cr3);
+}
 
-    /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv4PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_pdpt)) << page_shift;
-    }
+fn getLv3Entry(addr: Virt, lv3tbl_paddr: Phys) *Lv3Entry {
+    return getEntry(Lv3Entry, addr, lv3tbl_paddr);
+}
+
+fn getLv2Entry(addr: Virt, lv2tbl_paddr: Phys) *Lv2Entry {
+    return getEntry(Lv2Entry, addr, lv2tbl_paddr);
+}
+
+fn getLv1Entry(addr: Virt, lv1tbl_paddr: Phys) *Lv1Entry {
+    return getEntry(Lv1Entry, addr, lv1tbl_paddr);
+}
+
+/// Make level-4 page table writable.
+/// The page tables prepared by the bootloader are marked as read-only.
+/// To modify page mappings, this function duplicates the level-4 page table
+/// and load the new level-4 page table to CR3.
+pub fn setLv4Writable(bs: *BootServices) PageError!void {
+    var new_lv4ptr: [*]Lv4Entry = undefined;
+    const status = bs.allocatePages(.AllocateAnyPages, .BootServicesData, 1, @ptrCast(&new_lv4ptr));
+    if (status != .Success) return PageError.NoMemory;
+
+    const new_lv4tbl = new_lv4ptr[0..num_table_entries];
+    const lv4tbl = getLv4Table(am.readCr3());
+    @memcpy(new_lv4tbl, lv4tbl);
+
+    am.loadCr3(@intFromPtr(new_lv4tbl.ptr));
+}
+
+/// Change the attribute of the 4KiB page.
+pub fn changeMap4k(virt: Virt, attr: PageAttribute) PageError!void {
+    if (virt & 0xFFF != 0) return PageError.InvalidAddress;
+    if (!isCanonical(virt)) return PageError.NotCanonical;
+
+    const rw = switch (attr) {
+        .read_only, .executable => false,
+        .read_write => true,
+    };
+    const xd = attr != .executable;
+
+    const lv4ent = getLv4Entry(virt, am.readCr3());
+    if (!lv4ent.present) return PageError.NotPresent;
+    const lv3ent = getLv3Entry(virt, lv4ent.address());
+    if (!lv3ent.present) return PageError.NotPresent;
+    const lv2ent = getLv2Entry(virt, lv3ent.address());
+    if (!lv2ent.present) return PageError.NotPresent;
+    const lv1ent = getLv1Entry(virt, lv2ent.address());
+    if (!lv1ent.present) return PageError.NotPresent;
+
+    lv1ent.rw = rw;
+    lv1ent.xd = xd;
+    am.flushTlbSingle(virt);
+}
+
+/// Maps 4KiB page at the given virtual address to the given physical address.
+/// If the mapping already exists, this function modifies the existing mapping.
+/// If the mapping does not exist, this function creates a new mapping,
+/// where new memory is allocated for page tables using BootServices.
+/// New page tables are allocated as 4KiB BootServicesData pages.
+pub fn map4kTo(virt: Virt, phys: Phys, attr: PageAttribute, bs: *BootServices) PageError!void {
+    if (virt & page_mask_4k != 0) return PageError.InvalidAddress;
+    if (phys & page_mask_4k != 0) return PageError.InvalidAddress;
+    if (!isCanonical(virt)) return PageError.NotCanonical;
+
+    const rw = switch (attr) {
+        .read_only, .executable => false,
+        .read_write => true,
+    };
+    const xd = attr == .executable;
+
+    const lv4ent = getLv4Entry(virt, am.readCr3());
+    if (!lv4ent.present) try allocateNewTable(Lv4Entry, lv4ent, bs);
+
+    const lv3ent = getLv3Entry(virt, lv4ent.address());
+    if (!lv3ent.present) try allocateNewTable(Lv3Entry, lv3ent, bs);
+
+    const lv2ent = getLv2Entry(virt, lv3ent.address());
+    if (!lv2ent.present) try allocateNewTable(Lv2Entry, lv2ent, bs);
+    if (lv2ent.ps) return PageError.AlreadyMapped;
+
+    const lv1ent = getLv1Entry(virt, lv2ent.address());
+    var new_lv1ent = Lv1Entry.newMapPage(phys, true);
+    new_lv1ent.rw = rw;
+    new_lv1ent.xd = xd;
+    lv1ent.* = new_lv1ent;
+    // No need to flush TLB because the page was not present before.
+}
+
+/// Allocate new page tables and update the given page table entry.
+fn allocateNewTable(T: type, entry: *T, bs: *BootServices) PageError!void {
+    var ptr: Phys = undefined;
+    const status = bs.allocatePages(.AllocateAnyPages, .BootServicesData, 1, @ptrCast(&ptr));
+    if (status != .Success) return PageError.NoMemory;
+
+    clearPage(ptr);
+    entry.* = T.newMapTable(@ptrFromInt(ptr), true);
+}
+
+/// Zero-clear the given 4KiB page.
+fn clearPage(addr: Phys) void {
+    const page_ptr: [*]u8 = @ptrFromInt(addr);
+    @memset(page_ptr[0..page_size_4k], 0);
+}
+
+const TableLevel = enum {
+    lv4,
+    lv3,
+    lv2,
+    lv1,
 };
 
-/// Level-3 page table entry, PDPTE.
-/// This entry can map 1GiB page or reference a level-2 page table.
-const Lv3PageTableEntry = packed struct(u64) {
-    /// Present.
-    present: bool = true,
-    /// Read/Write.
-    /// If set to false, wirte access is not allowed to the 1GiB region.
-    rw: bool,
-    /// User/Supervisor.
-    /// If set to false, user-mode access is not allowed to the GiB region.
-    us: bool,
-    /// Page-level writh-through.
-    /// Indirectly determines the memory type used to access the PD Table.
-    pwt: bool = false,
-    /// Page-level cache disable.
-    /// Indirectly determines the memory type used to access the PD Table.
-    pcd: bool = false,
-    /// Accessed.
-    /// Indicates wheter this entry has been used for translation.
-    accessed: bool = false,
-    /// Ignored.
-    _ignored1: u1 = 0,
-    /// Page Size.
-    /// If set to true, the entry maps a 1GiB page.
-    /// If set to false, the entry references a PD Table.
-    ps: bool,
-    /// Ignored
-    _ignored2: u3 = 0,
-    /// Ignored except for HLAT paging.
-    restart: bool = false,
-    /// 4KB aligned address of the PD Table.
-    phys_pdt: u52,
-
-    /// Get a new PDPT entry with the present bit set to false.
-    pub fn new_nopresent() Lv3PageTableEntry {
-        return Lv3PageTableEntry{
-            .present = false,
-            .rw = false,
-            .us = false,
-            .ps = false,
-            .phys_pdt = 0,
+fn EntryBase(table_level: TableLevel) type {
+    return packed struct(u64) {
+        const Self = @This();
+        const level = table_level;
+        const LowerType = switch (level) {
+            .lv4 => Lv3Entry,
+            .lv3 => Lv2Entry,
+            .lv2 => Lv1Entry,
+            .lv1 => struct {},
         };
-    }
 
-    /// Get a new PDPT entry.
-    pub fn new(phys_pdt: Phys) Lv3PageTableEntry {
-        return Lv3PageTableEntry{
-            .present = true,
-            .rw = true,
-            .us = false,
-            .ps = false,
-            .phys_pdt = @truncate(phys_pdt >> page_shift),
-        };
-    }
+        /// Present.
+        present: bool = true,
+        /// Read/Write.
+        /// If set to false, wirte access is not allowed to the region.
+        rw: bool,
+        /// User/Supervisor.
+        /// If set to false, user-mode access is not allowed to the region.
+        us: bool,
+        /// Page-level writh-through.
+        /// Indirectly determines the memory type used to access the page or page table.
+        pwt: bool = false,
+        /// Page-level cache disable.
+        /// Indirectly determines the memory type used to access the page or page table.
+        pcd: bool = false,
+        /// Accessed.
+        /// Indicates wheter this entry has been used for translation.
+        accessed: bool = false,
+        /// Dirty bit.
+        /// Indicates wheter software has written to the 2MiB page.
+        /// Ignored when this entry references a page table.
+        dirty: bool = false,
+        /// Page Size.
+        /// If set to true, the entry maps a page.
+        /// If set to false, the entry references a page table.
+        ps: bool,
+        /// Ignored when CR4.PGE != 1.
+        /// Ignored when this entry references a page table.
+        /// Ignored for level-4 entries.
+        global: bool = true,
+        /// Ignored
+        _ignored1: u2 = 0,
+        /// Ignored except for HLAT paging.
+        restart: bool = false,
+        /// When the entry maps a page, physical address of the page.
+        /// When the entry references a page table, 4KB aligned address of the page table.
+        phys: u51,
+        /// Execute Disable.
+        xd: bool = false,
 
-    /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv3PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_pdt)) << page_shift;
-    }
-};
+        /// Get the physical address of the page or page table that this entry references or maps.
+        pub inline fn address(self: Self) Phys {
+            return @as(u64, @intCast(self.phys)) << page_shift_4k;
+        }
 
-/// Level-2 page table entry, PDE.
-/// This entry can map a 2MiB page or reference a level-1 page table.
-const Lv2PageTableEntry = packed struct(u64) {
-    /// Present.
-    present: bool = true,
-    /// Read/Write.
-    /// If set to false, wirte access is not allowed to the 2MiB region.
-    rw: bool,
-    /// User/Supervisor.
-    /// If set to false, user-mode access is not allowed to the 2Mib region.
-    us: bool,
-    /// Page-level writh-through.
-    /// Indirectly determines the memory type used to access the 2MiB page or Page Table.
-    pwt: bool = false,
-    /// Page-level cache disable.
-    /// Indirectly determines the memory type used to access the 2MiB page or Page Table.
-    pcd: bool = false,
-    /// Accessed.
-    /// Indicates wheter this entry has been used for translation.
-    accessed: bool = false,
-    /// Dirty bit.
-    /// Indicates wheter software has written to the 2MiB page.
-    /// Ignored when this entry references a Page Table.
-    dirty: bool = false,
-    /// Page Size.
-    /// If set to true, the entry maps a 2Mib page.
-    /// If set to false, the entry references a Page Table.
-    ps: bool,
-    /// Ignored when CR4.PGE != 1.
-    /// Ignored when this entry references a 2MiB page.
-    global: bool = false,
-    /// Ignored
-    _ignored2: u2 = 0,
-    /// Ignored except for HLAT paging.
-    restart: bool = false,
-    /// When the entry maps a 2MiB page, physical address of the 2MiB page.
-    /// When the entry references a Page Table, 4KB aligned address of the Page Table.
-    phys_pt: u51,
-    /// If the entry maps a 2MiB page and the bit is set, the 2MiB page is not executable.
-    /// If the entry references a Page Table, the bit must be unset.
-    xd: bool = false,
+        /// Get a new page table entry that references a page table.
+        pub fn newMapTable(table: [*]LowerType, present: bool) Self {
+            if (level == .lv1) @compileError("Lv1 entry cannot reference a page table");
+            return Self{
+                .present = present,
+                .rw = true,
+                .us = false,
+                .ps = false,
+                .phys = @truncate(@intFromPtr(table) >> page_shift_4k),
+            };
+        }
 
-    /// Get a new PDT entry with the present bit set to false.
-    pub fn new_nopresent() Lv2PageTableEntry {
-        return Lv2PageTableEntry{
-            .present = false,
-            .rw = false,
-            .us = false,
-            .ps = false,
-            .phys_pt = 0,
-        };
-    }
+        /// Get a new page table entry that maps a page.
+        pub fn newMapPage(phys: Phys, present: bool) Self {
+            if (level == .lv4) @compileError("Lv4 entry cannot map a page");
+            return Self{
+                .present = present,
+                .rw = true,
+                .us = false,
+                .ps = true,
+                .phys = @truncate(phys >> page_shift_4k),
+            };
+        }
+    };
+}
 
-    /// Get a new PDT entry that maps a 2MiB page.
-    pub fn new_2mb(phys: u64) Lv2PageTableEntry {
-        return Lv2PageTableEntry{
-            .present = true,
-            .rw = true,
-            .us = false,
-            .ps = true,
-            .phys_pt = @truncate(phys >> 12),
-        };
-    }
-
-    /// Get a new PDT entry that references a level-1 page table.
-    pub fn new(phys: u64) Lv2PageTableEntry {
-        return Lv2PageTableEntry{
-            .present = true,
-            .rw = true,
-            .us = false,
-            .ps = false,
-            .phys_pt = @truncate(phys >> 12),
-        };
-    }
-
-    /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv2PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_pt)) << 12;
-    }
-};
-
-/// Level-1 page table entry, PTE.
-/// This entry can map 4KiB page.
-const Lv1PageTableEntry = packed struct(u64) {
-    /// Present.
-    present: bool = true,
-    /// Read/Write.
-    /// If set to false, wirte access is not allowed to the 4KiB region.
-    rw: bool,
-    /// User/Supervisor.
-    /// If set to false, user-mode access is not allowed to the 4KiB region.
-    us: bool,
-    /// Page-level writh-through.
-    /// Indirectly determines the memory type used to access the 4KiB page or Page Table.
-    pwt: bool = false,
-    /// Page-level cache disable.
-    /// Indirectly determines the memory type used to access the 4KiB page or Page Table.
-    pcd: bool = false,
-    /// Accessed.
-    /// Indicates wheter this entry has been used for translation.
-    accessed: bool = false,
-    /// Dirty bit.
-    /// Indicates wheter software has written to the 4KiB page.
-    /// Ignored when this entry references a Page Table.
-    dirty: bool = false,
-    /// Indirectly determines the memory type used to access the 4KiB page.
-    pat: bool,
-    /// Global. Whether the translation is global.
-    /// Ignored when CR4.PGE != 1.
-    global: bool = false,
-    /// Ignored
-    _ignored2: u2 = 0,
-    /// Ignored except for HLAT paging.
-    restart: bool = false,
-    /// Physical address of the 4KiB page.
-    phys_addr: u51,
-    /// If the entry maps a 4KiB page and the bit is set, the 4KiB page is not executable.
-    /// If the entry references a Page Table, the bit must be unset.
-    xd: bool = false,
-
-    /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv1PageTableEntry) Phys {
-        return @as(u64, @intCast(self.phys_addr)) << 12;
-    }
-};
+const Lv4Entry = EntryBase(.lv4);
+const Lv3Entry = EntryBase(.lv3);
+const Lv2Entry = EntryBase(.lv2);
+const Lv1Entry = EntryBase(.lv1);

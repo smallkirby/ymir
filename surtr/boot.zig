@@ -16,6 +16,9 @@ const blog = @import("log.zig");
 const defs = @import("defs.zig");
 const arch = @import("arch.zig").impl;
 
+const page_size = arch.page.page_size_4k;
+const page_mask = arch.page.page_mask_4k;
+
 // Override the default log options
 pub const std_options = blog.default_log_options;
 
@@ -106,7 +109,7 @@ pub fn main() uefi.Status {
 
     // Calculate necessary memory size for kernel image.
     var kernel_start_virt: elf.Elf64_Addr = std.math.maxInt(elf.Elf64_Addr);
-    var kernel_start: elf.Elf64_Addr align(4096) = std.math.maxInt(elf.Elf64_Addr);
+    var kernel_start: elf.Elf64_Addr align(page_size) = std.math.maxInt(elf.Elf64_Addr);
     var kernel_end: elf.Elf64_Addr = 0;
     var iter = elf_header.program_header_iterator(kernel);
     while (true) {
@@ -119,7 +122,7 @@ pub fn main() uefi.Status {
         if (phdr.p_vaddr < kernel_start_virt) kernel_start_virt = phdr.p_vaddr;
         if (phdr.p_paddr + phdr.p_memsz > kernel_end) kernel_end = phdr.p_paddr + phdr.p_memsz;
     }
-    const pages_4kib = (kernel_end - kernel_start + 4095) / 4096;
+    const pages_4kib = (kernel_end - kernel_start + (page_size - 1)) / page_size;
     log.info("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start, kernel_end, pages_4kib });
 
     // Allocate memory for kernel image.
@@ -128,19 +131,19 @@ pub fn main() uefi.Status {
         log.err("Failed to allocate memory for kernel image: {?}", .{status});
         return status;
     }
-    log.info("Allocated memory for kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ kernel_start, kernel_start + pages_4kib * 4096 });
+    log.info("Allocated memory for kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ kernel_start, kernel_start + pages_4kib * page_size });
 
     // Map memory for kernel image.
-    arch.page.setLv4PageTableWritable(boot_service) catch |err| {
+    arch.page.setLv4Writable(boot_service) catch |err| {
         log.err("Failed to set page table writable: {?}", .{err});
         return .LoadError;
     };
     log.debug("Set page table writable.", .{});
 
     for (0..pages_4kib) |i| {
-        arch.page.mapTo(
-            kernel_start_virt + 4096 * i,
-            kernel_start + 4096 * i,
+        arch.page.map4kTo(
+            kernel_start_virt + page_size * i,
+            kernel_start + page_size * i,
             .read_write,
             boot_service,
         ) catch |err| {
@@ -188,13 +191,13 @@ pub fn main() uefi.Status {
         }
 
         // Change memory protection.
-        const page_start = phdr.p_vaddr & ~(@as(u64, 0xFFF));
-        const page_end = (phdr.p_vaddr + phdr.p_memsz + 0xFFF) & ~(@as(u64, 0xFFF));
-        const size = (page_end - page_start) / 4096;
+        const page_start = phdr.p_vaddr & ~page_mask;
+        const page_end = (phdr.p_vaddr + phdr.p_memsz + (page_size - 1)) & ~page_mask;
+        const size = (page_end - page_start) / page_size;
         const attribute = arch.page.PageAttribute.fromFlags(phdr.p_flags);
         for (0..size) |i| {
-            arch.page.changeMap(
-                page_start + 4096 * i,
+            arch.page.changeMap4k(
+                page_start + page_size * i,
                 attribute,
             ) catch |err| {
                 log.err("Failed to change memory protection: {?}", .{err});
@@ -232,8 +235,8 @@ pub fn main() uefi.Status {
     log.info("Guest kernel size: {X} bytes", .{guest_info.file_size});
 
     // Load guest kernel image.
-    var guest_start: u64 align(4096) = undefined;
-    const guest_size_pages = (guest_info.file_size + 4095) / 4096;
+    var guest_start: u64 align(page_size) = undefined;
+    const guest_size_pages = (guest_info.file_size + (page_size - 1)) / page_size;
     status = boot_service.allocatePages(.AllocateAnyPages, .LoaderData, guest_size_pages, @ptrCast(&guest_start));
     if (status != .Success) {
         log.err("Failed to allocate memory for guest kernel image.", .{});
@@ -275,7 +278,7 @@ pub fn main() uefi.Status {
     log.info("Initrd size: 0x{X:0>16} bytes", .{initrd_size});
 
     var initrd_start: u64 = undefined;
-    const initrd_size_pages = (initrd_size + 4095) / 4096;
+    const initrd_size_pages = (initrd_size + (page_size - 1)) / page_size;
     status = boot_service.allocatePages(.AllocateAnyPages, .LoaderData, initrd_size_pages, @ptrCast(&initrd_start));
     if (status != .Success) {
         log.err("Failed to allocate memory for initrd.", .{});
@@ -334,7 +337,7 @@ pub fn main() uefi.Status {
     // Exit boot services.
     // After this point, we can't use any boot services including logging.
     log.info("Exiting boot services.", .{});
-    const map_buffer_size = 4096 * 4;
+    const map_buffer_size = page_size * 4;
     var map_buffer: [map_buffer_size]u8 = undefined;
     var map = defs.MemoryMap{
         .buffer_size = map_buffer.len,
@@ -361,7 +364,7 @@ pub fn main() uefi.Status {
         if (map_iter.next()) |md| {
             log.debug("  0x{X:0>16} - 0x{X:0>16} : {s}", .{
                 md.physical_start,
-                md.physical_start + md.number_of_pages * 4096,
+                md.physical_start + md.number_of_pages * page_size,
                 @tagName(md.type),
             });
         } else break;
