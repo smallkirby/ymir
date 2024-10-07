@@ -459,241 +459,98 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     }
 }
 
-/// Level-4 (First) page table entry, PML4E.
-/// This entry references a Lv3 page table.
-const Lv4Entry = packed struct(u64) {
-    /// Present.
-    present: bool = true,
-    /// Read/Write.
-    /// If set to false, wirte access is not allowed to the 512GB region.
-    rw: bool,
-    /// User/Supervisor.
-    /// If set to false, user-mode access is not allowed to the 512GB region.
-    us: bool,
-    /// Page-level writh-through.
-    /// Indirectly determines the memory type used to access the PDP Table.
-    pwt: bool = false,
-    /// Page-level cache disable.
-    /// Indirectly determines the memory type used to access the PDP Table.
-    pcd: bool = false,
-    /// Accessed.
-    /// Indicates wheter this entry has been used for translation.
-    accessed: bool = false,
-    /// Ignored.
-    _ignored1: u1 = 0,
-    /// Reserved.
-    _reserved1: bool = false,
-    /// Ignored
-    _ignored2: u3 = 0,
-    /// Ignored except for HLAT paging.
-    restart: bool = false,
-    /// 4KB aligned address of the PDP Table.
-    phys: u51,
-    /// Execute Disable.
-    xd: bool = false,
-
-    /// Get a new Lv4 entry that references Lv3 table.
-    pub fn newMapTable(lv3tbl: [*]Lv3Entry, present: bool) Lv4Entry {
-        return Lv4Entry{
-            .present = present,
-            .rw = true,
-            .us = false,
-            .phys = @truncate(virt2phys(lv3tbl) >> page_shift_4k),
-        };
-    }
-
-    /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv4Entry) Phys {
-        return @as(u64, @intCast(self.phys)) << page_shift_4k;
-    }
+const TableLevel = enum {
+    lv4,
+    lv3,
+    lv2,
+    lv1,
 };
 
-/// Level-3 page table entry, PDPTE.
-/// This entry can map 1GiB page or reference a Lv2 page table.
-const Lv3Entry = packed struct(u64) {
-    /// Present.
-    present: bool = true,
-    /// Read/Write.
-    /// If set to false, wirte access is not allowed to the 1GiB region.
-    rw: bool,
-    /// User/Supervisor.
-    /// If set to false, user-mode access is not allowed to the GiB region.
-    us: bool,
-    /// Page-level writh-through.
-    /// Indirectly determines the memory type used to access the PD Table.
-    pwt: bool = false,
-    /// Page-level cache disable.
-    /// Indirectly determines the memory type used to access the PD Table.
-    pcd: bool = false,
-    /// Accessed.
-    /// Indicates wheter this entry has been used for translation.
-    accessed: bool = false,
-    /// Ignored.
-    _ignored1: u1 = 0,
-    /// Page Size.
-    /// If set to true, the entry maps a 1GiB page.
-    /// If set to false, the entry references a PD Table.
-    ps: bool,
-    /// Ignored
-    _ignored2: u3 = 0,
-    /// Ignored except for HLAT paging.
-    restart: bool = false,
-    /// 4KB aligned address of the PD Table.
-    phys: u51,
-    /// Execute Disable.
-    xd: bool = false,
-
-    /// Get a new Lv3 entry that references Lv2 table.
-    pub fn newMapTable(lv2tbl: [*]Lv2Entry, present: bool) Lv3Entry {
-        return Lv3Entry{
-            .present = present,
-            .rw = true,
-            .us = false,
-            .ps = false,
-            .phys = @truncate(virt2phys(lv2tbl) >> page_shift_4k),
+fn EntryBase(table_level: TableLevel) type {
+    return packed struct(u64) {
+        const Self = @This();
+        const level = table_level;
+        const LowerType = switch (level) {
+            .lv4 => Lv3Entry,
+            .lv3 => Lv2Entry,
+            .lv2 => Lv1Entry,
+            .lv1 => struct {},
         };
-    }
 
-    /// Get a new Lv3 entry that maps a 1GiB page.
-    pub fn newMapPage(phys: Phys, present: bool) Lv3Entry {
-        return Lv3Entry{
-            .present = present,
-            .rw = true,
-            .us = false,
-            .ps = true,
-            .phys = @truncate(phys >> page_shift_4k),
-        };
-    }
+        /// Present.
+        present: bool = true,
+        /// Read/Write.
+        /// If set to false, wirte access is not allowed to the region.
+        rw: bool,
+        /// User/Supervisor.
+        /// If set to false, user-mode access is not allowed to the region.
+        us: bool,
+        /// Page-level writh-through.
+        /// Indirectly determines the memory type used to access the page or page table.
+        pwt: bool = false,
+        /// Page-level cache disable.
+        /// Indirectly determines the memory type used to access the page or page table.
+        pcd: bool = false,
+        /// Accessed.
+        /// Indicates wheter this entry has been used for translation.
+        accessed: bool = false,
+        /// Dirty bit.
+        /// Indicates wheter software has written to the 2MiB page.
+        /// Ignored when this entry references a page table.
+        dirty: bool = false,
+        /// Page Size.
+        /// If set to true, the entry maps a page.
+        /// If set to false, the entry references a page table.
+        ps: bool,
+        /// Ignored when CR4.PGE != 1.
+        /// Ignored when this entry references a page table.
+        /// Ignored for level-4 entries.
+        global: bool = true,
+        /// Ignored
+        _ignored1: u2 = 0,
+        /// Ignored except for HLAT paging.
+        restart: bool = false,
+        /// When the entry maps a page, physical address of the page.
+        /// When the entry references a page table, 4KB aligned address of the page table.
+        phys: u51,
+        /// Execute Disable.
+        xd: bool = false,
 
-    /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv3Entry) Phys {
-        return @as(u64, @intCast(self.phys)) << page_shift_4k;
-    }
-};
+        /// Get the physical address of the page or page table that this entry references or maps.
+        pub inline fn address(self: Self) Phys {
+            return @as(u64, @intCast(self.phys)) << page_shift_4k;
+        }
 
-/// Level-2 page table entry, PDE.
-/// This entry can map a 2MiB page or reference a Lv1 page table.
-const Lv2Entry = packed struct(u64) {
-    /// Present.
-    present: bool = true,
-    /// Read/Write.
-    /// If set to false, wirte access is not allowed to the 2MiB region.
-    rw: bool,
-    /// User/Supervisor.
-    /// If set to false, user-mode access is not allowed to the 2Mib region.
-    us: bool,
-    /// Page-level writh-through.
-    /// Indirectly determines the memory type used to access the 2MiB page or Page Table.
-    pwt: bool = false,
-    /// Page-level cache disable.
-    /// Indirectly determines the memory type used to access the 2MiB page or Page Table.
-    pcd: bool = false,
-    /// Accessed.
-    /// Indicates wheter this entry has been used for translation.
-    accessed: bool = false,
-    /// Dirty bit.
-    /// Indicates wheter software has written to the 2MiB page.
-    /// Ignored when this entry references a Page Table.
-    dirty: bool = false,
-    /// Page Size.
-    /// If set to true, the entry maps a 2Mib page.
-    /// If set to false, the entry references a Page Table.
-    ps: bool,
-    /// Ignored when CR4.PGE != 1.
-    /// Ignored when this entry references a 2MiB page.
-    global: bool = false,
-    /// Ignored
-    _ignored2: u2 = 0,
-    /// Ignored except for HLAT paging.
-    restart: bool = false,
-    /// When the entry maps a 2MiB page, physical address of the 2MiB page.
-    /// When the entry references a Page Table, 4KB aligned address of the Page Table.
-    phys: u51,
-    /// Execute Disable.
-    xd: bool = false,
+        /// Get a new page table entry that references a page table.
+        pub fn newMapTable(table: [*]LowerType, present: bool) Self {
+            if (level == .lv1) @compileError("Lv1 entry cannot reference a page table");
+            return Self{
+                .present = present,
+                .rw = true,
+                .us = false,
+                .ps = false,
+                .phys = @truncate(virt2phys(table) >> page_shift_4k),
+            };
+        }
 
-    /// Get a new Lv2 entry that maps a 2MiB page.
-    pub fn newMapPage(phys: Phys, present: bool) Lv2Entry {
-        return Lv2Entry{
-            .present = present,
-            .rw = true,
-            .us = false,
-            .ps = true,
-            .phys = @truncate(phys >> page_shift_4k),
-        };
-    }
+        /// Get a new page table entry that maps a page.
+        pub fn newMapPage(phys: Phys, present: bool) Self {
+            if (level == .lv4) @compileError("Lv4 entry cannot map a page");
+            return Self{
+                .present = present,
+                .rw = true,
+                .us = false,
+                .ps = true,
+                .phys = @truncate(phys >> page_shift_4k),
+            };
+        }
+    };
+}
 
-    /// Get a new Lv2 entry that references Lv1 table.
-    pub fn newMapTable(lv1tbl: [*]Lv1Entry, present: bool) Lv2Entry {
-        return Lv2Entry{
-            .present = present,
-            .rw = true,
-            .us = false,
-            .ps = false,
-            .phys = @truncate(virt2phys(lv1tbl) >> page_shift_4k),
-        };
-    }
-
-    /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv2Entry) Phys {
-        return @as(u64, @intCast(self.phys)) << page_shift_4k;
-    }
-};
-
-/// Level-1 page table entry, PTE.
-/// This entry can map 4KiB page.
-const Lv1Entry = packed struct(u64) {
-    /// Present.
-    present: bool = true,
-    /// Read/Write.
-    /// If set to false, wirte access is not allowed to the 4KiB region.
-    rw: bool,
-    /// User/Supervisor.
-    /// If set to false, user-mode access is not allowed to the 4KiB region.
-    us: bool,
-    /// Page-level writh-through.
-    /// Indirectly determines the memory type used to access the 4KiB page or Page Table.
-    pwt: bool = false,
-    /// Page-level cache disable.
-    /// Indirectly determines the memory type used to access the 4KiB page or Page Table.
-    pcd: bool = false,
-    /// Accessed.
-    /// Indicates wheter this entry has been used for translation.
-    accessed: bool = false,
-    /// Dirty bit.
-    /// Indicates wheter software has written to the 4KiB page.
-    /// Ignored when this entry references a Page Table.
-    dirty: bool = false,
-    /// Indirectly determines the memory type used to access the 4KiB page.
-    pat: bool,
-    /// Global. Whether the translation is global.
-    /// Ignored when CR4.PGE != 1.
-    global: bool = false,
-    /// Ignored
-    _ignored2: u2 = 0,
-    /// Ignored except for HLAT paging.
-    restart: bool = false,
-    /// Physical address of the 4KiB page.
-    phys: u51,
-    /// Execute Disable.
-    xd: bool = false,
-
-    /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv1Entry) Phys {
-        return @as(u64, @intCast(self.phys)) << page_shift_4k;
-    }
-
-    /// Get a new Lv1 entry that maps a 4KiB page.
-    pub fn newMapPage(phys: Phys, present: bool) Lv1Entry {
-        return Lv1Entry{
-            .present = present,
-            .rw = true,
-            .us = false,
-            .pat = false,
-            .phys = @truncate(phys >> page_shift_4k),
-        };
-    }
-};
+const Lv4Entry = EntryBase(.lv4);
+const Lv3Entry = EntryBase(.lv3);
+const Lv2Entry = EntryBase(.lv2);
+const Lv1Entry = EntryBase(.lv1);
 
 // ========================================
 
