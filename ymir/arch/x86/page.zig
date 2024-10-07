@@ -33,7 +33,11 @@ const Phys = mem.Phys;
 
 pub const PageError = error{
     /// Failed to allocate memory.
-    NoMemory,
+    OutOfMemory,
+    /// Invalid address.
+    InvalidAddress,
+    /// Specified address is not mapped.
+    NotMapped,
 };
 
 const page_size_4k = mem.page_size_4k;
@@ -74,6 +78,16 @@ pub const PageSize = enum {
     m2,
     /// 1GiB
     g1,
+};
+
+/// Page attributes.
+pub const PageAttribute = enum {
+    /// RO
+    read_only,
+    /// RW
+    read_write,
+    /// RX
+    executable,
 };
 
 /// Return true if the given address is canonical form.
@@ -234,7 +248,7 @@ pub fn guestTranslateWalk(gva: Virt, cr3: Phys, guest_base: Phys) ?Phys {
 /// Recursively clone page tables provided by UEFI.
 /// After calling this function, cloned page tables are set to CR3.
 /// Paged used for the old page tables can be safely freed / reused.
-pub fn cloneUefiPageTables() !void {
+pub fn cloneUefiPageTables() PageError!void {
     // Lv4 table provided by UEFI.
     const lv4_table = getLv4Table(am.readCr3());
 
@@ -256,7 +270,7 @@ pub fn cloneUefiPageTables() !void {
     am.loadCr3(@intFromPtr(new_lv4_table));
 }
 
-fn cloneLevel3Table(lv3_table: []Lv3Entry) ![]Lv3Entry {
+fn cloneLevel3Table(lv3_table: []Lv3Entry) PageError![]Lv3Entry {
     const new_lv3_ptr: [*]Lv3Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
     const new_lv3_table = new_lv3_ptr[0..num_table_entries];
     @memcpy(new_lv3_table, lv3_table);
@@ -273,7 +287,7 @@ fn cloneLevel3Table(lv3_table: []Lv3Entry) ![]Lv3Entry {
     return new_lv3_table;
 }
 
-fn cloneLevel2Table(lv2_table: []Lv2Entry) ![]Lv2Entry {
+fn cloneLevel2Table(lv2_table: []Lv2Entry) PageError![]Lv2Entry {
     const new_lv2_ptr: [*]Lv2Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
     const new_lv2_table = new_lv2_ptr[0..num_table_entries];
     @memcpy(new_lv2_table, lv2_table);
@@ -290,7 +304,7 @@ fn cloneLevel2Table(lv2_table: []Lv2Entry) ![]Lv2Entry {
     return new_lv2_table;
 }
 
-fn cloneLevel1Table(lv1_table: []Lv1Entry) ![]Lv1Entry {
+fn cloneLevel1Table(lv1_table: []Lv1Entry) PageError![]Lv1Entry {
     const new_lv1_ptr: [*]Lv1Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
     const new_lv1_table = new_lv1_ptr[0..num_table_entries];
     @memcpy(new_lv1_table, lv1_table);
@@ -300,7 +314,7 @@ fn cloneLevel1Table(lv1_table: []Lv1Entry) ![]Lv1Entry {
 
 /// Directly map all memory with offset.
 /// After calling this function, it is safe to unmap direct mappings.
-pub fn directOffsetMap() !void {
+pub fn directOffsetMap() PageError!void {
     comptime {
         if (direct_map_size % page_size_512gb != 0) {
             @compileError("direct_map_size must be multiple of 512GB");
@@ -335,7 +349,7 @@ pub fn directOffsetMap() !void {
 /// Unmap straight map region starting at address 0x0.
 /// Note that after calling this function,
 /// BootstrapPageAllocator returns invalid virtual address because they are unmapped by this function.
-pub fn unmapStraightMap() !void {
+pub fn unmapStraightMap() PageError!void {
     const lv4_table = getLv4Table(am.readCr3());
     const lv4idx_end = (direct_map_base >> lv4_shift) & index_mask;
 
@@ -353,9 +367,15 @@ fn reloadCr3() void {
     am.loadCr3(virt2phys(lv4_table.ptr));
 }
 
-/// Make a page at the given virtual address read-only.
-pub fn makeReadOnly(size: PageSize, virt: Virt, allocator: Allocator) !void {
+/// Change the page attribute.
+pub fn changePageAttribute(size: PageSize, virt: Virt, attr: PageAttribute, allocator: Allocator) PageError!void {
     if (!isCanonical(virt)) return error.InvalidAddress;
+
+    const rw = switch (attr) {
+        .read_only, .executable => false,
+        .read_write => true,
+    };
+    const xd = attr == .executable;
 
     const lv4ent = getLv4Entry(virt, am.readCr3());
     if (!lv4ent.present) return error.NotMapped;
@@ -363,7 +383,8 @@ pub fn makeReadOnly(size: PageSize, virt: Virt, allocator: Allocator) !void {
     const lv3ent = getLv3Entry(virt, lv4ent.address());
     if (!lv3ent.present) return error.NotMapped;
     if (size == .g1) {
-        lv3ent.rw = false;
+        lv3ent.rw = rw;
+        lv3ent.xd = xd;
         return reloadCr3();
     }
     if (lv3ent.ps) try splitTable(Lv3Entry, lv3ent, allocator);
@@ -371,7 +392,8 @@ pub fn makeReadOnly(size: PageSize, virt: Virt, allocator: Allocator) !void {
     const lv2ent = getLv2Entry(virt, lv3ent.address());
     if (!lv2ent.present) return error.NotMapped;
     if (size == .m2) {
-        lv2ent.rw = false;
+        lv2ent.rw = rw;
+        lv2ent.xd = xd;
         return reloadCr3();
     }
     if (lv2ent.ps) try splitTable(Lv2Entry, lv2ent, allocator);
@@ -379,10 +401,12 @@ pub fn makeReadOnly(size: PageSize, virt: Virt, allocator: Allocator) !void {
     const lv1ent = getLv1Entry(virt, lv2ent.address());
     if (!lv1ent.present) return error.NotMapped;
     lv1ent.rw = false;
+    lv1ent.xd = false;
+    return reloadCr3();
 }
 
 /// Split the 1GiB page into 2MiB pages.
-fn splitTable(T: type, ent: *T, allocator: Allocator) !void {
+fn splitTable(T: type, ent: *T, allocator: Allocator) PageError!void {
     const page = ent.address();
     const U = switch (T) {
         Lv3Entry => Lv2Entry,
@@ -464,7 +488,9 @@ const Lv4Entry = packed struct(u64) {
     /// Ignored except for HLAT paging.
     restart: bool = false,
     /// 4KB aligned address of the PDP Table.
-    phys: u52,
+    phys: u51,
+    /// Execute Disable.
+    xd: bool = false,
 
     /// Get a new Lv4 entry that references Lv3 table.
     pub fn newMapTable(lv3tbl: [*]Lv3Entry, present: bool) Lv4Entry {
@@ -513,7 +539,9 @@ const Lv3Entry = packed struct(u64) {
     /// Ignored except for HLAT paging.
     restart: bool = false,
     /// 4KB aligned address of the PD Table.
-    phys: u52,
+    phys: u51,
+    /// Execute Disable.
+    xd: bool = false,
 
     /// Get a new Lv3 entry that references Lv2 table.
     pub fn newMapTable(lv2tbl: [*]Lv2Entry, present: bool) Lv3Entry {
@@ -580,7 +608,9 @@ const Lv2Entry = packed struct(u64) {
     restart: bool = false,
     /// When the entry maps a 2MiB page, physical address of the 2MiB page.
     /// When the entry references a Page Table, 4KB aligned address of the Page Table.
-    phys: u52,
+    phys: u51,
+    /// Execute Disable.
+    xd: bool = false,
 
     /// Get a new Lv2 entry that maps a 2MiB page.
     pub fn newMapPage(phys: Phys, present: bool) Lv2Entry {
@@ -644,7 +674,9 @@ const Lv1Entry = packed struct(u64) {
     /// Ignored except for HLAT paging.
     restart: bool = false,
     /// Physical address of the 4KiB page.
-    phys: u52,
+    phys: u51,
+    /// Execute Disable.
+    xd: bool = false,
 
     /// Get the physical address pointed by this entry.
     pub inline fn address(self: Lv1Entry) Phys {

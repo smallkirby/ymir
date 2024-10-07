@@ -117,7 +117,12 @@ pub const Vm = struct {
 
         // Make the pages read only.
         for (0..self.guest_mem.len / mem.page_size_2mb) |i| {
-            arch.page.makeReadOnly(.m2, @intFromPtr(self.guest_mem.ptr) + i * mem.page_size_2mb, allocator) catch {
+            arch.page.changePageAttribute(
+                .m2,
+                @intFromPtr(self.guest_mem.ptr) + i * mem.page_size_2mb,
+                .read_only,
+                allocator,
+            ) catch {
                 @panic("Failed to make guest memory read-only.");
             };
         }

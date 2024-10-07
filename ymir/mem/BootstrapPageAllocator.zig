@@ -26,9 +26,7 @@ const PageInUseList = SinglyLinkedList(PageAddr);
 
 const Error = error{
     /// No usable memory region found.
-    NoMemory,
-    /// Internal memory is not available.
-    NoInternalMemory,
+    OutOfMemory,
 };
 
 /// Static buffer size in bytes for the allocator.
@@ -103,7 +101,7 @@ pub fn deinit() void {
 }
 
 inline fn markPageInuse(page: PageAddr) Error!void {
-    const node = allocator.create(PageInUseList.Node) catch return Error.NoInternalMemory;
+    const node = allocator.create(PageInUseList.Node) catch return Error.OutOfMemory;
     node.data = page;
     page_inuse_list.prepend(node);
 }
