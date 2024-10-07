@@ -405,7 +405,8 @@ pub fn changePageAttribute(size: PageSize, virt: Virt, attr: PageAttribute, allo
     return reloadCr3();
 }
 
-/// Split the 1GiB page into 2MiB pages.
+/// Split the given page table entry that maps a page.
+/// After this function, the entry references a page table.
 fn splitTable(T: type, ent: *T, allocator: Allocator) PageError!void {
     const page = ent.address();
     const U = switch (T) {
