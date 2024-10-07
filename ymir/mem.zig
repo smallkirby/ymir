@@ -26,9 +26,10 @@ const MemoryMap = surtr.MemoryMap;
 const ymir = @import("ymir");
 const arch = ymir.arch;
 
-pub const BootstrapPageAllocator = @import("mem/BootstrapPageAllocator.zig");
 /// Temporary page allocator.
 /// This allocator should be used until the general page allocator is initialized.
+pub const BootstrapPageAllocator = @import("mem/BootstrapPageAllocator.zig");
+/// Page allocator.
 pub const page_allocator = Allocator{
     .ptr = &page_allocator_instance,
     .vtable = &PageAllocator.vtable,

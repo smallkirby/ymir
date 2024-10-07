@@ -66,6 +66,16 @@ const implemented_bit_length = 48;
 /// Most significant implemented bit in 0-origin.
 const msi_bit = 47;
 
+/// Page type based on its size.
+pub const PageSize = enum {
+    /// 4KiB
+    k4,
+    /// 2MiB
+    m2,
+    /// 1GiB
+    g1,
+};
+
 /// Return true if the given address is canonical form.
 /// The address is in canonical form if address bits 63 through 48 are copies of bit 47.
 pub fn isCanonical(addr: Virt) bool {
@@ -76,49 +86,107 @@ pub fn isCanonical(addr: Virt) bool {
     }
 }
 
+fn getTable(T: type, addr: Phys, offset: usize) []T {
+    const ptr: [*]T = @ptrFromInt((phys2virt(addr) & ~page_mask_4k) + offset);
+    return ptr[0..num_table_entries];
+}
+
 /// Get the level-4 page table of the current process.
-pub fn getLv4PageTable() []Lv4PageTableEntry {
-    const cr3 = phys2virt(am.readCr3());
-    const lv4_table_ptr: [*]Lv4PageTableEntry = @ptrFromInt(cr3 & ~page_mask_4k);
-    return lv4_table_ptr[0..num_table_entries];
+fn getLv4Table(cr3: Phys) []Lv4Entry {
+    return getTable(Lv4Entry, cr3, 0);
 }
 
 /// Get the level-3 page table at the given address.
-pub fn getLv3PageTable(lv3_table_addr: Phys) []Lv3PageTableEntry {
-    const lv3_table_ptr: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv3_table_addr));
-    return lv3_table_ptr[0..num_table_entries];
+fn getLv3Table(lv3_table_addr: Phys) []Lv3Entry {
+    return getTable(Lv3Entry, lv3_table_addr, 0);
 }
 
 /// Get the level-2 page table at the given address.
-pub fn getLv2PageTable(lv2_table_addr: Phys) []Lv2PageTableEntry {
-    const lv2_table_ptr: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv2_table_addr));
-    return lv2_table_ptr[0..num_table_entries];
+fn getLv2Table(lv2_table_addr: Phys) []Lv2Entry {
+    return getTable(Lv2Entry, lv2_table_addr, 0);
 }
 
 /// Get the level-1 page table at the given address.
-pub fn getLv1PageTable(lv1_table_addr: Phys) []Lv1PageTableEntry {
-    const lv1_table_ptr: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv1_table_addr));
-    return lv1_table_ptr[0..num_table_entries];
+fn getLv1Table(lv1_table_addr: Phys) []Lv1Entry {
+    return getTable(Lv1Entry, lv1_table_addr, 0);
 }
 
-fn getLv4GuestPageTable(cr3: Phys, guest_base: u64) []Lv4PageTableEntry {
-    const lv4_table_ptr: [*]Lv4PageTableEntry = @ptrFromInt(phys2virt((cr3 & ~page_mask_4k) + guest_base));
-    return lv4_table_ptr[0..num_table_entries];
+fn getEntry(T: type, vaddr: Virt, paddr: Phys, offset: usize) *T {
+    const table = getTable(T, paddr, offset);
+    const shift = switch (T) {
+        Lv4Entry => lv4_shift,
+        Lv3Entry => lv3_shift,
+        Lv2Entry => lv2_shift,
+        Lv1Entry => lv1_shift,
+        else => @compileError("Unsupported type"),
+    };
+    return &table[(vaddr >> shift) & index_mask];
 }
 
-fn getLv3GuestPageTable(lv3_table_addr: Phys, guest_base: u64) []Lv3PageTableEntry {
-    const lv3_table_ptr: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv3_table_addr + guest_base));
-    return lv3_table_ptr[0..num_table_entries];
+/// Get the level-4 page table entry for the given virtual address.
+fn getLv4Entry(addr: Virt, cr3: Phys) *Lv4Entry {
+    return getEntry(Lv4Entry, addr, cr3, 0);
 }
 
-fn getLv2GuestPageTable(lv2_table_addr: Phys, guest_base: u64) []Lv2PageTableEntry {
-    const lv2_table_ptr: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv2_table_addr + guest_base));
-    return lv2_table_ptr[0..num_table_entries];
+/// Get the level-3 page table entry for the given virtual address.
+/// Requires that the level-4 page table is present.
+fn getLv3Entry(addr: Virt, lv3_table_addr: Phys) *Lv3Entry {
+    return getEntry(Lv3Entry, addr, lv3_table_addr, 0);
 }
 
-fn getLv1GuestPageTable(lv1_table_addr: Phys, guest_base: u64) []Lv1PageTableEntry {
-    const lv1_table_ptr: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv1_table_addr + guest_base));
-    return lv1_table_ptr[0..num_table_entries];
+/// Get the level-2 page table entry for the given virtual address.
+/// Requires that the level-3 page table is present and it reference a level-2 page table.
+fn getLv2Entry(addr: Virt, lv2_table_addr: Phys) *Lv2Entry {
+    return getEntry(Lv2Entry, addr, lv2_table_addr, 0);
+}
+
+/// Get the level-1 page table entry for the given virtual address.
+/// Requires that the level-2 page table is present and it reference a level-1 page table.
+fn getLv1Entry(addr: Virt, lv1_table_addr: Phys) *Lv1Entry {
+    return getEntry(Lv1Entry, addr, lv1_table_addr, 0);
+}
+
+/// Get the level-4 page table of the current guest process.
+fn getLv4GuestTable(cr3: Phys, guest_base: u64) []Lv4Entry {
+    return getTable(Lv4Entry, cr3, guest_base);
+}
+
+/// Get the level-3 page table at the given address of the guest.
+fn getLv3GuestTable(lv3_table_addr: Phys, guest_base: u64) []Lv3Entry {
+    return getTable(Lv3Entry, lv3_table_addr, guest_base);
+}
+
+/// Get the level-2 page table at the given address of the guest.
+fn getLv2GuestTable(lv2_table_addr: Phys, guest_base: u64) []Lv2Entry {
+    return getTable(Lv2Entry, lv2_table_addr, guest_base);
+}
+
+/// Get the level-1 page table at the given address of the guest.
+fn getLv1GuestTable(lv1_table_addr: Phys, guest_base: u64) []Lv1Entry {
+    return getTable(Lv1Entry, lv1_table_addr, guest_base);
+}
+
+/// Get the level-4 page table entry of the current guest process for the given guest virtual address.
+fn getLv4GuestEntry(gva: Virt, cr3: Phys, guest_base: u64) *Lv4Entry {
+    return getEntry(Lv4Entry, gva, cr3, guest_base);
+}
+
+/// Get the level-3 page table entry of the current guest process for the given guest virtual address.
+/// Requires that the level-4 page table is present.
+fn getLv3GuestEntry(gva: Virt, lv3_table_addr: Phys, guest_base: u64) *Lv3Entry {
+    return getEntry(Lv3Entry, gva, lv3_table_addr, guest_base);
+}
+
+/// Get the level-2 page table entry of the current guest process for the given guest virtual address.
+/// Requires that the level-3 page table is present and it reference a level-2 page table.
+fn getLv2GuestEntry(gva: Virt, lv2_table_addr: Phys, guest_base: u64) *Lv2Entry {
+    return getEntry(Lv2Entry, gva, lv2_table_addr, guest_base);
+}
+
+/// Get the level-1 page table entry of the current guest process for the given guest virtual address.
+/// Requires that the level-2 page table is present and it reference a level-1 page table.
+fn getLv1GuestEntry(gva: Virt, lv1_table_addr: Phys, guest_base: u64) *Lv1Entry {
+    return getEntry(Lv1Entry, gva, lv1_table_addr, guest_base);
 }
 
 /// Translate the given virtual address to physical address by walking page tables.
@@ -126,55 +194,39 @@ fn getLv1GuestPageTable(lv1_table_addr: Phys, guest_base: u64) []Lv1PageTableEnt
 pub fn translateWalk(addr: Virt) ?Phys {
     if (!isCanonical(addr)) return null;
 
-    const lv4_table = getLv4PageTable();
-    const lv4_index = (addr >> lv4_shift) & index_mask;
-    const lv4_entry = &lv4_table[lv4_index];
+    const lv4_entry = getLv4Entry(addr, am.readCr3());
     if (!lv4_entry.present) return null;
 
-    const lv3_table = getLv3PageTable(lv4_entry.address());
-    const lv3_index = (addr >> lv3_shift) & index_mask;
-    const lv3_entry = &lv3_table[lv3_index];
+    const lv3_entry = getLv3Entry(addr, lv4_entry.address());
     if (!lv3_entry.present) return null;
     if (lv3_entry.ps) { // 1GiB page
         return lv3_entry.address() + (addr & page_mask_1gb);
     }
 
-    const lv2_table = getLv2PageTable(lv3_entry.address());
-    const lv2_index = (addr >> lv2_shift) & index_mask;
-    const lv2_entry = &lv2_table[lv2_index];
+    const lv2_entry = getLv2Entry(addr, lv3_entry.address());
     if (!lv2_entry.present) return null;
     if (lv2_entry.ps) { // 2MiB page
         return lv2_entry.address() + (addr & page_mask_4k);
     }
 
-    const lv1_table = getLv1PageTable(lv2_entry.address());
-    const lv1_index = (addr >> lv1_shift) & index_mask;
-    const lv1_entry = &lv1_table[lv1_index];
+    const lv1_entry = getLv1Entry(addr, lv2_entry.address());
     if (!lv1_entry.present) return null;
     return lv1_entry.phys + (addr & page_mask_4k);
 }
 
 /// Translate the given guest virtual address to guest physical address.
 pub fn guestTranslateWalk(gva: Virt, cr3: Phys, guest_base: Phys) ?Phys {
-    const lv4tbl = getLv4GuestPageTable(cr3, guest_base);
-    const lv4index = (gva >> lv4_shift) & index_mask;
-    const lv4ent = &lv4tbl[lv4index];
+    const lv4ent = getLv4GuestEntry(gva, cr3, guest_base);
 
-    const lv3tbl = getLv3GuestPageTable(lv4ent.address(), guest_base);
-    const lv3index = (gva >> lv3_shift) & index_mask;
-    const lv3ent = &lv3tbl[lv3index];
+    const lv3ent = getLv3GuestEntry(gva, lv4ent.address(), guest_base);
     if (!lv3ent.present) return null;
     if (lv3ent.ps) return lv3ent.address() + (gva & page_mask_1gb);
 
-    const lv2tbl = getLv2GuestPageTable(lv3ent.address(), guest_base);
-    const lv2index = (gva >> lv2_shift) & index_mask;
-    const lv2ent = &lv2tbl[lv2index];
+    const lv2ent = getLv2GuestEntry(gva, lv3ent.address(), guest_base);
     if (!lv2ent.present) return null;
     if (lv2ent.ps) return lv2ent.address() + (gva & page_mask_2mb);
 
-    const lv1tbl = getLv1GuestPageTable(lv2ent.address(), guest_base);
-    const lv1index = (gva >> lv1_shift) & index_mask;
-    const lv1ent = &lv1tbl[lv1index];
+    const lv1ent = getLv1GuestEntry(gva, lv2ent.address(), guest_base);
     if (!lv1ent.present) return null;
     return lv1ent.address() + (gva & page_mask_4k);
 }
@@ -184,17 +236,18 @@ pub fn guestTranslateWalk(gva: Virt, cr3: Phys, guest_base: Phys) ?Phys {
 /// Paged used for the old page tables can be safely freed / reused.
 pub fn cloneUefiPageTables() !void {
     // Lv4 table provided by UEFI.
-    const lv4_table = getLv4PageTable();
+    const lv4_table = getLv4Table(am.readCr3());
 
     // New Lv4 table. Assuming the initial direct mapping is still valid and VA is equal to PA.
-    const new_lv4_ptr: [*]Lv4PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    if (phys2virt(0) != 0) @panic("Invalid page mapping phase for cloning UEFI page tables");
+    const new_lv4_ptr: [*]Lv4Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
     const new_lv4_table = new_lv4_ptr[0..num_table_entries];
     @memcpy(new_lv4_table, lv4_table);
 
     // Recursively clone tables.
     for (new_lv4_table) |*lv4_entry| {
         if (lv4_entry.present) {
-            const lv3_table = getLv3PageTable(lv4_entry.address());
+            const lv3_table = getLv3Table(lv4_entry.address());
             const new_lv3_table = try cloneLevel3Table(lv3_table);
             lv4_entry.phys = @truncate(virt2phys(new_lv3_table.ptr) >> page_shift_4k);
         }
@@ -203,8 +256,8 @@ pub fn cloneUefiPageTables() !void {
     am.loadCr3(@intFromPtr(new_lv4_table));
 }
 
-fn cloneLevel3Table(lv3_table: []Lv3PageTableEntry) ![]Lv3PageTableEntry {
-    const new_lv3_ptr: [*]Lv3PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+fn cloneLevel3Table(lv3_table: []Lv3Entry) ![]Lv3Entry {
+    const new_lv3_ptr: [*]Lv3Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
     const new_lv3_table = new_lv3_ptr[0..num_table_entries];
     @memcpy(new_lv3_table, lv3_table);
 
@@ -212,7 +265,7 @@ fn cloneLevel3Table(lv3_table: []Lv3PageTableEntry) ![]Lv3PageTableEntry {
         if (!lv3_entry.present) continue;
         if (lv3_entry.ps) continue;
 
-        const lv2_table = getLv2PageTable(lv3_entry.address());
+        const lv2_table = getLv2Table(lv3_entry.address());
         const new_lv2_table = try cloneLevel2Table(lv2_table);
         lv3_entry.phys = @truncate(virt2phys(new_lv2_table.ptr) >> page_shift_4k);
     }
@@ -220,8 +273,8 @@ fn cloneLevel3Table(lv3_table: []Lv3PageTableEntry) ![]Lv3PageTableEntry {
     return new_lv3_table;
 }
 
-fn cloneLevel2Table(lv2_table: []Lv2PageTableEntry) ![]Lv2PageTableEntry {
-    const new_lv2_ptr: [*]Lv2PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+fn cloneLevel2Table(lv2_table: []Lv2Entry) ![]Lv2Entry {
+    const new_lv2_ptr: [*]Lv2Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
     const new_lv2_table = new_lv2_ptr[0..num_table_entries];
     @memcpy(new_lv2_table, lv2_table);
 
@@ -229,7 +282,7 @@ fn cloneLevel2Table(lv2_table: []Lv2PageTableEntry) ![]Lv2PageTableEntry {
         if (!lv2_entry.present) continue;
         if (lv2_entry.ps) continue;
 
-        const lv1_table = getLv1PageTable(lv2_entry.address());
+        const lv1_table = getLv1Table(lv2_entry.address());
         const new_lv1_table = try cloneLevel1Table(lv1_table);
         lv2_entry.phys = @truncate(virt2phys(new_lv1_table.ptr) >> page_shift_4k);
     }
@@ -237,8 +290,8 @@ fn cloneLevel2Table(lv2_table: []Lv2PageTableEntry) ![]Lv2PageTableEntry {
     return new_lv2_table;
 }
 
-fn cloneLevel1Table(lv1_table: []Lv1PageTableEntry) ![]Lv1PageTableEntry {
-    const new_lv1_ptr: [*]Lv1PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+fn cloneLevel1Table(lv1_table: []Lv1Entry) ![]Lv1Entry {
+    const new_lv1_ptr: [*]Lv1Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
     const new_lv1_table = new_lv1_ptr[0..num_table_entries];
     @memcpy(new_lv1_table, lv1_table);
 
@@ -257,7 +310,7 @@ pub fn directOffsetMap() !void {
         }
     }
 
-    const lv4tbl = getLv4PageTable();
+    const lv4tbl = getLv4Table(am.readCr3());
     const lv4idx_start = (direct_map_base >> lv4_shift) & index_mask;
     const lv4idx_end = lv4idx_start + (direct_map_size >> lv4_shift);
 
@@ -265,14 +318,14 @@ pub fn directOffsetMap() !void {
     for (lv4idx_start..lv4idx_end, 0..) |lv4idx, i| {
         if (lv4tbl[lv4idx].present)
             @panic("UEFI mapping overlaps with direct mapping");
-        const lv3tbl: [*]Lv3PageTableEntry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+        const lv3tbl: [*]Lv3Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
         for (0..num_table_entries) |lv3idx| {
-            lv3tbl[lv3idx] = Lv3PageTableEntry.newMapPage(
+            lv3tbl[lv3idx] = Lv3Entry.newMapPage(
                 (i << lv4_shift) + (lv3idx << lv3_shift),
                 true,
             );
         }
-        lv4tbl[lv4idx] = Lv4PageTableEntry.newMapTable(lv3tbl, true);
+        lv4tbl[lv4idx] = Lv4Entry.newMapTable(lv3tbl, true);
     }
 
     // TODO: this function does not modify CR3. Need to invalidate TLB in other way?
@@ -283,7 +336,7 @@ pub fn directOffsetMap() !void {
 /// Note that after calling this function,
 /// BootstrapPageAllocator returns invalid virtual address because they are unmapped by this function.
 pub fn unmapStraightMap() !void {
-    const lv4_table = getLv4PageTable();
+    const lv4_table = getLv4Table(am.readCr3());
     const lv4idx_end = (direct_map_base >> lv4_shift) & index_mask;
 
     for (lv4_table[0..lv4idx_end]) |*lv4_entry| {
@@ -296,40 +349,56 @@ pub fn unmapStraightMap() !void {
 }
 
 fn reloadCr3() void {
-    const lv4_table = getLv4PageTable();
+    const lv4_table = getLv4Table(am.readCr3());
     am.loadCr3(virt2phys(lv4_table.ptr));
 }
 
-/// TODO: documentation
-pub fn makeReadOnly2mib(virt: Virt, allocator: Allocator) !void {
+/// Make a page at the given virtual address read-only.
+pub fn makeReadOnly(size: PageSize, virt: Virt, allocator: Allocator) !void {
     if (!isCanonical(virt)) return error.InvalidAddress;
 
-    const lv4tbl = getLv4PageTable();
-    const lv4index = (virt >> lv4_shift) & index_mask;
-    const lv4ent = &lv4tbl[lv4index];
+    const lv4ent = getLv4Entry(virt, am.readCr3());
     if (!lv4ent.present) return error.NotMapped;
 
-    const lv3tbl = getLv3PageTable(lv4ent.address());
-    const lv3index = (virt >> lv3_shift) & index_mask;
-    const lv3ent = &lv3tbl[lv3index];
+    const lv3ent = getLv3Entry(virt, lv4ent.address());
     if (!lv3ent.present) return error.NotMapped;
-    if (lv3ent.ps) { // Split the page into 2MiB pages.
-        const lv2tbl = try allocator.alloc(Lv2PageTableEntry, num_table_entries);
-        for (0..num_table_entries) |i| {
-            lv2tbl[i] = Lv2PageTableEntry.newMapPage(lv3ent.address() + i * page_size_2mb, true);
-        }
-        lv3ent.* = Lv3PageTableEntry.newMapTable(lv2tbl.ptr, true);
+    if (size == .g1) {
+        lv3ent.rw = false;
+        return reloadCr3();
     }
+    if (lv3ent.ps) try splitTable(Lv3Entry, lv3ent, allocator);
 
-    const lv2tbl = getLv2PageTable(lv3ent.address());
-    const lv2index = (virt >> lv2_shift) & index_mask;
-    const lv2ent = &lv2tbl[lv2index];
-    if (lv2ent.present) {
-        if (virt & page_mask_2mb != 0) return error.NotAligned;
+    const lv2ent = getLv2Entry(virt, lv3ent.address());
+    if (!lv2ent.present) return error.NotMapped;
+    if (size == .m2) {
         lv2ent.rw = false;
-        reloadCr3(); // TODO: should invlpg?
-        return;
-    } else return error.NotMapped;
+        return reloadCr3();
+    }
+    if (lv2ent.ps) try splitTable(Lv2Entry, lv2ent, allocator);
+
+    const lv1ent = getLv1Entry(virt, lv2ent.address());
+    if (!lv1ent.present) return error.NotMapped;
+    lv1ent.rw = false;
+}
+
+/// Split the 1GiB page into 2MiB pages.
+fn splitTable(T: type, ent: *T, allocator: Allocator) !void {
+    const page = ent.address();
+    const U = switch (T) {
+        Lv3Entry => Lv2Entry,
+        Lv2Entry => Lv1Entry,
+        else => @compileError("Unsupported type"),
+    };
+    const page_size = switch (U) {
+        Lv2Entry => page_size_2mb,
+        Lv1Entry => page_size_4k,
+        else => @compileError("Unsupported type"),
+    };
+    const tbl = try allocator.alloc(U, num_table_entries);
+    for (0..num_table_entries) |i| {
+        tbl[i] = U.newMapPage(page + i * page_size, true);
+    }
+    ent.* = T.newMapTable(tbl.ptr, true);
 }
 
 /// Show the process of the address translation for the given linear address.
@@ -344,11 +413,11 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     );
 
     const cr3 = am.readCr3();
-    const lv4_table: [*]Lv4PageTableEntry = @ptrFromInt(phys2virt(cr3));
+    const lv4_table: [*]Lv4Entry = @ptrFromInt(phys2virt(cr3));
     const lv4_entry = lv4_table[pml4_index];
-    const lv3_table: [*]Lv3PageTableEntry = @ptrFromInt(phys2virt(lv4_entry.phys << page_shift_4k));
+    const lv3_table: [*]Lv3Entry = @ptrFromInt(phys2virt(lv4_entry.phys << page_shift_4k));
     const lv3_entry = lv3_table[pdp_index];
-    const lv2_table: [*]Lv2PageTableEntry = @ptrFromInt(phys2virt(lv3_entry.phys << page_shift_4k));
+    const lv2_table: [*]Lv2Entry = @ptrFromInt(phys2virt(lv3_entry.phys << page_shift_4k));
     const lv2_entry = lv2_table[pdt_index];
 
     logger.info("Lv4: 0x{X:0>16}", .{@intFromPtr(lv4_table)});
@@ -359,7 +428,7 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
     logger.info("\t[{d}]: 0x{X:0>16}", .{ pdt_index, std.mem.bytesAsValue(u64, &lv2_entry).* });
 
     if (!lv2_entry.ps) {
-        const lv1_table: [*]Lv1PageTableEntry = @ptrFromInt(phys2virt(lv2_entry.phys << page_shift_4k));
+        const lv1_table: [*]Lv1Entry = @ptrFromInt(phys2virt(lv2_entry.phys << page_shift_4k));
         const lv1_entry = lv1_table[pt_index];
         logger.info("Lv1: 0x{X:0>16}", .{@intFromPtr(lv1_table)});
         logger.info("\t[{d}]: 0x{X:0>16}", .{ pt_index, std.mem.bytesAsValue(u64, &lv1_entry).* });
@@ -367,8 +436,8 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
 }
 
 /// Level-4 (First) page table entry, PML4E.
-/// This entry references a Lv3 page table (cannot maps 512 GiB page).
-const Lv4PageTableEntry = packed struct(u64) {
+/// This entry references a Lv3 page table.
+const Lv4Entry = packed struct(u64) {
     /// Present.
     present: bool = true,
     /// Read/Write.
@@ -398,8 +467,8 @@ const Lv4PageTableEntry = packed struct(u64) {
     phys: u52,
 
     /// Get a new Lv4 entry that references Lv3 table.
-    pub fn newMapTable(lv3tbl: [*]Lv3PageTableEntry, present: bool) Lv4PageTableEntry {
-        return Lv4PageTableEntry{
+    pub fn newMapTable(lv3tbl: [*]Lv3Entry, present: bool) Lv4Entry {
+        return Lv4Entry{
             .present = present,
             .rw = true,
             .us = false,
@@ -408,14 +477,14 @@ const Lv4PageTableEntry = packed struct(u64) {
     }
 
     /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv4PageTableEntry) Phys {
+    pub inline fn address(self: Lv4Entry) Phys {
         return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
 /// Level-3 page table entry, PDPTE.
 /// This entry can map 1GiB page or reference a Lv2 page table.
-const Lv3PageTableEntry = packed struct(u64) {
+const Lv3Entry = packed struct(u64) {
     /// Present.
     present: bool = true,
     /// Read/Write.
@@ -447,8 +516,8 @@ const Lv3PageTableEntry = packed struct(u64) {
     phys: u52,
 
     /// Get a new Lv3 entry that references Lv2 table.
-    pub fn newMapTable(lv2tbl: [*]Lv2PageTableEntry, present: bool) Lv3PageTableEntry {
-        return Lv3PageTableEntry{
+    pub fn newMapTable(lv2tbl: [*]Lv2Entry, present: bool) Lv3Entry {
+        return Lv3Entry{
             .present = present,
             .rw = true,
             .us = false,
@@ -458,8 +527,8 @@ const Lv3PageTableEntry = packed struct(u64) {
     }
 
     /// Get a new Lv3 entry that maps a 1GiB page.
-    pub fn newMapPage(phys: Phys, present: bool) Lv3PageTableEntry {
-        return Lv3PageTableEntry{
+    pub fn newMapPage(phys: Phys, present: bool) Lv3Entry {
+        return Lv3Entry{
             .present = present,
             .rw = true,
             .us = false,
@@ -469,14 +538,14 @@ const Lv3PageTableEntry = packed struct(u64) {
     }
 
     /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv3PageTableEntry) Phys {
+    pub inline fn address(self: Lv3Entry) Phys {
         return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
 /// Level-2 page table entry, PDE.
 /// This entry can map a 2MiB page or reference a Lv1 page table.
-const Lv2PageTableEntry = packed struct(u64) {
+const Lv2Entry = packed struct(u64) {
     /// Present.
     present: bool = true,
     /// Read/Write.
@@ -514,8 +583,8 @@ const Lv2PageTableEntry = packed struct(u64) {
     phys: u52,
 
     /// Get a new Lv2 entry that maps a 2MiB page.
-    pub fn newMapPage(phys: Phys, present: bool) Lv2PageTableEntry {
-        return Lv2PageTableEntry{
+    pub fn newMapPage(phys: Phys, present: bool) Lv2Entry {
+        return Lv2Entry{
             .present = present,
             .rw = true,
             .us = false,
@@ -525,8 +594,8 @@ const Lv2PageTableEntry = packed struct(u64) {
     }
 
     /// Get a new Lv2 entry that references Lv1 table.
-    pub fn newMapTable(lv1tbl: [*]Lv1PageTableEntry, present: bool) Lv2PageTableEntry {
-        return Lv2PageTableEntry{
+    pub fn newMapTable(lv1tbl: [*]Lv1Entry, present: bool) Lv2Entry {
+        return Lv2Entry{
             .present = present,
             .rw = true,
             .us = false,
@@ -536,14 +605,14 @@ const Lv2PageTableEntry = packed struct(u64) {
     }
 
     /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv2PageTableEntry) Phys {
+    pub inline fn address(self: Lv2Entry) Phys {
         return @as(u64, @intCast(self.phys)) << page_shift_4k;
     }
 };
 
 /// Level-1 page table entry, PTE.
 /// This entry can map 4KiB page.
-const Lv1PageTableEntry = packed struct(u64) {
+const Lv1Entry = packed struct(u64) {
     /// Present.
     present: bool = true,
     /// Read/Write.
@@ -578,8 +647,19 @@ const Lv1PageTableEntry = packed struct(u64) {
     phys: u52,
 
     /// Get the physical address pointed by this entry.
-    pub inline fn address(self: Lv1PageTableEntry) Phys {
+    pub inline fn address(self: Lv1Entry) Phys {
         return @as(u64, @intCast(self.phys)) << page_shift_4k;
+    }
+
+    /// Get a new Lv1 entry that maps a 4KiB page.
+    pub fn newMapPage(phys: Phys, present: bool) Lv1Entry {
+        return Lv1Entry{
+            .present = present,
+            .rw = true,
+            .us = false,
+            .pat = false,
+            .phys = @truncate(phys >> page_shift_4k),
+        };
     }
 };
 
