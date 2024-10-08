@@ -15,7 +15,6 @@ const gdt = @import("gdt.zig");
 const serial = @import("serial.zig");
 const intr = @import("interrupt.zig");
 const vmcs = @import("vmx/vmcs.zig");
-const qual = @import("vmx/qual.zig");
 const ept = @import("vmx/ept.zig");
 const cpuid = @import("vmx/cpuid.zig");
 const msr = @import("vmx/msr.zig");
@@ -24,6 +23,7 @@ const pg = @import("vmx/page.zig");
 const io = @import("vmx/io.zig");
 const vmx = @import("vmx/common.zig");
 const dbg = @import("vmx/dbg.zig");
+const qual = vmx.qual;
 
 const vmwrite = vmx.vmwrite;
 const vmread = vmx.vmread;

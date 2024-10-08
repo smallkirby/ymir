@@ -6,7 +6,7 @@ const Vcpu = @import("../vmx.zig").Vcpu; // TODO: import
 const VmxError = vmx.VmxError;
 const am = @import("../asm.zig");
 const vmcs = @import("vmcs.zig");
-const QualCr = @import("qual.zig").QualCr;
+const QualCr = vmx.qual.QualCr;
 
 /// Handle VM-exit caused by mov to CR3 instruction.
 /// Note that this function does not increment the RIP.

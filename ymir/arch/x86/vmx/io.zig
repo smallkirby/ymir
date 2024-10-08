@@ -2,7 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.vmio);
 
 const vmx = @import("common.zig");
-const QualIo = @import("qual.zig").QualIo;
+const QualIo = vmx.qual.QualIo;
 const Vcpu = @import("../vmx.zig").Vcpu; // TODO: import
 const VmxError = vmx.VmxError;
 const sr = @import("../serial.zig");
