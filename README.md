@@ -18,5 +18,5 @@ sudo apt install ovmf
 ## Development
 
 ```sh
-zig build run
+zig build run -Dlog_level=info -Doptimize=ReleaseFast
 ```
