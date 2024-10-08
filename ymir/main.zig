@@ -121,6 +121,7 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
     try vm.init(ymir.mem.page_allocator);
     log.info("Entered VMX root operation.", .{});
 
+    // Set the default VM for panic.
     ymir.setVm(&vm);
 
     // Setup guest memory and load guest.

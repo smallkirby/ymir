@@ -103,7 +103,7 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
 }
 
 /// Set a 32-bit value to the given 64-bit without modifying the upper 32-bits.
-fn setValue(reg: *u64, val: u64) void {
+inline fn setValue(reg: *u64, val: u64) void {
     @as(*u32, @ptrCast(reg)).* = @as(u32, @truncate(val));
 }
 

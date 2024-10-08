@@ -25,13 +25,14 @@ const VmError = error{
     /// Unknown error.
     UnknownError,
 };
-const Error = VmError || impl.VmxError;
+pub const Error = VmError || impl.VmxError;
 
 /// Next virtual processor ID.
 var vpid_next: u16 = 0;
 /// Global VMX lock.
 var global_lock = spin.SpinLock{};
 
+/// Size in bytes of the guest memory.
 const guest_memory_size = 100 * mem.mib;
 comptime {
     if (guest_memory_size % (2 * mem.mib) != 0) {
@@ -148,28 +149,28 @@ pub const Vm = struct {
             return Error.OutOfMemory;
         }
 
-        var boot_params = BootParams.from(kernel);
+        var bp = BootParams.from(kernel);
 
         // Setup necessary fields
-        boot_params.hdr.type_of_loader = 0xFF;
-        boot_params.hdr.ext_loader_ver = 0;
-        boot_params.hdr.loadflags.loaded_high = true; // load kernel at 0x10_0000
-        boot_params.hdr.loadflags.can_use_heap = true; // use memory 0..BOOTPARAM as heap
-        boot_params.hdr.heap_end_ptr = linux.layout.bootparam - 0x200;
-        boot_params.hdr.loadflags.keep_segments = true; // we set CS/DS/SS/ES to flag segments with a base of 0.
-        boot_params.hdr.cmd_line_ptr = linux.layout.cmdline;
-        boot_params.hdr.vid_mode = 0xFFFF; // VGA (normal)
+        bp.hdr.type_of_loader = 0xFF;
+        bp.hdr.ext_loader_ver = 0;
+        bp.hdr.loadflags.loaded_high = true; // load kernel at 0x10_0000
+        bp.hdr.loadflags.can_use_heap = true; // use memory 0..BOOTPARAM as heap
+        bp.hdr.heap_end_ptr = linux.layout.bootparam - 0x200;
+        bp.hdr.loadflags.keep_segments = true; // we set CS/DS/SS/ES to flag segments with a base of 0.
+        bp.hdr.cmd_line_ptr = linux.layout.cmdline;
+        bp.hdr.vid_mode = 0xFFFF; // VGA (normal)
 
         // Setup E820 map
-        boot_params.addE820entry(0, linux.layout.kernel_base, .ram);
-        boot_params.addE820entry(
+        bp.addE820entry(0, linux.layout.kernel_base, .ram);
+        bp.addE820entry(
             linux.layout.kernel_base,
             guest_mem.len - linux.layout.kernel_base,
             .ram,
         );
 
         // Setup cmdline
-        const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + boot_params.hdr.cmdline_size];
+        const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + bp.hdr.cmdline_size];
         const cmdline_val = "console=ttyS0 earlyprintk=serial nokaslr";
         @memset(cmdline, 0);
         @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
@@ -178,22 +179,22 @@ pub const Vm = struct {
         if (guest_mem.len - linux.layout.initrd < initrd.len) {
             return Error.OutOfMemory;
         }
-        if (boot_params.hdr.initrd_addr_max < linux.layout.initrd + initrd.len) {
+        if (bp.hdr.initrd_addr_max < linux.layout.initrd + initrd.len) {
             return Error.OutOfMemory;
         }
-        boot_params.hdr.ramdisk_image = linux.layout.initrd;
-        boot_params.hdr.ramdisk_size = @truncate(initrd.len);
+        bp.hdr.ramdisk_image = linux.layout.initrd;
+        bp.hdr.ramdisk_size = @truncate(initrd.len);
         try loadImage(guest_mem, initrd, linux.layout.initrd);
 
         // Copy boot_params
         try loadImage(
             guest_mem,
-            std.mem.asBytes(&boot_params),
+            std.mem.asBytes(&bp),
             linux.layout.bootparam,
         );
 
         // Load protected-mode kernel code
-        const code_offset = boot_params.hdr.getProtectedCodeOffset();
+        const code_offset = bp.hdr.getProtectedCodeOffset();
         const code_size = kernel.len - code_offset;
         try loadImage(
             guest_mem,
