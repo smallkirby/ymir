@@ -102,12 +102,12 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
 
     // Enable PIT.
     arch.intr.registerHandler(idefs.pic_timer, blobIrqHandler);
-    arch.pic.unsetMask(.Timer);
+    arch.pic.unsetMask(.timer);
     log.info("Enabled PIT.", .{});
 
     // Unmask serial interrupt.
     arch.intr.registerHandler(idefs.pic_serial1, blobIrqHandler);
-    arch.pic.unsetMask(.Serial1);
+    arch.pic.unsetMask(.serial1);
     arch.serial.enableInterrupt(.com1);
 
     // Check if VMX is supported.

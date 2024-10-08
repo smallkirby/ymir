@@ -4,6 +4,7 @@
 //!
 //! Reference:
 //! - https://wiki.osdev.org/8259_PIC
+//! - https://pdos.csail.mit.edu/6.828/2014/readings/hardware/8259A.pdf
 
 const am = @import("asm.zig");
 
@@ -14,33 +15,36 @@ pub const primary_vector_offset: usize = 32;
 /// Must be divisible by 8.
 pub const secondary_vector_offset: usize = primary_vector_offset + 8;
 
-// I/O Ports
+/// Primary command port
 const primary_command_port: u16 = 0x20;
+/// Primary data port
 const primary_data_port: u16 = primary_command_port + 1;
+/// Secondary command port
 const secondary_command_port: u16 = 0xA0;
+/// Secondary data port
 const secondary_data_port: u16 = secondary_command_port + 1;
 
-// Commands
-/// Indicates that ICW4 is needed.
-const icw1_icw4 = 0x01;
-/// Single (cascade) mode.
-const icw1_single = 0x02;
-/// Call address interval 4 (8).
-const icw1_interval4 = 0x04;
-/// Level triggered (edge) mode.
-const icw1_level = 0x08;
-/// Initialization command.
-const icw1_init = 0x10;
-/// 8086/88 mode.
-const icw4_8086 = 0x01;
-/// Auto EOI.
-const icw4_auto = 0x02;
-/// Buffered mode/secondary.
-const icw4_buf_secondary = 0x08;
-/// Buffered mode/primary.
-const icw4_buf_primary = 0x0C;
-/// End-of-interrupt command.
-const eoi = 0x20;
+/// Command constants
+const cmd = struct {
+    /// Indicates that ICW4 is needed.
+    const icw1_icw4 = 0x01;
+    /// Single (cascade) mode.
+    const icw1_single = 0x02;
+    /// Call address interval 4 (8).
+    const icw1_interval4 = 0x04;
+    /// Level triggered (edge) mode.
+    const icw1_level = 0x08;
+    /// Initialization command.
+    const icw1_init = 0x10;
+    /// 8086/88 mode.
+    const icw4_8086 = 0x01;
+    /// Auto EOI.
+    const icw4_auto = 0x02;
+    /// Buffered mode/secondary.
+    const icw4_buf_secondary = 0x08;
+    /// Buffered mode/primary.
+    const icw4_buf_primary = 0x0C;
+};
 
 // PS/2 I/O Ports
 const ps2_data_port: u16 = 0x60;
@@ -56,9 +60,9 @@ pub fn init() void {
     defer am.sti();
 
     // Start initialization sequence.
-    am.outb(icw1_init | icw1_icw4, primary_command_port);
+    am.outb(cmd.icw1_init | cmd.icw1_icw4, primary_command_port);
     am.relax();
-    am.outb(icw1_init | icw1_icw4, secondary_command_port);
+    am.outb(cmd.icw1_init | cmd.icw1_icw4, secondary_command_port);
     am.relax();
 
     // Set the vector offsets.
@@ -75,9 +79,9 @@ pub fn init() void {
     am.relax();
 
     // Set the mode.
-    am.outb(icw4_8086, primary_data_port);
+    am.outb(cmd.icw4_8086, primary_data_port);
     am.relax();
-    am.outb(icw4_8086, secondary_data_port);
+    am.outb(cmd.icw4_8086, secondary_data_port);
     am.relax();
 
     // Mask all IRQ lines.
@@ -87,30 +91,25 @@ pub fn init() void {
 
 /// Mask the given IRQ line.
 pub fn setMask(irq: IrqLine) void {
-    const irq_value: u8 = @intFromEnum(irq);
-    const port = if (irq_value < 8) primary_data_port else secondary_data_port;
-    const irq_line = if (irq_value < 8) irq_value else irq_value - 8;
+    const port = if (irq.isPrimary()) primary_data_port else secondary_data_port;
+    const irq_line = irq.delta();
     am.outb(am.inb(port) | (@as(u8, 1) << @truncate(irq_line)), port);
 }
 
 /// Unset the mask of the given IRQ line.
 pub fn unsetMask(irq: IrqLine) void {
-    const irq_value: u8 = @intFromEnum(irq);
-    const port = if (irq_value < 8) primary_data_port else secondary_data_port;
-    const irq_line = if (irq_value < 8) irq_value else irq_value - 8;
+    const port = if (irq.isPrimary()) primary_data_port else secondary_data_port;
+    const irq_line = irq.delta();
     am.outb(am.inb(port) & ~((@as(u8, 1) << @truncate(irq_line))), port);
 }
 
 /// Notify the end of interrupt (EOI) to the PIC.
 /// This function uses specific-EOI.
 pub fn notifyEoi(irq: IrqLine) void {
-    const irq_num: u8 = @intFromEnum(irq);
-    if (irq_num < 8) {
-        am.outb(0x60 + irq_num, primary_command_port);
-        am.outb(0x60 + @intFromEnum(IrqLine.Secondary), secondary_command_port);
-    } else {
-        am.outb(0x60 + irq_num - 8, secondary_command_port);
-    }
+    am.outb(
+        eoiOcw2Value(irq),
+        if (irq.isPrimary()) primary_command_port else secondary_command_port,
+    );
 }
 
 /// Get IRQ mask from the PIC.
@@ -126,38 +125,53 @@ pub inline fn setIrqMask(mask: u16) void {
     am.outb(@truncate(mask >> 8), secondary_data_port);
 }
 
+/// Get the OCW2 value for a specific EOI to the given IRQ.
+inline fn eoiOcw2Value(irq: IrqLine) u8 {
+    return 0x60 + irq.delta();
+}
+
 /// Line numbers for the PIC.
 pub const IrqLine = enum(u8) {
     /// Timer
-    Timer = 0,
+    timer = 0,
     /// Keyboard
-    Keyboard = 1,
+    keyboard = 1,
     /// Secondary PIC
-    Secondary = 2,
+    secondary = 2,
     /// Serial Port 2
-    Serial2 = 3,
+    serial2 = 3,
     /// Serial Port 1
-    Serial1 = 4,
+    serial1 = 4,
     /// Parallel Port 2/3
-    Parallel23 = 5,
+    parallel23 = 5,
     /// Floppy Disk
-    Floppy = 6,
+    floppy = 6,
     /// Parallel Port 1
-    Parallel1 = 7,
+    parallel1 = 7,
     /// Real Time Clock
-    Rtc = 8,
+    rtc = 8,
     /// ACPI
-    Acpi = 9,
+    acpi = 9,
     /// Available 1
-    Open1 = 10,
+    open1 = 10,
     /// Available 2
-    Open2 = 11,
+    open2 = 11,
     /// Mouse
-    Mouse = 12,
+    mouse = 12,
     /// Coprocessor
-    Cop = 13,
+    cop = 13,
     /// Primary ATA
-    PrimaryAta = 14,
+    primary_ata = 14,
     /// Secondary ATA
-    SecondaryAta = 15,
+    secondary_ata = 15,
+
+    /// Return true if the IRQ belongs to the primary PIC.
+    pub fn isPrimary(self: IrqLine) bool {
+        return @intFromEnum(self) < 8;
+    }
+
+    /// Get the offset of the IRQ within the PIC.
+    pub fn delta(self: IrqLine) u8 {
+        return if (self.isPrimary()) @intFromEnum(self) else (@intFromEnum(self) - 8);
+    }
 };

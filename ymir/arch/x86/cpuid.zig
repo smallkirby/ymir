@@ -14,9 +14,9 @@ pub const Leaf = enum(u32) {
     /// Output depends on the ECX input value.
     ext_enumeration = 0xD,
     /// Maximum input value for extended function CPUID information.
-    extended_function = 0x80000000,
+    ext_func = 0x80000000,
     /// EAX: Extended processor signature and feature bits.
-    extended_processor_signature = 0x80000001,
+    ext_proc_signature = 0x80000001,
     /// Unimplemented
     _,
 

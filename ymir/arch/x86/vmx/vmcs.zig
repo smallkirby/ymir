@@ -218,7 +218,7 @@ pub const ro = enum(u32) {
     idt_vectoring_info = er(4, .full, .dword),
     idt_vectoring_ec = er(5, .full, .dword),
     exit_inst_len = er(6, .full, .dword),
-    vmexit_instruction_information = er(7, .full, .dword),
+    exit_inst_info = er(7, .full, .dword),
     // 64-bit fields.
     guest_physical_address = er(0, .full, .qword),
 };

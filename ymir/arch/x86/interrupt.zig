@@ -82,7 +82,7 @@ pub fn init() void {
 
     idt.init();
 
-    asm volatile ("sti");
+    am.sti();
 }
 
 /// Register interrupt handler.
@@ -156,14 +156,14 @@ fn unhandledHandler(context: *Context) void {
 }
 
 fn unhandledFaultHandler(context: *Context) void {
+    @setCold(true);
+
     log.err("============ Unhandled Fault ===================", .{});
 
     const cr2 = am.readCr2();
     log.err("Fault Address: 0x{X:0>16}", .{cr2});
     page.showPageTable(cr2, log);
-    log.err("", .{});
-    log.err("Common unhandled handler continues...", .{});
-    log.err("", .{});
+    log.err("\nCommon unhandled handler continues...\n", .{});
 
     unhandledHandler(context);
 }

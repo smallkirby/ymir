@@ -17,7 +17,7 @@ const impl = switch (builtin.target.cpu.arch) {
     else => @compileError("Unsupported architecture."),
 };
 
-pub const VmError = error{
+const VmError = error{
     /// Memory allocation failed.
     OutOfMemory,
     /// The system does not support virtualization.
@@ -25,12 +25,19 @@ pub const VmError = error{
     /// Unknown error.
     UnknownError,
 };
-const Error = VmError;
+const Error = VmError || impl.VmxError;
 
 /// Next virtual processor ID.
 var vpid_next: u16 = 0;
 /// Global VMX lock.
 var global_lock = spin.SpinLock{};
+
+const guest_memory_size = 100 * mem.mib;
+comptime {
+    if (guest_memory_size % (2 * mem.mib) != 0) {
+        @compileError("Guest memory size must be a multiple of 2MiB.");
+    }
+}
 
 /// Virtual machine instance.
 /// TODO: currently, supports only single CPU.
@@ -78,11 +85,11 @@ pub const Vm = struct {
         self.vcpu.enableVmx();
 
         // Initialize vCPU.
-        self.vcpu.virtualize(allocator) catch return Error.UnknownError; // TODO
+        try self.vcpu.virtualize(allocator);
         log.info("vCPU #{X} is created.", .{self.vcpu.id});
 
         // Setup VMCS.
-        self.vcpu.setupVmcs(allocator) catch return Error.UnknownError; // TODO
+        try self.vcpu.setupVmcs(allocator);
     }
 
     /// Deinitialize the virtual machine, exiting VMX root operation.
@@ -99,20 +106,18 @@ pub const Vm = struct {
         page_allocator: *PageAllocator,
     ) Error!void {
         // Allocate guest memory.
-        const guest_memory_size = mem.mib * 100; // TODO: make this configurable
         self.guest_mem = page_allocator.allocPages(
-            // This alignment is required because EPT maps 2MiB pages.
-            guest_memory_size / ymir.mem.page_size_4k,
-            mem.page_size_2mb,
+            guest_memory_size / mem.page_size_4k,
+            mem.page_size_2mb, // This alignment is required because EPT maps 2MiB pages.
         ) orelse return Error.OutOfMemory;
 
         try self.loadKernel(guest_image, initrd);
 
         // Create simple EPT mapping.
-        self.vcpu.initGuestMap(
+        try self.vcpu.initGuestMap(
             self.guest_mem,
             allocator,
-        ) catch return Error.UnknownError; // TODO
+        );
         log.info("Guet memory is mapped: HVA=0x{X:0>16} (size=0x{X})", .{ @intFromPtr(self.guest_mem.ptr), self.guest_mem.len });
 
         // Make the pages read only.
@@ -132,7 +137,7 @@ pub const Vm = struct {
     /// Kick off the virtual machine.
     pub fn loop(self: *Self) Error!void {
         arch.disableIntr();
-        self.vcpu.loop() catch return Error.UnknownError; // TODO
+        try self.vcpu.loop();
     }
 
     /// Load a protected kernel image and cmdline to the guest physical memory.
@@ -165,7 +170,7 @@ pub const Vm = struct {
 
         // Setup cmdline
         const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + boot_params.hdr.cmdline_size];
-        const cmdline_val = "console=ttyS0 earlyprintk=serial loglevel=7 nokaslr";
+        const cmdline_val = "console=ttyS0 earlyprintk=serial nokaslr";
         @memset(cmdline, 0);
         @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
 

@@ -1,8 +1,7 @@
 const std = @import("std");
-const log = std.log.scoped(.util);
 
 /// Hexdump the given memory region.
-pub fn dumpMemory(addr: [*]u8, size: usize) !void {
+pub fn dumpMemory(addr: [*]u8, size: usize, logger: anytype) !void {
     @fence(.seq_cst);
 
     const byte_per_line = 16;
@@ -22,6 +21,6 @@ pub fn dumpMemory(addr: [*]u8, size: usize) !void {
             _ = try std.fmt.bufPrint(ptr[0..char_per_byte], "{X:0>2} ", .{byte});
         }
 
-        log.info("0x{X:0>16}: {s}", .{ start_addr, line_buf });
+        logger.info("0x{X:0>16}: {s}", .{ start_addr, line_buf });
     }
 }

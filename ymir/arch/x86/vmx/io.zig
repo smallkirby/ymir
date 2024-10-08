@@ -101,7 +101,7 @@ fn handleSerialOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             sr.writeByte(@truncate(regs.rax), .com1);
             // If "TX empty" interrupt is enabled, set the pending IRQ.
             if (vcpu.serial.ier & 0b0010 != 0) {
-                vcpu.pending_irq |= 1 << @intFromEnum(IrqLine.Serial1);
+                vcpu.pending_irq |= 1 << @intFromEnum(IrqLine.serial1);
             }
         },
         // Interrupt Enable Register.

@@ -57,14 +57,14 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
             setValue(&regs.rcx, @as(u32, @bitCast(feature_info_ecx)));
             setValue(&regs.rdx, @as(u32, @bitCast(feature_info_edx)));
         },
-        .extended_function => {
+        .ext_func => {
             setValue(&regs.rax, 0x8000_0000 + 1); // Maximum input value for extended function CPUID.
             setValue(&regs.rbx, 0); // Reserved.
             setValue(&regs.rcx, 0); // Reserved.
             setValue(&regs.rdx, 0); // Reserved.
         },
-        .extended_processor_signature => {
-            const orig = Leaf.extended_processor_signature.query(null);
+        .ext_proc_signature => {
+            const orig = Leaf.ext_proc_signature.query(null);
             setValue(&regs.rax, 0); // Extended processor signature and feature bits.
             setValue(&regs.rbx, 0); // Reserved.
             setValue(&regs.rcx, orig.ecx); // LAHF in 64-bit mode / LZCNT / PREFETCHW

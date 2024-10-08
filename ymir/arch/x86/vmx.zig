@@ -396,7 +396,7 @@ pub const Vcpu = struct {
             // Check if the IRQ is masked.
             // TODO: refactor bit operations
             const is_masked = if (irq >= 8) b: { // Secondary PIC
-                const secondary_irq = @intFromEnum(pic.IrqLine.Secondary);
+                const secondary_irq = @intFromEnum(pic.IrqLine.secondary);
                 const is_secondary_masked = (self.pic.primary_mask & (1 << secondary_irq)) != 0;
                 const shift: u3 = @truncate(irq - 8);
                 const is_irq_masked = (self.pic.secondary_mask & (@as(u8, 1) << shift)) != 0;
