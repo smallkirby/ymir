@@ -9,14 +9,15 @@ const Phys = mem.Phys;
 const linux = ymir.linux;
 const BootParams = linux.boot.BootParams;
 
-const am = @import("../asm.zig");
-const apic = @import("../apic.zig");
-const gdt = @import("../gdt.zig");
-const serial = @import("../serial.zig");
-const intr = @import("../interrupt.zig");
-const isr = @import("../isr.zig");
-const pg = @import("../page.zig");
-const pic = @import("../pic.zig");
+const arch = @import("arch.zig");
+const am = arch.am;
+const apic = arch.apic;
+const gdt = arch.gdt;
+const serial = arch.serial;
+const intr = arch.intr;
+const isr = arch.isr;
+const pg = arch.pg;
+const pic = arch.pic;
 
 const vmcs = @import("vmcs.zig");
 const ept = @import("ept.zig");

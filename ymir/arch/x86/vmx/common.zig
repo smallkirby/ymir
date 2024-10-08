@@ -4,8 +4,7 @@ const Allocator = std.mem.Allocator;
 const ymir = @import("ymir");
 const mem = ymir.mem;
 
-const am = @import("../asm.zig");
-
+const arch = @import("arch.zig");
 const vmcs = @import("vmcs.zig");
 
 pub const VmxError = error{
@@ -22,7 +21,7 @@ pub const VmxError = error{
 
 /// Read RFLAGS and checks if a VMX instruction has failed.
 pub fn vmxtry(rflags: u64) VmxError!void {
-    const flags: am.FlagsRegister = @bitCast(rflags);
+    const flags: arch.am.FlagsRegister = @bitCast(rflags);
     return if (flags.cf) VmxError.VmxStatusUnavailable else if (flags.zf) VmxError.VmxStatusAvailable;
 }
 

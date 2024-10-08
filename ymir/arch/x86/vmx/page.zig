@@ -1,7 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.vmxpage);
 
-const am = @import("../asm.zig");
+const arch = @import("arch.zig");
 
 const Vcpu = @import("vcpu.zig").Vcpu;
 
@@ -12,7 +12,7 @@ pub fn invalidateEpt(vcpu: *Vcpu, inv_type: InveptType) void {
     };
 
     switch (inv_type) {
-        .single_context, .global => am.invept(
+        .single_context, .global => arch.am.invept(
             @as(u64, @intFromEnum(inv_type)),
             @ptrCast(&inv_desc),
         ),
@@ -28,7 +28,7 @@ pub fn invalidateVpid(vcpu: *Vcpu, inv_type: InvvpidType) void {
     switch (inv_type) {
         .all_addr,
         .almost_all_vpid,
-        => am.invvpid(
+        => arch.am.invvpid(
             @as(u64, @intFromEnum(inv_type)),
             @ptrCast(&vpid_desc),
         ),

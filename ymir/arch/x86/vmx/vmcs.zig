@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const am = @import("../asm.zig");
-
 const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
 

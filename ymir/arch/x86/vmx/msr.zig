@@ -3,8 +3,10 @@ const log = std.log.scoped(.vmmsr);
 const Allocator = std.mem.Allocator;
 
 const ymir = @import("ymir");
+const mem = ymir.mem;
 
-const am = @import("../asm.zig");
+const arch = @import("arch.zig");
+const am = arch.am;
 
 const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
@@ -158,6 +160,6 @@ pub const ShadowMsr = struct {
 
     /// Get the host physical address of the MSR page.
     pub fn phys(self: *ShadowMsr) u64 {
-        return ymir.mem.virt2phys(self.ents.ptr);
+        return mem.virt2phys(self.ents.ptr);
     }
 };

@@ -1,7 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.cr);
 
-const am = @import("../asm.zig");
+const arch = @import("arch.zig");
+const am = arch.am;
 
 const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");

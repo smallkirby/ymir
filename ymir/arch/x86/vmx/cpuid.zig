@@ -4,8 +4,8 @@
 const std = @import("std");
 const log = std.log.scoped(.vmcpuid);
 
-const cpuid = @import("../cpuid.zig");
-const am = @import("../asm.zig");
+const arch = @import("arch.zig");
+const cpuid = arch.cpuid;
 
 const vmx = @import("common.zig");
 const Vcpu = @import("vcpu.zig").Vcpu;

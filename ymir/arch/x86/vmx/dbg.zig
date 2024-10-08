@@ -4,8 +4,9 @@ const log = std.log.scoped(.vmdbg);
 const ymir = @import("ymir");
 const mem = ymir.mem;
 
-const am = @import("../asm.zig");
-const gdt = @import("../gdt.zig");
+const arch = @import("arch.zig");
+const am = arch.am;
+const gdt = arch.gdt;
 
 const vmcs = @import("vmcs.zig");
 const vmx = @import("common.zig");
