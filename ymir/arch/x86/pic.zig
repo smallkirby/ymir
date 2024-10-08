@@ -6,6 +6,9 @@
 //! - https://wiki.osdev.org/8259_PIC
 //! - https://pdos.csail.mit.edu/6.828/2014/readings/hardware/8259A.pdf
 
+const ymir = @import("ymir");
+const bits = ymir.bits;
+
 const am = @import("asm.zig");
 
 /// Interrupt vector for the primary PIC.
@@ -91,25 +94,20 @@ pub fn init() void {
 
 /// Mask the given IRQ line.
 pub fn setMask(irq: IrqLine) void {
-    const port = if (irq.isPrimary()) primary_data_port else secondary_data_port;
-    const irq_line = irq.delta();
-    am.outb(am.inb(port) | (@as(u8, 1) << @truncate(irq_line)), port);
+    const port = irq.dataPort();
+    am.outb(am.inb(port) | bits.setbit(u8, irq.delta()), port);
 }
 
 /// Unset the mask of the given IRQ line.
 pub fn unsetMask(irq: IrqLine) void {
-    const port = if (irq.isPrimary()) primary_data_port else secondary_data_port;
-    const irq_line = irq.delta();
-    am.outb(am.inb(port) & ~((@as(u8, 1) << @truncate(irq_line))), port);
+    const port = irq.dataPort();
+    am.outb(am.inb(port) & ~bits.setbit(u8, irq.delta()), port);
 }
 
 /// Notify the end of interrupt (EOI) to the PIC.
 /// This function uses specific-EOI.
 pub fn notifyEoi(irq: IrqLine) void {
-    am.outb(
-        eoiOcw2Value(irq),
-        if (irq.isPrimary()) primary_command_port else secondary_command_port,
-    );
+    am.outb(eoiOcw2Value(irq), irq.commandPort());
 }
 
 /// Get IRQ mask from the PIC.
@@ -168,6 +166,16 @@ pub const IrqLine = enum(u8) {
     /// Return true if the IRQ belongs to the primary PIC.
     pub fn isPrimary(self: IrqLine) bool {
         return @intFromEnum(self) < 8;
+    }
+
+    /// Get the command port for this IRQ.
+    pub inline fn commandPort(self: IrqLine) u16 {
+        return if (self.isPrimary()) primary_command_port else secondary_command_port;
+    }
+
+    /// Get the data port for this IRQ.
+    pub inline fn dataPort(self: IrqLine) u16 {
+        return if (self.isPrimary()) primary_data_port else secondary_data_port;
     }
 
     /// Get the offset of the IRQ within the PIC.

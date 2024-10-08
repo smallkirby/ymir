@@ -3,6 +3,7 @@ const log = std.log.scoped(.vmx);
 const Allocator = std.mem.Allocator;
 
 const ymir = @import("ymir");
+const bits = ymir.bits;
 const mem = ymir.mem;
 const Phys = mem.Phys;
 const linux = ymir.linux;
@@ -27,6 +28,7 @@ const dbg = @import("vmx/dbg.zig");
 const vmwrite = vmx.vmwrite;
 const vmread = vmx.vmread;
 const isCanonical = @import("page.zig").isCanonical;
+const IrqLine = @import("pic.zig").IrqLine;
 
 pub const VmxError = vmx.VmxError;
 
@@ -371,11 +373,11 @@ pub const Vcpu = struct {
 
     /// Inject external interrupt to the guest if possible.
     /// Returns true if the interrupt is injected, otherwise false.
-    /// It's the totally Ymir's responsibility to send an EOI to the PIC.
+    /// It's the totally Ymir's responsibility to send an EOI to the PIC
+    /// because Ymir blocks EOI commands from the guest.
     fn injectExtIntr(self: *Self) VmxError!bool {
-        // Save current IRR in case the guest blocks interrupts and Ymir consumes them.
-        const pic = @import("pic.zig");
         const pending = self.pending_irq;
+        const is_secondary_masked = bits.isset(self.pic.primary_mask, IrqLine.secondary);
 
         // No interrupts to inject.
         if (pending == 0) return false;
@@ -388,27 +390,25 @@ pub const Vcpu = struct {
 
         // Iterate all possible IRQs and inject one if possible.
         for (0..15) |i| {
-            const irq: u4 = @intCast(i);
-            const irq_bit: u16 = @as(u16, 1) << irq;
+            if (is_secondary_masked and i >= 8) break;
+
+            const irq: IrqLine = @enumFromInt(i);
+            const irq_bit = bits.setbit(u16, irq);
             // The IRQ is not pending.
             if (pending & irq_bit == 0) continue;
 
             // Check if the IRQ is masked.
-            // TODO: refactor bit operations
-            const is_masked = if (irq >= 8) b: { // Secondary PIC
-                const secondary_irq = @intFromEnum(pic.IrqLine.secondary);
-                const is_secondary_masked = (self.pic.primary_mask & (1 << secondary_irq)) != 0;
-                const shift: u3 = @truncate(irq - 8);
-                const is_irq_masked = (self.pic.secondary_mask & (@as(u8, 1) << shift)) != 0;
+            const is_masked = if (irq.isPrimary()) b: {
+                break :b bits.isset(self.pic.primary_mask, irq.delta());
+            } else b: {
+                const is_irq_masked = bits.isset(self.pic.secondary_mask, irq.delta());
                 break :b is_secondary_masked or is_irq_masked;
-            } else b: { // Primary PIC
-                break :b (self.pic.primary_mask & irq_bit) != 0;
             };
             if (is_masked) continue;
 
             // Inject the interrupt.
             const intr_info = vmx.InterruptInfo{
-                .vector = irq + if (irq < 8) self.pic.primary_base else (self.pic.secondary_base - 8),
+                .vector = irq.delta() + if (irq.isPrimary()) self.pic.primary_base else self.pic.secondary_base,
                 .type = .external,
                 .ec_valid = false,
                 .nmi_unblocking = false,

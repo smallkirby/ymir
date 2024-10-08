@@ -10,6 +10,7 @@ pub const mem = @import("mem.zig");
 pub const spin = @import("spin.zig");
 pub const vmx = @import("vmx.zig");
 pub const panic = @import("panic.zig");
+pub const bits = @import("bits.zig");
 pub const util = @import("util.zig");
 
 /// Base virtual address of direct mapping.
