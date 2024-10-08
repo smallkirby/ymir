@@ -4,11 +4,13 @@ const Allocator = std.mem.Allocator;
 
 const ymir = @import("ymir");
 
-const vmx = @import("common.zig");
-const Vcpu = @import("../vmx.zig").Vcpu; // TODO: import
-const VmxError = vmx.VmxError;
 const am = @import("../asm.zig");
+
+const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
+
+const Vcpu = @import("vcpu.zig").Vcpu;
+const VmxError = vmx.VmxError;
 
 /// Handle VM-exit caused by RDMSR instruction.
 /// Note that this function does not increment the RIP.

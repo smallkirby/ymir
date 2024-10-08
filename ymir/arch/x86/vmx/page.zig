@@ -2,7 +2,8 @@ const std = @import("std");
 const log = std.log.scoped(.vmxpage);
 
 const am = @import("../asm.zig");
-const Vcpu = @import("../vmx.zig").Vcpu;
+
+const Vcpu = @import("vcpu.zig").Vcpu;
 
 /// Invalidate mappings associated with the EPTP of the given VCPU.
 pub fn invalidateEpt(vcpu: *Vcpu, inv_type: InveptType) void {

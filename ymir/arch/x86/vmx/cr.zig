@@ -1,11 +1,13 @@
 const std = @import("std");
 const log = std.log.scoped(.cr);
 
-const vmx = @import("common.zig");
-const Vcpu = @import("../vmx.zig").Vcpu; // TODO: import
-const VmxError = vmx.VmxError;
 const am = @import("../asm.zig");
+
+const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
+
+const Vcpu = @import("vcpu.zig").Vcpu;
+const VmxError = vmx.VmxError;
 const QualCr = vmx.qual.QualCr;
 
 /// Handle VM-exit caused by mov to CR3 instruction.

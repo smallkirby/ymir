@@ -1,12 +1,14 @@
 const std = @import("std");
 const log = std.log.scoped(.vmio);
 
-const vmx = @import("common.zig");
-const QualIo = vmx.qual.QualIo;
-const Vcpu = @import("../vmx.zig").Vcpu; // TODO: import
-const VmxError = vmx.VmxError;
 const sr = @import("../serial.zig");
 const am = @import("../asm.zig");
+
+const vmx = @import("common.zig");
+const QualIo = vmx.qual.QualIo;
+const VmxError = vmx.VmxError;
+
+const Vcpu = @import("vcpu.zig").Vcpu;
 const IrqLine = @import("../pic.zig").IrqLine;
 
 pub fn handleIo(vcpu: *Vcpu, qual: QualIo) VmxError!void {

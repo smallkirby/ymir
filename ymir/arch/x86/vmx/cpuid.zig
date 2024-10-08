@@ -4,12 +4,14 @@
 const std = @import("std");
 const log = std.log.scoped(.vmcpuid);
 
-const vmx = @import("../vmx.zig");
-const Vcpu = vmx.Vcpu;
-const VmxError = vmx.VmxError;
 const cpuid = @import("../cpuid.zig");
-const Leaf = cpuid.Leaf;
 const am = @import("../asm.zig");
+
+const vmx = @import("common.zig");
+const Vcpu = @import("vcpu.zig").Vcpu;
+
+const VmxError = vmx.VmxError;
+const Leaf = cpuid.Leaf;
 
 const feature_info_ecx = cpuid.FeatureInfoEcx{
     .pcid = true,

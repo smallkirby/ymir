@@ -1,11 +1,11 @@
 const std = @import("std");
 
 const am = @import("../asm.zig");
+
 const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
-const VmxError = vmx.VmxError;
 
-// TODO: Rename enum fields when https://github.com/zigtools/zls/issues/2042 is fixed.
+const VmxError = vmx.VmxError;
 
 /// Guest state area encodings.
 /// cf. SDM Vol.3C 25.4, Appendix B.
