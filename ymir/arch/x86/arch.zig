@@ -54,10 +54,10 @@ pub inline fn in(T: type, port: u16) T {
 
 /// Enable CPUID instruction.
 pub inline fn enableCpuid() void {
-    var eflags = am.readEflags();
+    var eflags = am.readRflags();
     if (!eflags.id) {
         eflags.id = true;
-        _ = am.writeEflags(eflags);
+        _ = am.writeRflags(eflags);
     }
 }
 

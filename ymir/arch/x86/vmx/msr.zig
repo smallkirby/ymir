@@ -3,6 +3,7 @@ const log = std.log.scoped(.vmmsr);
 const Allocator = std.mem.Allocator;
 
 const ymir = @import("ymir");
+
 const vmx = @import("common.zig");
 const Vcpu = @import("../vmx.zig").Vcpu; // TODO: import
 const VmxError = vmx.VmxError;
@@ -13,16 +14,14 @@ const vmcs = @import("vmcs.zig");
 /// Note that this function does not increment the RIP.
 pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
     const guest_regs = &vcpu.guest_regs;
-    const rcx: u32 = @truncate(guest_regs.rcx);
-    const msr_kind: am.Msr = @enumFromInt(rcx);
+    const msr_kind: am.Msr = @enumFromInt(guest_regs.rcx);
 
     switch (msr_kind) {
-        .apic_base => setReturnVal(vcpu, 0xFFFFFFFF_FFFFFFFF),
-        .efer => setReturnVal(vcpu, try vmx.vmread(vmcs.guest.efer)),
-        .fs_base => setReturnVal(vcpu, try vmx.vmread(vmcs.guest.fs_base)),
-        .gs_base => setReturnVal(vcpu, try vmx.vmread(vmcs.guest.gs_base)),
-        .kernel_gs_base,
-        => shadowRead(vcpu, msr_kind),
+        .apic_base => setRetVal(vcpu, std.math.maxInt(u64)),
+        .efer => setRetVal(vcpu, try vmx.vmread(vmcs.guest.efer)),
+        .fs_base => setRetVal(vcpu, try vmx.vmread(vmcs.guest.fs_base)),
+        .gs_base => setRetVal(vcpu, try vmx.vmread(vmcs.guest.gs_base)),
+        .kernel_gs_base => shadowRead(vcpu, msr_kind),
         else => {
             log.err("Unhandled RDMSR: {?}", .{msr_kind});
             vcpu.abort();
@@ -34,9 +33,8 @@ pub fn handleRdmsrExit(vcpu: *Vcpu) VmxError!void {
 /// Note that this function does not increment the RIP.
 pub fn handleWrmsrExit(vcpu: *Vcpu) VmxError!void {
     const regs = &vcpu.guest_regs;
-    const ecx: u32 = @truncate(regs.rcx);
     const value = concat(regs.rdx, regs.rax);
-    const msr_kind: am.Msr = @enumFromInt(ecx);
+    const msr_kind: am.Msr = @enumFromInt(regs.rcx);
 
     switch (msr_kind) {
         .star,
@@ -65,7 +63,7 @@ fn concat(r1: u64, r2: u64) u64 {
 }
 
 /// Set the 64-bit return value to the guest registers without modifying upper 32-bits.
-fn setReturnVal(vcpu: *Vcpu, val: u64) void {
+fn setRetVal(vcpu: *Vcpu, val: u64) void {
     const regs = &vcpu.guest_regs;
     @as(*u32, @ptrCast(&regs.rdx)).* = @as(u32, @truncate(val >> 32));
     @as(*u32, @ptrCast(&regs.rax)).* = @as(u32, @truncate(val));
@@ -74,7 +72,7 @@ fn setReturnVal(vcpu: *Vcpu, val: u64) void {
 /// Read from the shadow MSR.
 fn shadowRead(vcpu: *Vcpu, msr_kind: am.Msr) void {
     if (vcpu.guest_msr.find(msr_kind)) |msr| {
-        setReturnVal(vcpu, msr.data);
+        setRetVal(vcpu, msr.data);
     } else {
         log.err("RDMSR: MSR is not registered: {s}", .{@tagName(msr_kind)});
         vcpu.abort();
@@ -92,7 +90,8 @@ fn shadowWrite(vcpu: *Vcpu, msr_kind: am.Msr) void {
     }
 }
 
-pub const MsrPage = struct {
+/// Shadow MSR page.
+pub const ShadowMsr = struct {
     /// Maximum number of MSR entries in a page.
     const max_num_ents = 512;
 
@@ -110,22 +109,22 @@ pub const MsrPage = struct {
     };
 
     /// Initialize saved MSR page.
-    pub fn init(allocator: Allocator) !MsrPage {
+    pub fn init(allocator: Allocator) !ShadowMsr {
         const ents = try allocator.alloc(SavedMsr, max_num_ents);
         @memset(ents, std.mem.zeroes(SavedMsr));
 
-        return MsrPage{
+        return ShadowMsr{
             .ents = ents,
         };
     }
 
     /// Register or update MSR entry.
-    pub fn set(self: *MsrPage, index: am.Msr, data: u64) void {
+    pub fn set(self: *ShadowMsr, index: am.Msr, data: u64) void {
         return self.setByIndex(@intFromEnum(index), data);
     }
 
     /// Register or update MSR entry indexed by `index`.
-    pub fn setByIndex(self: *MsrPage, index: u32, data: u64) void {
+    pub fn setByIndex(self: *ShadowMsr, index: u32, data: u64) void {
         for (0..self.num_ents) |i| {
             if (self.ents[i].index == index) {
                 self.ents[i].data = data;
@@ -140,12 +139,12 @@ pub const MsrPage = struct {
     }
 
     /// Get the saved MSRs.
-    pub fn savedEnts(self: *MsrPage) []SavedMsr {
+    pub fn savedEnts(self: *ShadowMsr) []SavedMsr {
         return self.ents[0..self.num_ents];
     }
 
     /// Find the saved MSR entry.
-    pub fn find(self: *MsrPage, index: am.Msr) ?*SavedMsr {
+    pub fn find(self: *ShadowMsr, index: am.Msr) ?*SavedMsr {
         const index_num = @intFromEnum(index);
         for (0..self.num_ents) |i| {
             if (self.ents[i].index == index_num) {
@@ -156,7 +155,7 @@ pub const MsrPage = struct {
     }
 
     /// Get the host physical address of the MSR page.
-    pub fn phys(self: *MsrPage) u64 {
+    pub fn phys(self: *ShadowMsr) u64 {
         return ymir.mem.virt2phys(self.ents.ptr);
     }
 };

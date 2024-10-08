@@ -1,5 +1,5 @@
 const ymir = @import("ymir");
-const p2v = ymir.mem.phys2virt;
+const phys2virt = ymir.mem.phys2virt;
 
 /// Local APIC ID registers
 const lapic_id_register: u64 = 0xFEE0_0020;
@@ -24,6 +24,6 @@ const divide_config_register: u64 = 0xFEE0_03E0;
 
 /// Get a Local APIC ID of the current core.
 pub fn getLapicId() u8 {
-    const addr: *u32 = @ptrFromInt(p2v(lapic_id_register));
+    const addr: *u32 = @ptrFromInt(phys2virt(lapic_id_register));
     return @truncate(addr.* >> 24);
 }

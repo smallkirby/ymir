@@ -17,3 +17,10 @@ pub inline fn isset(val: anytype, nth: anytype) bool {
     };
     return ((val >> @intCast(int_nth)) & 1) != 0;
 }
+
+/// Concatnate two values and returns new value with twice the bit width.
+pub inline fn concat(T: type, a: anytype, b: @TypeOf(a)) T {
+    const U = @TypeOf(a);
+    if (@bitSizeOf(T) != @bitSizeOf(U) * 2) @compileError("concat: invalid type");
+    return (@as(T, a) << @bitSizeOf(U)) | @as(T, b);
+}

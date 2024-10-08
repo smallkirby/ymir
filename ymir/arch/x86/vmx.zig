@@ -56,13 +56,11 @@ pub const Vcpu = struct {
     /// Host physical address where the guest is mapped.
     guest_base: Phys = 0,
     /// Host saved MSRs.
-    host_msr: msr.MsrPage = undefined,
+    host_msr: msr.ShadowMsr = undefined,
     /// Guest saved MSRs.
-    guest_msr: msr.MsrPage = undefined,
+    guest_msr: msr.ShadowMsr = undefined,
     /// PIC.
     pic: io.Pic = io.Pic.new(),
-    /// PCI.
-    pci: io.Pci = io.Pci.new(),
     /// 8250 serial port.
     serial: io.Serial = io.Serial.new(),
     /// Pending IRQ.
@@ -712,8 +710,8 @@ fn updateVmcsMsrs(vcpu: *Vcpu) VmxError!void {
 
 /// Register host-saved and guest-saved MSRs.
 fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
-    vcpu.host_msr = try msr.MsrPage.init(allocator);
-    vcpu.guest_msr = try msr.MsrPage.init(allocator);
+    vcpu.host_msr = try msr.ShadowMsr.init(allocator);
+    vcpu.guest_msr = try msr.ShadowMsr.init(allocator);
 
     const hm = &vcpu.host_msr;
     const gm = &vcpu.guest_msr;

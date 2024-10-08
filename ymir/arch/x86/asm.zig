@@ -1,9 +1,11 @@
 const std = @import("std");
 
 const ymir = @import("ymir");
+const bits = ymir.bits;
 const mem = ymir.mem;
 const Phys = mem.Phys;
 const Virt = mem.Virt;
+
 const vmx = @import("vmx/common.zig");
 const VmxError = vmx.VmxError;
 const vmxerr = vmx.vmxtry;
@@ -145,7 +147,7 @@ pub inline fn readCr4() Cr4 {
     return @bitCast(cr4);
 }
 
-pub inline fn readEflags() FlagsRegister {
+pub inline fn readRflags() FlagsRegister {
     return @bitCast(asm volatile (
         \\pushfq
         \\pop %[eflags]
@@ -153,7 +155,7 @@ pub inline fn readEflags() FlagsRegister {
     ));
 }
 
-pub inline fn writeEflags(eflags: anytype) void {
+pub inline fn writeRflags(eflags: anytype) void {
     asm volatile (
         \\push %[eflags]
         \\popfq
@@ -173,7 +175,7 @@ const Segment = enum {
     ldtr,
 };
 
-pub inline fn readSegSelector(segment: Segment) u16 {
+pub fn readSegSelector(segment: Segment) u16 {
     return switch (segment) {
         .cs => asm volatile ("mov %%cs, %[ret]"
             : [ret] "=r" (-> u16),
@@ -202,7 +204,7 @@ pub inline fn readSegSelector(segment: Segment) u16 {
     };
 }
 
-pub inline fn readSegLimit(selector: u32) u32 {
+pub fn readSegLimit(selector: u32) u32 {
     return asm volatile (
         \\lsl %[selector], %[ret]
         : [ret] "=r" (-> u32),
@@ -238,78 +240,6 @@ pub inline fn sidt() SidtRet {
     return idtr;
 }
 
-inline fn readDr7() u64 {
-    return asm volatile (
-        \\mov %%dr7, %[dr7]
-        : [dr7] "=r" (-> u64),
-    );
-}
-
-pub fn readDebugRegister(dr: DebugRegister) u64 {
-    var ret: u64 = undefined;
-    switch (dr) {
-        .dr0 => asm volatile ("mov %%dr0, %[ret]"
-            : [ret] "=r" (ret),
-        ),
-        .dr1 => asm volatile ("mov %%dr1, %[ret]"
-            : [ret] "=r" (ret),
-        ),
-        .dr2 => asm volatile ("mov %%dr2, %[ret]"
-            : [ret] "=r" (ret),
-        ),
-        .dr3 => asm volatile ("mov %%dr3, %[ret]"
-            : [ret] "=r" (ret),
-        ),
-        .dr6 => asm volatile ("mov %%dr6, %[ret]"
-            : [ret] "=r" (ret),
-        ),
-        .dr7 => asm volatile ("mov %%dr7, %[ret]"
-            : [ret] "=r" (ret),
-        ),
-    }
-    return ret;
-}
-
-pub fn rdtsc() u64 {
-    var eax: u32 = undefined;
-    var edx: u32 = undefined;
-    asm volatile (
-        \\rdtsc
-        : [eax] "={eax}" (eax),
-          [edx] "={edx}" (edx),
-    );
-    return (@as(u64, edx) << 32) | @as(u64, eax);
-}
-
-pub fn writeDebugRegister(dr: DebugRegister, value: u64) void {
-    switch (dr) {
-        .dr0 => asm volatile ("mov %[value], %%dr0"
-            :
-            : [value] "r" (value),
-        ),
-        .dr1 => asm volatile ("mov %[value], %%dr1"
-            :
-            : [value] "r" (value),
-        ),
-        .dr2 => asm volatile ("mov %[value], %%dr2"
-            :
-            : [value] "r" (value),
-        ),
-        .dr3 => asm volatile ("mov %[value], %%dr3"
-            :
-            : [value] "r" (value),
-        ),
-        .dr6 => asm volatile ("mov %[value], %%dr6"
-            :
-            : [value] "r" (value),
-        ),
-        .dr7 => asm volatile ("mov %[value], %%dr7"
-            :
-            : [value] "r" (value),
-        ),
-    }
-}
-
 pub fn readMsr(msr: Msr) u64 {
     var eax: u32 = undefined;
     var edx: u32 = undefined;
@@ -320,7 +250,7 @@ pub fn readMsr(msr: Msr) u64 {
         : [msr] "{ecx}" (@intFromEnum(msr)),
     );
 
-    return (@as(u64, edx) << 32) | @as(u64, eax);
+    return bits.concat(u64, edx, eax);
 }
 
 pub fn writeMsr(msr: Msr, value: u64) void {
