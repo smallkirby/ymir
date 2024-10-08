@@ -23,6 +23,7 @@ const am = @import("asm.zig");
 
 const ymir = @import("ymir");
 const mem = ymir.mem;
+
 const BootstrapPageAllocator = mem.BootstrapPageAllocator;
 const direct_map_base = ymir.direct_map_base;
 const direct_map_size = ymir.direct_map_size;

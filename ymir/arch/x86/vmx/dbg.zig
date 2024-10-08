@@ -12,8 +12,6 @@ const vmx = @import("common.zig");
 
 const VmxError = vmx.VmxError;
 
-const isCanonical = @import("../page.zig").isCanonical;
-
 /// Partially checks the validity of guest state.
 pub fn partialCheckGuest() VmxError!void {
     if (!ymir.is_debug) @compileError("partialCheckGuest() is only for debug build");
@@ -50,8 +48,8 @@ pub fn partialCheckGuest() VmxError!void {
         log.err("CR3: {X:0>16}", .{cr3});
         @panic("CR3: Reserved bits must be zero");
     }
-    if (!isCanonical(try vmx.vmread(vmcs.guest.sysenter_esp))) @panic("IA32_SYSENTER_ESP must be canonical");
-    if (!isCanonical(try vmx.vmread(vmcs.guest.sysenter_eip))) @panic("IA32_SYSENTER_EIP must be canonical");
+    if (!mem.isCanonical(try vmx.vmread(vmcs.guest.sysenter_esp))) @panic("IA32_SYSENTER_ESP must be canonical");
+    if (!mem.isCanonical(try vmx.vmread(vmcs.guest.sysenter_eip))) @panic("IA32_SYSENTER_EIP must be canonical");
     if (entry_ctrl.load_cet_state) @panic("Unimplemented: Load CET state");
     if (entry_ctrl.load_debug_controls) @panic("Unimplemented: Load debug controls.");
     if (entry_ctrl.load_perf_global_ctrl) @panic("Unimplemented: Load perf global ctrl.");
@@ -89,10 +87,10 @@ pub fn partialCheckGuest() VmxError!void {
     if (cs_sel.rpl != ss_sel.rpl) @panic("CS.sel.RPL must be equal to SS.sel.RPL");
 
     // Base.
-    if (!isCanonical(try vmx.vmread(vmcs.guest.tr_base))) @panic("TR.base must be canonical");
-    if (!isCanonical(try vmx.vmread(vmcs.guest.fs_base))) @panic("FS.base must be canonical");
-    if (!isCanonical(try vmx.vmread(vmcs.guest.gs_base))) @panic("GS.base must be canonical");
-    if (!isCanonical(try vmx.vmread(vmcs.guest.ldtr_base))) @panic("LDTR.base must be canonical");
+    if (!mem.isCanonical(try vmx.vmread(vmcs.guest.tr_base))) @panic("TR.base must be canonical");
+    if (!mem.isCanonical(try vmx.vmread(vmcs.guest.fs_base))) @panic("FS.base must be canonical");
+    if (!mem.isCanonical(try vmx.vmread(vmcs.guest.gs_base))) @panic("GS.base must be canonical");
+    if (!mem.isCanonical(try vmx.vmread(vmcs.guest.ldtr_base))) @panic("LDTR.base must be canonical");
     if ((try vmx.vmread(vmcs.guest.cs_base)) >> 32 != 0) @panic("CS.base[63:32] must be zero");
     if ((try vmx.vmread(vmcs.guest.ss_base)) >> 32 != 0) @panic("SS.base[63:32] must be zero");
     if ((try vmx.vmread(vmcs.guest.ds_base)) >> 32 != 0) @panic("DS.base[63:32] must be zero");
@@ -180,8 +178,8 @@ pub fn partialCheckGuest() VmxError!void {
 
     // == Checks on Guest Descriptor-Table Registers.
     // cf. SDM Vol 3C 27.3.1.3.
-    if (!isCanonical(try vmx.vmread(vmcs.guest.gdtr_base))) @panic("GDTR.base must be canonical");
-    if (!isCanonical(try vmx.vmread(vmcs.guest.idtr_base))) @panic("IDTR.base must be canonical");
+    if (!mem.isCanonical(try vmx.vmread(vmcs.guest.gdtr_base))) @panic("GDTR.base must be canonical");
+    if (!mem.isCanonical(try vmx.vmread(vmcs.guest.idtr_base))) @panic("IDTR.base must be canonical");
     if (try vmx.vmread(vmcs.guest.gdtr_limit) >> 16 != 0) @panic("GDTR.limit[15:0] must be zero");
     if (try vmx.vmread(vmcs.guest.idtr_limit) >> 16 != 0) @panic("IDTR.limit[15:0] must be zero");
 

@@ -31,7 +31,6 @@ const qual = vmx.qual;
 
 const vmwrite = vmx.vmwrite;
 const vmread = vmx.vmread;
-const isCanonical = pg.isCanonical;
 const IrqLine = pic.IrqLine;
 
 pub const VmxError = vmx.VmxError;

@@ -17,6 +17,7 @@
 //! If the VA is in the kernel text mapping region, the PA can be calculated by subtracting the kernel base.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const atomic = std.atomic;
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.mem);
@@ -103,6 +104,13 @@ pub fn initPageAllocator(map: MemoryMap) void {
 pub fn initGeneralAllocator() void {
     bin_allocator_instance.init(page_allocator);
 }
+
+/// Check if the address is canonical form.
+/// If the architecture does not have a concept of canonical form, this function always returns true.
+pub const isCanonical = switch (builtin.target.cpu.arch) {
+    .x86_64 => arch.page.isCanonical,
+    else => @compileError("Unsupported architecture."),
+};
 
 /// Discard the initial direct mapping and construct Ymir's page tables.
 /// It creates two mappings: direct mapping and kernel text mapping.
