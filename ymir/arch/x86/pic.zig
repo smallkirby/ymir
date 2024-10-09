@@ -95,13 +95,13 @@ pub fn init() void {
 /// Mask the given IRQ line.
 pub fn setMask(irq: IrqLine) void {
     const port = irq.dataPort();
-    am.outb(am.inb(port) | bits.setbit(u8, irq.delta()), port);
+    am.outb(am.inb(port) | bits.tobit(u8, irq.delta()), port);
 }
 
 /// Unset the mask of the given IRQ line.
 pub fn unsetMask(irq: IrqLine) void {
     const port = irq.dataPort();
-    am.outb(am.inb(port) & ~bits.setbit(u8, irq.delta()), port);
+    am.outb(am.inb(port) & ~bits.tobit(u8, irq.delta()), port);
 }
 
 /// Notify the end of interrupt (EOI) to the PIC.

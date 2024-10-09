@@ -365,7 +365,7 @@ pub const Vcpu = struct {
             if (is_secondary_masked and i >= 8) break;
 
             const irq: IrqLine = @enumFromInt(i);
-            const irq_bit = bits.setbit(u16, irq);
+            const irq_bit = bits.tobit(u16, irq);
             // The IRQ is not pending.
             if (pending & irq_bit == 0) continue;
 
@@ -405,7 +405,7 @@ pub const Vcpu = struct {
         const vector = ctx.vector;
 
         if (ymir.intr.user_intr_base <= vector and vector < ymir.intr.user_intr_base + 16) {
-            self.pending_irq |= bits.setbit(u16, vector - ymir.intr.user_intr_base);
+            self.pending_irq |= bits.tobit(u16, vector - ymir.intr.user_intr_base);
         }
     }
 };

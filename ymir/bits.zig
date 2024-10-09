@@ -1,7 +1,7 @@
 const std = @import("std");
 
 /// Set the integer where only the nth bit is set.
-pub fn setbit(T: type, nth: anytype) T {
+pub fn tobit(T: type, nth: anytype) T {
     const val = switch (@typeInfo(@TypeOf(nth))) {
         .Int, .ComptimeInt => nth,
         .Enum => @intFromEnum(nth),
@@ -35,10 +35,10 @@ pub inline fn concat(T: type, a: anytype, b: @TypeOf(a)) T {
 
 const testing = std.testing;
 
-test "setbit" {
-    try testing.expectEqual(0b0000_0001, setbit(u8, 0));
-    try testing.expectEqual(0b0001_0000, setbit(u8, 4));
-    try testing.expectEqual(0b1000_0000, setbit(u8, 7));
+test "tobit" {
+    try testing.expectEqual(0b0000_0001, tobit(u8, 0));
+    try testing.expectEqual(0b0001_0000, tobit(u8, 4));
+    try testing.expectEqual(0b1000_0000, tobit(u8, 7));
 }
 
 test "isset" {
