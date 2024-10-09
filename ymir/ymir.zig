@@ -11,7 +11,6 @@ pub const spin = @import("spin.zig");
 pub const vmx = @import("vmx.zig");
 pub const panic = @import("panic.zig");
 pub const bits = @import("bits.zig");
-pub const util = @import("util.zig");
 
 /// Base virtual address of direct mapping.
 /// The virtual address starting from the address is directly mapped to the physical address at 0x0.
