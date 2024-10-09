@@ -17,6 +17,8 @@ pub const VmxError = error{
     OutOfMemory,
     /// Failed to subscribe to interrupts.
     InterruptFull,
+    /// The page is already mapped.
+    AlreadyMapped,
 };
 
 /// Read RFLAGS and checks if a VMX instruction has failed.
