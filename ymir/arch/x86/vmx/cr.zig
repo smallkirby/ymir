@@ -22,7 +22,9 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
                     try updateIa32e(vcpu);
                 },
                 3 => {
-                    const val = try getValue(vcpu, qual); // TODO: Why the guest sets the MSB?
+                    const val = try getValue(vcpu, qual);
+                    // NOTE: If CR3.PCIDE is set and bit 64 of `val` is 1, it means the operation is not necessarily invalidate TLBs.
+                    //      However, we clear bit 63 to avoid the failure of VM-entry.
                     try vmx.vmwrite(vmcs.guest.cr3, val & ~@as(u64, (1 << 63)));
                 },
                 else => try passthroughWrite(vcpu, qual),
@@ -36,6 +38,7 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
     }
 }
 
+/// Update IA-32e mode of the vCPU.
 fn updateIa32e(vcpu: *Vcpu) VmxError!void {
     const cr0: am.Cr0 = @bitCast(try vmx.vmread(vmcs.guest.cr0));
     const cr4: am.Cr4 = @bitCast(try vmx.vmread(vmcs.guest.cr4));

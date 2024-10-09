@@ -82,9 +82,23 @@ pub fn getCpuVendorId() [12]u8 {
 
 /// Check if virtualization technology is supported.
 pub fn isVmxSupported() bool {
+    // Check CPUID if VMX is supported.
     const regs = cpuid.Leaf.maximum_input.query(null);
     const ecx: cpuid.FeatureInfoEcx = @bitCast(regs.ecx);
-    return ecx.vmx;
+    if (!ecx.vmx) return false;
+
+    // Check VMXON is allowed outside SMX.
+    var msr_fctl = am.readMsrFeatureControl();
+    if (!msr_fctl.vmx_outside_smx) {
+        // Enable VMX outside SMX.
+        if (msr_fctl.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
+        msr_fctl.vmx_outside_smx = true;
+        am.writeMsrFeatureControl(msr_fctl);
+    }
+    msr_fctl = am.readMsrFeatureControl();
+    if (!msr_fctl.vmx_outside_smx) return false;
+
+    return true;
 }
 
 /// Enable supported XSAVE features.

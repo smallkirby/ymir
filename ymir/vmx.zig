@@ -82,9 +82,6 @@ pub const Vm = struct {
 
     /// Initialize the virtual machine, entering VMX root operation.
     pub fn init(self: *Self, allocator: Allocator) Error!void {
-        // Enable virtualization.
-        self.vcpu.enableVmx();
-
         // Initialize vCPU.
         try self.vcpu.virtualize(allocator);
         log.info("vCPU #{X} is created.", .{self.vcpu.id});
@@ -115,10 +112,8 @@ pub const Vm = struct {
         try self.loadKernel(guest_image, initrd);
 
         // Create simple EPT mapping.
-        try self.vcpu.initGuestMap(
-            self.guest_mem,
-            allocator,
-        );
+        const eptp = try impl.mapGuest(self.guest_mem, allocator);
+        try self.vcpu.setEptp(eptp, self.guest_mem.ptr);
         log.info("Guet memory is mapped: HVA=0x{X:0>16} (size=0x{X})", .{ @intFromPtr(self.guest_mem.ptr), self.guest_mem.len });
 
         // Make the pages read only.

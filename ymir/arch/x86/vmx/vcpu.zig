@@ -20,11 +20,11 @@ const pg = arch.pg;
 const pic = arch.pic;
 
 const vmcs = @import("vmcs.zig");
+const vmam = @import("asm.zig");
 const ept = @import("ept.zig");
 const cpuid = @import("cpuid.zig");
 const msr = @import("msr.zig");
 const cr = @import("cr.zig");
-const vmpg = @import("page.zig");
 const io = @import("io.zig");
 const vmx = @import("common.zig");
 const dbg = @import("dbg.zig");
@@ -46,9 +46,9 @@ pub const Vcpu = struct {
     /// VPID of the virtual machine.
     vpid: u16 = 0,
     /// VMXON region.
-    vmxon_region: *VmxonRegion,
+    vmxon_region: *VmxonRegion = undefined,
     /// VMCS region.
-    vmcs_region: *VmcsRegion,
+    vmcs_region: *VmcsRegion = undefined,
     /// The first VM-entry has been done.
     launch_done: bool = false,
     /// IA-32e mode (long mode) is enabled.
@@ -58,7 +58,7 @@ pub const Vcpu = struct {
     /// EPT pointer.
     eptp: ept.Eptp = undefined,
     /// Host physical address where the guest is mapped.
-    guest_base: Phys = 0,
+    guest_base: Phys = undefined,
     /// Host saved MSRs.
     host_msr: msr.ShadowMsr = undefined,
     /// Guest saved MSRs.
@@ -81,34 +81,19 @@ pub const Vcpu = struct {
         return Self{
             .id = id,
             .vpid = vpid,
-            .vmxon_region = undefined,
-            .vmcs_region = undefined,
-            .guest_base = undefined,
         };
     }
 
-    /// Enable VMX operations.
-    pub fn enableVmx(_: *Self) void {
+    /// Enter VMX root operation and allocate VMCS region for this LP.
+    pub fn virtualize(self: *Self, allocator: Allocator) VmxError!void {
         // Adjust control registers.
         adjustControlRegisters();
-
-        // Check VMXON is allowed outside SMX.
-        var msr_fctl = am.readMsrFeatureControl();
-        if (!msr_fctl.vmx_outside_smx) {
-            // Enable VMX outside SMX.
-            if (msr_fctl.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
-            msr_fctl.vmx_outside_smx = true;
-            am.writeMsrFeatureControl(msr_fctl);
-        }
 
         // Set VMXE bit in CR4.
         var cr4 = am.readCr4();
         cr4.vmxe = true;
         am.loadCr4(cr4);
-    }
 
-    /// Enter VMX root operation and allocate VMCS region for this LP.
-    pub fn virtualize(self: *Self, allocator: Allocator) VmxError!void {
         // Enter VMX root operation.
         self.vmxon_region = try vmxon(allocator);
     }
@@ -137,25 +122,17 @@ pub const Vcpu = struct {
         try setupGuestState(self);
     }
 
-    /// Maps guest physical memory to host physical memory.
-    pub fn initGuestMap(self: *Self, host_pages: []u8, allocator: Allocator) VmxError!void {
-        const lv4tbl = try ept.initEpt(
-            0,
-            ymir.mem.virt2phys(host_pages.ptr),
-            host_pages.len,
-            allocator,
-        );
-        const eptp = ept.Eptp.new(lv4tbl);
+    /// Set EPTP to the vCPU.
+    pub fn setEptp(self: *Self, eptp: ept.Eptp, host_start: [*]u8) VmxError!void {
         self.eptp = eptp;
-        self.guest_base = ymir.mem.virt2phys(host_pages.ptr);
-
+        self.guest_base = ymir.mem.virt2phys(host_start);
         try vmwrite(vmcs.ctrl.eptp, eptp);
     }
 
     /// Start executing vCPU.
     pub fn loop(self: *Self) VmxError!void {
         // Subscribe to interrupts.
-        intr.subscribe(self, intrSubscriptorCallback) catch return VmxError.InterruptFull;
+        intr.subscribe(self, intrSubscriberCallback) catch return error.InterruptFull;
 
         // Start endless VM-entry / VM-exit loop.
         while (true) {
@@ -163,9 +140,11 @@ pub const Vcpu = struct {
                 try dbg.partialCheckGuest();
             }
 
+            // Save MSR.
             storeHostMsrs(self);
             try updateVmcsMsrs(self);
 
+            // Enter VMX non-root operation.
             self.vmentry() catch |err| {
                 log.err("VM-entry failed: {?}", .{err});
                 if (err == VmxError.VmxStatusAvailable) {
@@ -175,14 +154,9 @@ pub const Vcpu = struct {
                 self.abort();
             };
 
+            // Handle VM-exit.
             try self.handleExit(try vmx.ExitInfo.load());
         }
-    }
-
-    /// Maps 4KiB page to EPT of this vCPU.
-    fn map4k(self: *Self, host: Phys, guest: Phys, allocator: Allocator) VmxError!void {
-        const lv4tbl = self.eptp.getLv4();
-        try ept.map4k(guest, host, lv4tbl, allocator);
     }
 
     // Enter VMX non-root operation.
@@ -199,9 +173,7 @@ pub const Vcpu = struct {
             self.launch_done = true;
         }
 
-        if (success) {
-            return;
-        } else {
+        if (!success) {
             const inst_err = try vmread(vmcs.ro.vminstruction_error);
             return if (inst_err != 0) VmxError.VmxStatusAvailable else VmxError.VmxStatusUnavailable;
         }
@@ -217,10 +189,12 @@ pub const Vcpu = struct {
                     self.abort();
                 }
                 switch (ii.vector) {
+                    // General protection fault
                     13 => { // general protection fault
                         log.err("General protection fault in the guest.", .{});
                         self.abort();
                     },
+                    // Other exceptions
                     else => |vec| {
                         log.err("Unhandled guest exception: vector={d}", .{vec});
                         self.abort();
@@ -241,10 +215,6 @@ pub const Vcpu = struct {
                 try vmwrite(vmcs.guest.interruptibility_state, 0);
                 try self.stepNextInst();
             },
-            .invlpg, .invpcid => { // TODO: should not flush entire TLB for INVLPG
-                vmpg.invalidateEpt(self, .single_context);
-                try self.stepNextInst();
-            },
             .io => {
                 const q = try getExitQual(qual.QualIo);
                 try io.handleIo(self, q);
@@ -260,7 +230,7 @@ pub const Vcpu = struct {
                 log.err("EPT violation: {?}", .{q});
                 const lin = try vmread(vmcs.ro.guest_linear_address);
                 const phys = try vmread(vmcs.ro.guest_physical_address);
-                log.err("Guest linear address: 0x{X:0>16}", .{lin});
+                log.err("Guest linear address  : 0x{X:0>16}", .{lin});
                 log.err("Guest physical address: 0x{X:0>16}", .{phys});
                 self.abort();
             },
@@ -301,6 +271,7 @@ pub const Vcpu = struct {
         ymir.endlessHalt();
     }
 
+    /// Dump guest state and guest stack trace.
     pub fn dump(self: *Self) VmxError!void {
         try self.printGuestState();
         try self.printGuestStacktrace();
@@ -429,220 +400,13 @@ pub const Vcpu = struct {
     /// This function is to "share" IRQs between Ymir and the guest.
     /// This function is called before Ymir's interrupt handler and mark the incoming IRQ as pending.
     /// After that, Ymir's interrupt handler consumes the IRQ and send EOI to the PIC.
-    fn intrSubscriptorCallback(self_: *anyopaque, ctx: *isr.Context) void {
+    fn intrSubscriberCallback(self_: *anyopaque, ctx: *isr.Context) void {
         const self: *Self = @alignCast(@ptrCast(self_));
         const vector = ctx.vector;
 
         if (ymir.intr.user_intr_base <= vector and vector < ymir.intr.user_intr_base + 16) {
-            self.pending_irq |= @as(u16, 1) << @as(u4, @intCast(vector - ymir.intr.user_intr_base));
+            self.pending_irq |= bits.setbit(u16, vector - ymir.intr.user_intr_base);
         }
-    }
-
-    /// VMLAUNCH or VMRESUME.
-    /// Returns 0 if succeeded, 1 if failed.
-    export fn asmVmEntry() callconv(.Naked) u8 {
-        // Save callee saved registers.
-        asm volatile (
-            \\push %%rbp
-            \\push %%r15
-            \\push %%r14
-            \\push %%r13
-            \\push %%r12
-            \\push %%rbx
-        );
-
-        // Save a pointer to guest registers
-        asm volatile (std.fmt.comptimePrint(
-                \\lea {d}(%%rdi), %%rbx
-                \\push %%rbx
-            ,
-                .{@offsetOf(Self, "guest_regs")},
-            ));
-
-        // Set host stack
-        asm volatile (
-            \\push %%rdi
-            \\lea 8(%%rsp), %%rdi
-            \\call setHostStack
-            \\pop %%rdi
-        );
-
-        // Determine VMLAUNCH or VMRESUME.
-        asm volatile (std.fmt.comptimePrint(
-                \\testb $1, {d}(%%rdi)
-            ,
-                .{@offsetOf(Self, "launch_done")},
-            ));
-
-        // Restore guest registers.
-        asm volatile (std.fmt.comptimePrint(
-                \\mov %%rdi, %%rax
-                \\mov {[rcx]}(%%rax), %%rcx
-                \\mov {[rdx]}(%%rax), %%rdx
-                \\mov {[rbx]}(%%rax), %%rbx
-                \\mov {[rsi]}(%%rax), %%rsi
-                \\mov {[rdi]}(%%rax), %%rdi
-                \\mov {[rbp]}(%%rax), %%rbp
-                \\mov {[r8]}(%%rax), %%r8
-                \\mov {[r9]}(%%rax), %%r9
-                \\mov {[r10]}(%%rax), %%r10
-                \\mov {[r11]}(%%rax), %%r11
-                \\mov {[r12]}(%%rax), %%r12
-                \\mov {[r13]}(%%rax), %%r13
-                \\mov {[r14]}(%%rax), %%r14
-                \\mov {[r15]}(%%rax), %%r15
-                \\movaps {[xmm0]}(%%rax), %%xmm0
-                \\movaps {[xmm1]}(%%rax), %%xmm1
-                \\movaps {[xmm2]}(%%rax), %%xmm2
-                \\movaps {[xmm3]}(%%rax), %%xmm3
-                \\movaps {[xmm4]}(%%rax), %%xmm4
-                \\movaps {[xmm5]}(%%rax), %%xmm5
-                \\movaps {[xmm6]}(%%rax), %%xmm6
-                \\movaps {[xmm7]}(%%rax), %%xmm7
-                \\mov {[rax]}(%%rax), %%rax
-            , .{
-                .rax = @offsetOf(vmx.GuestRegisters, "rax"),
-                .rcx = @offsetOf(vmx.GuestRegisters, "rcx"),
-                .rdx = @offsetOf(vmx.GuestRegisters, "rdx"),
-                .rbx = @offsetOf(vmx.GuestRegisters, "rbx"),
-                .rsi = @offsetOf(vmx.GuestRegisters, "rsi"),
-                .rdi = @offsetOf(vmx.GuestRegisters, "rdi"),
-                .rbp = @offsetOf(vmx.GuestRegisters, "rbp"),
-                .r8 = @offsetOf(vmx.GuestRegisters, "r8"),
-                .r9 = @offsetOf(vmx.GuestRegisters, "r9"),
-                .r10 = @offsetOf(vmx.GuestRegisters, "r10"),
-                .r11 = @offsetOf(vmx.GuestRegisters, "r11"),
-                .r12 = @offsetOf(vmx.GuestRegisters, "r12"),
-                .r13 = @offsetOf(vmx.GuestRegisters, "r13"),
-                .r14 = @offsetOf(vmx.GuestRegisters, "r14"),
-                .r15 = @offsetOf(vmx.GuestRegisters, "r15"),
-                .xmm0 = @offsetOf(vmx.GuestRegisters, "xmm0"),
-                .xmm1 = @offsetOf(vmx.GuestRegisters, "xmm1"),
-                .xmm2 = @offsetOf(vmx.GuestRegisters, "xmm2"),
-                .xmm3 = @offsetOf(vmx.GuestRegisters, "xmm3"),
-                .xmm4 = @offsetOf(vmx.GuestRegisters, "xmm4"),
-                .xmm5 = @offsetOf(vmx.GuestRegisters, "xmm5"),
-                .xmm6 = @offsetOf(vmx.GuestRegisters, "xmm6"),
-                .xmm7 = @offsetOf(vmx.GuestRegisters, "xmm7"),
-            }));
-
-        // VMLAUNCH or VMRESUME.
-        asm volatile (
-            \\jz .L_vmlaunch
-            \\vmresume
-            \\.L_vmlaunch:
-            \\vmlaunch
-            ::: "cc", "memory");
-
-        // Failed to launch.
-
-        // Set return value to 1.
-        asm volatile (
-            \\mov $1, %%al
-        );
-
-        // Restore callee saved registers.
-        asm volatile (
-            \\add $0x8, %%rsp
-            \\pop %%rbx
-            \\pop %%r12
-            \\pop %%r13
-            \\pop %%r14
-            \\pop %%r15
-        );
-
-        // Return to caller of asmVmEntry()
-        asm volatile (
-            \\ret
-        );
-    }
-
-    fn asmVmExit() callconv(.Naked) noreturn {
-        // Disable IRQ.
-        asm volatile (
-            \\cli
-        );
-
-        // Save guest RAX, get &guest_regs
-        asm volatile (
-            \\push %%rax
-            \\movq 8(%%rsp), %%rax
-        );
-
-        // Save guest registers.
-        // TODO: should save/restore host AVX registers?
-        asm volatile (std.fmt.comptimePrint(
-                \\
-                // Save pushed RAX.
-                \\pop {[rax]}(%%rax)
-                // Discard pushed &guest_regs.
-                \\add $0x8, %%rsp
-                // Save guest registers.
-                \\mov %%rcx, {[rcx]}(%%rax)
-                \\mov %%rdx, {[rdx]}(%%rax)
-                \\mov %%rbx, {[rbx]}(%%rax)
-                \\mov %%rsi, {[rsi]}(%%rax)
-                \\mov %%rdi, {[rdi]}(%%rax)
-                \\mov %%rbp, {[rbp]}(%%rax)
-                \\mov %%r8, {[r8]}(%%rax)
-                \\mov %%r9, {[r9]}(%%rax)
-                \\mov %%r10, {[r10]}(%%rax)
-                \\mov %%r11, {[r11]}(%%rax)
-                \\mov %%r12, {[r12]}(%%rax)
-                \\mov %%r13, {[r13]}(%%rax)
-                \\mov %%r14, {[r14]}(%%rax)
-                \\mov %%r15, {[r15]}(%%rax)
-                \\movaps %%xmm0, {[xmm0]}(%%rax)
-                \\movaps %%xmm1, {[xmm1]}(%%rax)
-                \\movaps %%xmm2, {[xmm2]}(%%rax)
-                \\movaps %%xmm3, {[xmm3]}(%%rax)
-                \\movaps %%xmm4, {[xmm4]}(%%rax)
-                \\movaps %%xmm5, {[xmm5]}(%%rax)
-                \\movaps %%xmm6, {[xmm6]}(%%rax)
-                \\movaps %%xmm7, {[xmm7]}(%%rax)
-            ,
-                .{
-                    .rax = @offsetOf(vmx.GuestRegisters, "rax"),
-                    .rcx = @offsetOf(vmx.GuestRegisters, "rcx"),
-                    .rdx = @offsetOf(vmx.GuestRegisters, "rdx"),
-                    .rbx = @offsetOf(vmx.GuestRegisters, "rbx"),
-                    .rsi = @offsetOf(vmx.GuestRegisters, "rsi"),
-                    .rdi = @offsetOf(vmx.GuestRegisters, "rdi"),
-                    .rbp = @offsetOf(vmx.GuestRegisters, "rbp"),
-                    .r8 = @offsetOf(vmx.GuestRegisters, "r8"),
-                    .r9 = @offsetOf(vmx.GuestRegisters, "r9"),
-                    .r10 = @offsetOf(vmx.GuestRegisters, "r10"),
-                    .r11 = @offsetOf(vmx.GuestRegisters, "r11"),
-                    .r12 = @offsetOf(vmx.GuestRegisters, "r12"),
-                    .r13 = @offsetOf(vmx.GuestRegisters, "r13"),
-                    .r14 = @offsetOf(vmx.GuestRegisters, "r14"),
-                    .r15 = @offsetOf(vmx.GuestRegisters, "r15"),
-                    .xmm0 = @offsetOf(vmx.GuestRegisters, "xmm0"),
-                    .xmm1 = @offsetOf(vmx.GuestRegisters, "xmm1"),
-                    .xmm2 = @offsetOf(vmx.GuestRegisters, "xmm2"),
-                    .xmm3 = @offsetOf(vmx.GuestRegisters, "xmm3"),
-                    .xmm4 = @offsetOf(vmx.GuestRegisters, "xmm4"),
-                    .xmm5 = @offsetOf(vmx.GuestRegisters, "xmm5"),
-                    .xmm6 = @offsetOf(vmx.GuestRegisters, "xmm6"),
-                    .xmm7 = @offsetOf(vmx.GuestRegisters, "xmm7"),
-                },
-            ));
-
-        // Restore callee saved registers.
-        asm volatile (
-            \\pop %%rbx
-            \\pop %%r12
-            \\pop %%r13
-            \\pop %%r14
-            \\pop %%r15
-            \\pop %%rbp
-        );
-
-        // Return to caller of asmVmEntry()
-        asm volatile (
-            \\mov $0, %%rax
-            \\ret
-        );
     }
 };
 
@@ -735,11 +499,10 @@ fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
     gm.set(.fmask, 0);
     gm.set(.kernel_gs_base, 0);
 
-    // Setup VMCS.
+    // Init MSR data in VMCS.
     try vmwrite(vmcs.ctrl.exit_msr_load_address, hm.phys());
     try vmwrite(vmcs.ctrl.exit_msr_store_address, gm.phys());
     try vmwrite(vmcs.ctrl.entry_msr_load_address, gm.phys());
-    try updateVmcsMsrs(vcpu);
 }
 
 /// Set up VM-Execution control fields.
@@ -765,7 +528,7 @@ fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
     ppb_exec_ctrl.tsc_offsetting = false;
     ppb_exec_ctrl.cr3load = true;
     ppb_exec_ctrl.cr3store = true;
-    ppb_exec_ctrl.invlpg = true; // exit on INVLPG and INVPCID
+    ppb_exec_ctrl.invlpg = false;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
@@ -847,7 +610,7 @@ fn setupHostState(_: *Vcpu) VmxError!void {
     try vmwrite(vmcs.host.cr4, am.readCr4());
 
     // General registers.
-    try vmwrite(vmcs.host.rip, &Vcpu.asmVmExit);
+    try vmwrite(vmcs.host.rip, &vmam.asmVmExit);
 
     // Segment registers.
     try vmwrite(vmcs.host.cs_sel, am.readSegSelector(.cs));
@@ -1009,10 +772,13 @@ fn getExitQual(T: anytype) VmxError!T {
     return @bitCast(@as(u64, try vmread(vmcs.ro.exit_qual)));
 }
 
+/// VMXON region.
+/// cf. SDM Vol.3C 25.11.5.
 const VmxonRegion = packed struct {
     vmcs_revision_id: u31,
     zero: u1 = 0,
 
+    /// Allocate VMXON region.
     pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmxonRegion {
         const page = page_allocator.alloc(u8, 4096) catch return VmxError.OutOfMemory;
         if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
@@ -1028,6 +794,8 @@ const VmxonRegion = packed struct {
     }
 };
 
+/// VMCS region.
+/// cf. SDM Vol.3C 25.2.
 const VmcsRegion = packed struct {
     /// VMCS revision identifier.
     vmcs_revision_id: u31,
@@ -1035,10 +803,10 @@ const VmcsRegion = packed struct {
     zero: u1 = 0,
     /// VMX-abort indicator.
     abort_indicator: u32,
-
     // VMCS data follows, but its exact layout is implementation-specific.
     // Use vmread/vmwrite with appropriate ComponentEncoding.
 
+    /// Allocate a VMCS region.
     pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmcsRegion {
         const page = try page_allocator.alloc(u8, 4096);
         if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
@@ -1053,8 +821,6 @@ const VmcsRegion = packed struct {
         page_allocator.free(ptr[0..4096]);
     }
 };
-
-// =====================================================
 
 test {
     std.testing.refAllDeclsRecursive(@This());
