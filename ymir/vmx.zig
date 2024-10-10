@@ -145,6 +145,7 @@ pub const Vm = struct {
         }
 
         var bp = BootParams.from(kernel);
+        bp.e820_entries = 0;
 
         // Setup necessary fields
         bp.hdr.type_of_loader = 0xFF;
@@ -165,7 +166,8 @@ pub const Vm = struct {
         );
 
         // Setup cmdline
-        const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + bp.hdr.cmdline_size];
+        const cmdline_max_size = if (bp.hdr.cmdline_size < 256) bp.hdr.cmdline_size else 256;
+        const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + cmdline_max_size];
         const cmdline_val = "console=ttyS0 earlyprintk=serial nokaslr";
         @memset(cmdline, 0);
         @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
@@ -196,10 +198,12 @@ pub const Vm = struct {
             kernel[code_offset .. code_offset + code_size],
             linux.layout.kernel_base,
         );
-        log.info("Guest kernel code offset: 0x{X:0>16}", .{code_offset});
         if (linux.layout.kernel_base + code_size > guest_mem.len) {
             return Error.OutOfMemory;
         }
+
+        log.info("Guest memory region: 0x{X:0>16} - 0x{X:0>16}", .{ 0, guest_mem.len });
+        log.info("Guest kernel code offset: 0x{X:0>16}", .{code_offset});
     }
 
     fn loadImage(memory: []u8, image: []u8, addr: usize) !void {
