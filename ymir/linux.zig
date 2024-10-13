@@ -89,7 +89,7 @@ pub const SetupHeader = extern struct {
     };
 
     /// The offset where the header starts in the bzImage.
-    pub const HeaderOffset = 0x1F1;
+    pub const header_offset = 0x1F1;
 
     comptime {
         if (@sizeOf(@This()) != 0x7B) {
@@ -101,7 +101,7 @@ pub const SetupHeader = extern struct {
     pub fn from(bytes: []u8) @This() {
         var hdr = std.mem.bytesToValue(
             @This(),
-            bytes[HeaderOffset .. HeaderOffset + @sizeOf(@This())],
+            bytes[header_offset .. header_offset + @sizeOf(@This())],
         );
         if (hdr.setup_sects == 0) {
             hdr.setup_sects = 4;
@@ -182,11 +182,11 @@ pub const BootParams = extern struct {
     _pad6: [5]u8 align(1),
     /// Setup header.
     hdr: SetupHeader,
-    _pad7: [0x290 - SetupHeader.HeaderOffset - @sizeOf(SetupHeader)]u8 align(1),
+    _pad7: [0x290 - SetupHeader.header_offset - @sizeOf(SetupHeader)]u8 align(1),
     _edd_mbr_sig_buffer: [0x10]u32 align(1),
     /// System memory map that can be retrieved by INT 15, E820h.
     e820_map: [e820max]E820Entry align(1),
-    _unimplemented: [0x330]u8 align(1), // TODO: implement this.
+    _unimplemented: [0x330]u8 align(1),
 
     comptime {
         if (@sizeOf(@This()) != 0x1000) {
