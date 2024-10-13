@@ -26,6 +26,7 @@ const cpuid = @import("cpuid.zig");
 const msr = @import("msr.zig");
 const cr = @import("cr.zig");
 const io = @import("io.zig");
+const vmc = @import("vmc.zig");
 const vmx = @import("common.zig");
 const dbg = @import("dbg.zig");
 const qual = vmx.qual;
@@ -256,6 +257,10 @@ pub const Vcpu = struct {
                 );
                 // Give the external interrupt to guest.
                 _ = try self.injectExtIntr();
+            },
+            .vmcall => {
+                try vmc.handleVmcall(self);
+                try self.stepNextInst();
             },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
