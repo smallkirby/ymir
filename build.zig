@@ -54,8 +54,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .linkage = .static,
     });
-    surtr.root_module.red_zone = false;
-    surtr.link_z_relro = false;
     surtr.root_module.addOptions("option", options);
     b.installArtifact(surtr);
 
