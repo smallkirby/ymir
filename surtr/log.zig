@@ -39,7 +39,7 @@ pub fn init(out: *Sto) void {
 fn writerFunction(_: void, bytes: []const u8) LogError!usize {
     for (bytes) |b| {
         // EFI uses UCS-2 encoding.
-        con_out.outputString(&[_:0]u16{ b, 0 }).err() catch unreachable;
+        con_out.outputString(&[_:0]u16{b}).err() catch unreachable;
     }
     return bytes.len;
 }
