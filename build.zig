@@ -3,6 +3,29 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
+    // Options
+    const s_log_level = b.option(
+        []const u8,
+        "log_level",
+        "log_level",
+    ) orelse "info";
+    const log_level: std.log.Level = b: {
+        const eql = std.mem.eql;
+        break :b if (eql(u8, s_log_level, "debug"))
+            .debug
+        else if (eql(u8, s_log_level, "info"))
+            .info
+        else if (eql(u8, s_log_level, "warn"))
+            .warn
+        else if (eql(u8, s_log_level, "error"))
+            .err
+        else
+            @panic("Invalid log level");
+    };
+
+    const options = b.addOptions();
+    options.addOption(std.log.Level, "log_level", log_level);
+
     // Executables
     const surtr = b.addExecutable(.{
         .name = "BOOTX64.EFI",
@@ -14,6 +37,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .linkage = .static,
     });
+    surtr.root_module.addOptions("option", options);
     b.installArtifact(surtr);
 
     // EFI directory
