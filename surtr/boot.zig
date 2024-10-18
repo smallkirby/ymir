@@ -14,7 +14,7 @@ const log = std.log.scoped(.surtr);
 
 const blog = @import("log.zig");
 const defs = @import("defs.zig");
-const arch = @import("arch.zig").impl;
+const arch = @import("arch.zig");
 
 const page_size = arch.page.page_size_4k;
 const page_mask = arch.page.page_mask_4k;
