@@ -40,6 +40,22 @@ pub fn build(b: *std.Build) void {
     surtr.root_module.addOptions("option", options);
     b.installArtifact(surtr);
 
+    const ymir_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .os_tag = .freestanding,
+        .ofmt = .elf,
+    });
+    const ymir = b.addExecutable(.{
+        .name = "ymir.elf",
+        .root_source_file = b.path("ymir/main.zig"),
+        .target = ymir_target, // Freestanding x64 ELF executable
+        .optimize = optimize, // You can choose the optimization level.
+        .linkage = .static,
+        .code_model = .large,
+    });
+    ymir.entry = .{ .symbol_name = "kernelEntry" };
+    b.installArtifact(ymir);
+
     // EFI directory
     const out_dir_name = "img";
     const install_surtr = b.addInstallFile(
@@ -48,6 +64,13 @@ pub fn build(b: *std.Build) void {
     );
     install_surtr.step.dependOn(&surtr.step);
     b.getInstallStep().dependOn(&install_surtr.step);
+
+    const install_ymir = b.addInstallFile(
+        ymir.getEmittedBin(),
+        b.fmt("{s}/{s}", .{ out_dir_name, ymir.name }),
+    );
+    install_ymir.step.dependOn(&ymir.step);
+    b.getInstallStep().dependOn(&install_ymir.step);
 
     // Run QEMU
     // WARN: VVFAT somehow overwrites /ymir.elf.
