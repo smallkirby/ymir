@@ -59,17 +59,7 @@ pub fn main() uefi.Status {
     log.info("Opened filesystem volume.", .{});
 
     // Open kernel file.
-    var kernel: *uefi.protocol.File = undefined;
-    status = root_dir.open(
-        &kernel,
-        &toUcs2("ymir.elf"),
-        uefi.protocol.File.efi_file_mode_read,
-        uefi.protocol.File.efi_file_read_only,
-    );
-    if (status != .Success) {
-        log.err("Failed to open kernel file.", .{});
-        return status;
-    }
+    const kernel = openFile(root_dir, "ymir.elf") catch return .Aborted;
     log.info("Opened kernel file.", .{});
 
     // Read kernel ELF header
@@ -210,17 +200,7 @@ pub fn main() uefi.Status {
     arch.enableNxBit();
 
     // Get guest kernel image info.
-    var guest: *uefi.protocol.File = undefined;
-    status = root_dir.open(
-        &guest,
-        &toUcs2("bzImage"),
-        uefi.protocol.File.efi_file_mode_read,
-        uefi.protocol.File.efi_file_read_only,
-    );
-    if (status != .Success) {
-        log.err("Failed to open guest kernel file.", .{});
-        return status;
-    }
+    const guest = openFile(root_dir, "bzImage") catch return .Aborted;
     log.info("Opened guest kernel file.", .{});
 
     const guest_info_buffer_size: usize = @sizeOf(uefi.FileInfo) + 0x100;
@@ -252,17 +232,7 @@ pub fn main() uefi.Status {
     log.info("Loaded guest kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ guest_start, guest_start + guest_size });
 
     // Load initrd.
-    var initrd: *uefi.protocol.File = undefined;
-    status = root_dir.open(
-        &initrd,
-        &toUcs2("rootfs.cpio.gz"),
-        uefi.protocol.File.efi_file_mode_read,
-        uefi.protocol.File.efi_file_read_only,
-    );
-    if (status != .Success) {
-        log.err("Failed to open initrd file.", .{});
-        return status;
-    }
+    const initrd = openFile(root_dir, "rootfs.cpio.gz") catch return .Aborted;
     log.info("Opened initrd file.", .{});
 
     const initrd_info_buffer_size: usize = @sizeOf(uefi.FileInfo) + 0x100;
@@ -414,6 +384,26 @@ inline fn toUcs2(comptime s: [:0]const u8) [s.len * 2:0]u16 {
         ucs2[i + 1] = 0;
     }
     return ucs2;
+}
+
+/// Open a file using Simple File System protocol.
+fn openFile(
+    root: *uefi.protocol.File,
+    comptime name: [:0]const u8,
+) !*uefi.protocol.File {
+    var file: *uefi.protocol.File = undefined;
+    const status = root.open(
+        &file,
+        &toUcs2(name),
+        uefi.protocol.File.efi_file_mode_read,
+        0,
+    );
+
+    if (status != .Success) {
+        log.err("Failed to open file: {s}", .{name});
+        return error.Aborted;
+    }
+    return file;
 }
 
 fn getMemoryMap(map: *defs.MemoryMap, boot_services: *uefi.tables.BootServices) uefi.Status {
