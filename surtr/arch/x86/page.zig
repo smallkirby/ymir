@@ -264,7 +264,7 @@ fn EntryBase(table_level: TableLevel) type {
         /// Indicates wheter this entry has been used for translation.
         accessed: bool = false,
         /// Dirty bit.
-        /// Indicates wheter software has written to the 2MiB page.
+        /// Indicates wheter software has written to this page.
         /// Ignored when this entry references a page table.
         dirty: bool = false,
         /// Page Size.
@@ -277,10 +277,10 @@ fn EntryBase(table_level: TableLevel) type {
         global: bool = true,
         /// Ignored
         _ignored1: u2 = 0,
-        /// Ignored except for HLAT paging.
+        /// Ignored
         restart: bool = false,
         /// When the entry maps a page, physical address of the page.
-        /// When the entry references a page table, 4KB aligned address of the page table.
+        /// When the entry references a page table, physical address of the page table.
         phys: u51,
         /// Execute Disable.
         xd: bool = false,
