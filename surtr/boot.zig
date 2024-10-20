@@ -12,6 +12,7 @@ const elf = std.elf;
 const log = std.log.scoped(.surtr);
 
 const blog = @import("log.zig");
+const arch = @import("arch.zig");
 
 // Override the default log options
 pub const std_options = blog.default_log_options;
@@ -89,6 +90,13 @@ pub fn main() uefi.Status {
             elf_header.shnum,
         },
     );
+
+    // Map memory for kernel image.
+    arch.page.setLv4Writable(boot_service) catch |err| {
+        log.err("Failed to set page table writable: {?}", .{err});
+        return .LoadError;
+    };
+    log.debug("Set page table writable.", .{});
 
     while (true) asm volatile ("hlt");
 
