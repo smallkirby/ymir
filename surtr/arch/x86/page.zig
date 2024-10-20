@@ -202,10 +202,11 @@ pub fn map4kTo(virt: Virt, phys: Phys, attr: PageAttribute, bs: *BootServices) P
 
     const lv2ent = getLv2Entry(virt, lv3ent.address());
     if (!lv2ent.present) try allocateNewTable(Lv2Entry, lv2ent, bs);
-    if (lv2ent.ps) return PageError.AlreadyMapped;
 
     const lv1ent = getLv1Entry(virt, lv2ent.address());
+    if (lv1ent.present) return PageError.AlreadyMapped;
     var new_lv1ent = Lv1Entry.newMapPage(phys, true);
+
     new_lv1ent.rw = rw;
     new_lv1ent.xd = xd;
     lv1ent.* = new_lv1ent;
