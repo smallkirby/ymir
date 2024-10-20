@@ -6,6 +6,7 @@ SECTIONS {
 
     .text ALIGN(4K) : AT (ADDR(.text) - KERNEL_VADDR_BASE) {
         *(.text)
+        *(.ltext)
     }
 
     .rodata ALIGN(4K) : AT (ADDR(.rodata) - KERNEL_VADDR_BASE) {
