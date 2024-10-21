@@ -154,7 +154,7 @@ fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
 }
 
 fn validateBootInfo(boot_info: surtr.BootInfo) !void {
-    if (boot_info.magic != surtr.surtr_magic) {
+    if (boot_info.magic != surtr.magic) {
         return error.InvalidMagic;
     }
 }

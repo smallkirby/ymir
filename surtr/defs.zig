@@ -2,13 +2,13 @@
 
 const uefi = @import("std").os.uefi;
 
-pub const surtr_magic: usize = 0xDEADBEEF_CAFEBABE;
+pub const magic: usize = 0xDEADBEEF_CAFEBABE;
 
 /// Boot information.
 /// This struct is passed from the bootloader to the kernel in Win64 calling convention.
 pub const BootInfo = extern struct {
     /// Magic number to check if the boot info is valid.
-    magic: usize = surtr_magic,
+    magic: usize = magic,
     memory_map: MemoryMap,
     guest_info: GuestInfo,
     acpi_table: *anyopaque,
