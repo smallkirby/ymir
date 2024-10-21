@@ -98,9 +98,10 @@ pub fn main() uefi.Status {
     );
 
     // Calculate necessary memory size for kernel image.
-    var kernel_start_virt: elf.Elf64_Addr = std.math.maxInt(elf.Elf64_Addr);
-    var kernel_start: elf.Elf64_Addr align(page_size) = std.math.maxInt(elf.Elf64_Addr);
-    var kernel_end: elf.Elf64_Addr = 0;
+    const Addr = elf.Elf64_Addr;
+    var kernel_start_virt: Addr = std.math.maxInt(Addr);
+    var kernel_start_phys: Addr align(page_size) = std.math.maxInt(Addr);
+    var kernel_end_phys: Addr = 0;
     var iter = elf_header.program_header_iterator(kernel);
     while (true) {
         const phdr = iter.next() catch |err| {
@@ -108,20 +109,20 @@ pub fn main() uefi.Status {
             return .LoadError;
         } orelse break;
         if (phdr.p_type != elf.PT_LOAD) continue;
-        if (phdr.p_paddr < kernel_start) kernel_start = phdr.p_paddr;
+        if (phdr.p_paddr < kernel_start_phys) kernel_start_phys = phdr.p_paddr;
         if (phdr.p_vaddr < kernel_start_virt) kernel_start_virt = phdr.p_vaddr;
-        if (phdr.p_paddr + phdr.p_memsz > kernel_end) kernel_end = phdr.p_paddr + phdr.p_memsz;
+        if (phdr.p_paddr + phdr.p_memsz > kernel_end_phys) kernel_end_phys = phdr.p_paddr + phdr.p_memsz;
     }
-    const pages_4kib = (kernel_end - kernel_start + (page_size - 1)) / page_size;
-    log.info("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start, kernel_end, pages_4kib });
+    const pages_4kib = (kernel_end_phys - kernel_start_phys + (page_size - 1)) / page_size;
+    log.info("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start_phys, kernel_end_phys, pages_4kib });
 
     // Allocate memory for kernel image.
-    status = boot_service.allocatePages(.AllocateAddress, .LoaderData, pages_4kib, @ptrCast(&kernel_start));
+    status = boot_service.allocatePages(.AllocateAddress, .LoaderData, pages_4kib, @ptrCast(&kernel_start_phys));
     if (status != .Success) {
         log.err("Failed to allocate memory for kernel image: {?}", .{status});
         return status;
     }
-    log.info("Allocated memory for kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ kernel_start, kernel_start + pages_4kib * page_size });
+    log.info("Allocated memory for kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ kernel_start_phys, kernel_start_phys + pages_4kib * page_size });
 
     // Map memory for kernel image.
     arch.page.setLv4Writable(boot_service) catch |err| {
@@ -133,7 +134,7 @@ pub fn main() uefi.Status {
     for (0..pages_4kib) |i| {
         arch.page.map4kTo(
             kernel_start_virt + page_size * i,
-            kernel_start + page_size * i,
+            kernel_start_phys + page_size * i,
             .read_write,
             boot_service,
         ) catch |err| {
@@ -174,7 +175,7 @@ pub fn main() uefi.Status {
             .{ phdr.p_vaddr, phdr.p_vaddr + phdr.p_memsz, chr_x, chr_w, chr_r },
         );
 
-        // Zero out the BSS section and uninitialized data.
+        // Zero-clear the BSS section and uninitialized data.
         const zero_count = phdr.p_memsz - phdr.p_filesz;
         if (zero_count > 0) {
             boot_service.setMem(@ptrFromInt(phdr.p_vaddr + phdr.p_filesz), zero_count, 0);
