@@ -53,7 +53,7 @@ pub const MemoryDescriptorIterator = struct {
     total_size: usize,
 
     pub fn new(map: MemoryMap) Self {
-        return MemoryDescriptorIterator{
+        return Self{
             .descriptors = map.descriptors,
             .current = @ptrCast(map.descriptors),
             .descriptor_size = map.descriptor_size,

@@ -305,9 +305,7 @@ pub fn main() uefi.Status {
         return status;
     }
 
-    // Exit boot services.
-    // After this point, we can't use any boot services including logging.
-    log.info("Exiting boot services.", .{});
+    // Get memory map.
     const map_buffer_size = page_size * 4;
     var map_buffer: [map_buffer_size]u8 = undefined;
     var map = defs.MemoryMap{
@@ -341,6 +339,9 @@ pub fn main() uefi.Status {
         } else break;
     }
 
+    // Exit boot services.
+    // After this point, we can't use any boot services including logging.
+    log.info("Exiting boot services.", .{});
     status = boot_service.exitBootServices(uefi.handle, map.map_key);
     if (status != .Success) {
         // May fail if the memory map has been changed.
