@@ -13,6 +13,7 @@ const log = std.log.scoped(.surtr);
 
 const blog = @import("log.zig");
 const arch = @import("arch.zig");
+const defs = @import("defs.zig");
 
 const page_size = arch.page.page_size_4k;
 const page_mask = arch.page.page_mask_4k;
@@ -177,6 +178,78 @@ pub fn main() uefi.Status {
         }
     }
 
+    // Clean up memory.
+    status = boot_service.freePool(header_buffer);
+    if (status != .Success) {
+        log.err("Failed to free memory for kernel ELF header.", .{});
+        return status;
+    }
+    status = kernel.close();
+    if (status != .Success) {
+        log.err("Failed to close kernel file.", .{});
+        return status;
+    }
+    status = root_dir.close();
+    if (status != .Success) {
+        log.err("Failed to close filesystem volume.", .{});
+        return status;
+    }
+
+    // Get memory map.
+    const map_buffer_size = page_size * 4;
+    var map_buffer: [map_buffer_size]u8 = undefined;
+    var map = defs.MemoryMap{
+        .buffer_size = map_buffer.len,
+        .descriptors = @alignCast(@ptrCast(&map_buffer)),
+        .map_key = 0,
+        .map_size = map_buffer.len,
+        .descriptor_size = 0,
+        .descriptor_version = 0,
+    };
+    status = getMemoryMap(&map, boot_service);
+    if (status != .Success) {
+        log.err("Failed to get memory map.", .{});
+        return status;
+    }
+
+    // Print memory map.
+    log.debug("Memory Map (Physical): Buf=0x{X}, MapSize=0x{X}, DescSize=0x{X}", .{
+        @intFromPtr(map.descriptors),
+        map.map_size,
+        map.descriptor_size,
+    });
+    var map_iter = defs.MemoryDescriptorIterator.new(map);
+    while (true) {
+        if (map_iter.next()) |md| {
+            log.debug("  0x{X:0>16} - 0x{X:0>16} : {s}", .{
+                md.physical_start,
+                md.physical_start + md.number_of_pages * page_size,
+                @tagName(md.type),
+            });
+        } else break;
+    }
+
+    // Exit boot services.
+    // After this point, we can't use any boot services including logging.
+    log.info("Exiting boot services.", .{});
+    status = boot_service.exitBootServices(uefi.handle, map.map_key);
+    if (status != .Success) {
+        // May fail if the memory map has been changed.
+        // Retry after getting the memory map again.
+        map.buffer_size = map_buffer.len;
+        map.map_size = map_buffer.len;
+        status = getMemoryMap(&map, boot_service);
+        if (status != .Success) {
+            log.err("Failed to get memory map after failed to exit boot services.", .{});
+            return status;
+        }
+        status = boot_service.exitBootServices(uefi.handle, map.map_key);
+        if (status != .Success) {
+            log.err("Failed to exit boot services.", .{});
+            return status;
+        }
+    }
+
     while (true) asm volatile ("hlt");
 
     return .success;
@@ -210,4 +283,14 @@ fn openFile(
         return error.Aborted;
     }
     return file;
+}
+
+fn getMemoryMap(map: *defs.MemoryMap, boot_services: *uefi.tables.BootServices) uefi.Status {
+    return boot_services.getMemoryMap(
+        &map.map_size,
+        map.descriptors,
+        &map.map_key,
+        &map.descriptor_size,
+        &map.descriptor_version,
+    );
 }
