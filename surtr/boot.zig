@@ -14,6 +14,9 @@ const log = std.log.scoped(.surtr);
 const blog = @import("log.zig");
 const arch = @import("arch.zig");
 
+const page_size = arch.page.page_size_4k;
+const page_mask = arch.page.page_mask_4k;
+
 // Override the default log options
 pub const std_options = blog.default_log_options;
 
@@ -97,6 +100,82 @@ pub fn main() uefi.Status {
         return .LoadError;
     };
     log.debug("Set page table writable.", .{});
+
+    // Calculate necessary memory size for kernel image.
+    const Addr = elf.Elf64_Addr;
+    var kernel_start_virt: Addr = std.math.maxInt(Addr);
+    var kernel_start_phys: Addr align(page_size) = std.math.maxInt(Addr);
+    var kernel_end_phys: Addr = 0;
+    var iter = elf_header.program_header_iterator(kernel);
+    while (true) {
+        const phdr = iter.next() catch |err| {
+            log.err("Failed to get program header: {?}\n", .{err});
+            return .LoadError;
+        } orelse break;
+        if (phdr.p_type != elf.PT_LOAD) continue;
+        if (phdr.p_paddr < kernel_start_phys) kernel_start_phys = phdr.p_paddr;
+        if (phdr.p_vaddr < kernel_start_virt) kernel_start_virt = phdr.p_vaddr;
+        if (phdr.p_paddr + phdr.p_memsz > kernel_end_phys) kernel_end_phys = phdr.p_paddr + phdr.p_memsz;
+    }
+    const pages_4kib = (kernel_end_phys - kernel_start_phys + (page_size - 1)) / page_size;
+    log.info("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start_phys, kernel_end_phys, pages_4kib });
+
+    // Allocate memory for kernel image.
+    status = boot_service.allocatePages(.AllocateAddress, .LoaderData, pages_4kib, @ptrCast(&kernel_start_phys));
+    if (status != .Success) {
+        log.err("Failed to allocate memory for kernel image: {?}", .{status});
+        return status;
+    }
+    log.info("Allocated memory for kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ kernel_start_phys, kernel_start_phys + pages_4kib * page_size });
+
+    // Map memory for kernel image.
+    for (0..pages_4kib) |i| {
+        arch.page.map4kTo(
+            kernel_start_virt + page_size * i,
+            kernel_start_phys + page_size * i,
+            .read_write,
+            boot_service,
+        ) catch |err| {
+            log.err("Failed to map memory for kernel image: {?}", .{err});
+            return .LoadError;
+        };
+    }
+    log.info("Mapped memory for kernel image.", .{});
+
+    // Load kernel image.
+    log.info("Loading kernel image...", .{});
+    iter = elf_header.program_header_iterator(kernel);
+    while (true) {
+        const phdr = iter.next() catch |err| {
+            log.err("Failed to get program header: {?}\n", .{err});
+            return .LoadError;
+        } orelse break;
+        if (phdr.p_type != elf.PT_LOAD) continue;
+
+        // Load data
+        status = kernel.setPosition(phdr.p_offset);
+        if (status != .Success) {
+            log.err("Failed to set position for kernel image.", .{});
+            return status;
+        }
+        const segment: [*]u8 = @ptrFromInt(phdr.p_vaddr);
+        var mem_size = phdr.p_memsz;
+        status = kernel.read(&mem_size, segment);
+        if (status != .Success) {
+            log.err("Failed to read kernel image.", .{});
+            return status;
+        }
+        log.info(
+            "  Seg @ 0x{X:0>16} - 0x{X:0>16}",
+            .{ phdr.p_vaddr, phdr.p_vaddr + phdr.p_memsz },
+        );
+
+        // Zero-clear the BSS section and uninitialized data.
+        const zero_count = phdr.p_memsz - phdr.p_filesz;
+        if (zero_count > 0) {
+            boot_service.setMem(@ptrFromInt(phdr.p_vaddr + phdr.p_filesz), zero_count, 0);
+        }
+    }
 
     while (true) asm volatile ("hlt");
 

@@ -54,6 +54,7 @@ pub fn build(b: *std.Build) void {
         .code_model = .large,
     });
     ymir.entry = .{ .symbol_name = "kernelEntry" };
+    ymir.linker_script = b.path("ymir/linker.ld");
     b.installArtifact(ymir);
 
     // EFI directory
