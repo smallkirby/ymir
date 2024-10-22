@@ -35,15 +35,15 @@ SECTIONS {
         *(.bss)
     } :bss
 
-    __stackguard_upper ALIGN(4K) (NOLOAD) : AT (. - KERNEL_VADDR_BASE) {
+    __stackguard_upper ALIGN(4K) (NOLOAD) : AT (ADDR(__stackguard_upper) - KERNEL_VADDR_BASE) {
         . += 4K;
     } :__stackguard_upper
 
-    __stack ALIGN(4K) (NOLOAD) : AT (. - KERNEL_VADDR_BASE) {
+    __stack ALIGN(4K) (NOLOAD) : AT (ADDR(__stack) - KERNEL_VADDR_BASE) {
         . += STACK_SIZE;
     } :__stack
 
-    __stackguard_lower ALIGN(4K) (NOLOAD) : AT (. - KERNEL_VADDR_BASE) {
+    __stackguard_lower ALIGN(4K) (NOLOAD) : AT (ADDR(__stackguard_lower) - KERNEL_VADDR_BASE) {
         __stackguard_lower = .;
         . += 4K;
     } :__stackguard_lower
