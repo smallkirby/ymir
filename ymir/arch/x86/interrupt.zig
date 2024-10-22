@@ -78,6 +78,8 @@ pub fn init() void {
     }
 
     // Detailed handling for page faults.
+    // TODO: For page fault, we have to allocate an interrupt stack,
+    //  register it to the TSS, and switch to it because it can be stack overflow.
     registerHandler(page_fault, unhandledFaultHandler);
 
     idt.init();

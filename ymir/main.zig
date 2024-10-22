@@ -19,12 +19,8 @@ const page_size = mem.page_size;
 pub const panic = ymir.panic.panic_fn;
 pub const std_options = klog.default_log_options;
 
-/// Size in bytes pages of the kernel stack excluding the guard page.
-const kstack_size = page_size * 5;
-/// Kernel stack.
-/// The first page is used as a guard page.
-/// TODO: make the guard page read-only.
-var kstack: [kstack_size + page_size]u8 align(page_size) = [_]u8{0} ** (kstack_size + page_size);
+/// Guard page placed below the kernel stack.
+extern const __stackguard_lower: [*]const u8;
 
 /// Kernel entry point called by surtr.
 /// The function switches stack from the surtr stack to the kernel stack.
@@ -33,7 +29,7 @@ export fn kernelEntry() callconv(.Naked) noreturn {
         \\movq %[new_stack], %%rsp
         \\call kernelTrampoline
         :
-        : [new_stack] "r" (@intFromPtr(&kstack) + kstack_size + page_size),
+        : [new_stack] "r" (@intFromPtr(&__stackguard_lower) - 0x10),
     );
 }
 
