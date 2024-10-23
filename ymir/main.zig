@@ -45,21 +45,21 @@ export fn kernelTrampoline(boot_info: surtr.BootInfo) callconv(.Win64) noreturn 
 }
 
 /// Kernel main function.
-fn kernelMain(bs_boot_info: surtr.BootInfo) !void {
+fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Initialize the serial console and logger.
     const sr = serial.init();
     klog.init(sr);
     log.info("Booting Ymir...", .{});
 
     // Validate the boot info.
-    validateBootInfo(bs_boot_info) catch |err| {
+    validateBootInfo(boot_info) catch |err| {
         log.err("Invalid boot info: {}", .{err});
         return error.InvalidBootInfo;
     };
 
     // Copy boot_info into Ymir's stack since it becomes inaccessible soon.
-    const guest_info = bs_boot_info.guest_info;
-    const memory_map = bs_boot_info.memory_map;
+    const guest_info = boot_info.guest_info;
+    const memory_map = boot_info.memory_map;
 
     // Initialize GDT.
     // It switches GDT from the one prepared by surtr to the ymir GDT.
