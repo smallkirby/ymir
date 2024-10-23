@@ -78,7 +78,7 @@ pub fn getSerial(serial: *Serial, port: Ports) void {
         .com1 => writeByteCom1,
         .com2 => writeByteCom2,
         .com3 => writeByteCom3,
-        .com4 => writeByteCom5,
+        .com4 => writeByteCom4,
     };
     serial._read_fn = switch (port) {
         .com1 => tryReadByteCom1,
@@ -135,7 +135,7 @@ fn writeByteCom3(byte: u8) void {
     writeByte(byte, .com3);
 }
 
-fn writeByteCom5(byte: u8) void {
+fn writeByteCom4(byte: u8) void {
     writeByte(byte, .com4);
 }
 
