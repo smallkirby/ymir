@@ -52,7 +52,7 @@ pub const Serial = struct {
 /// You MUST call this function before using the serial console.
 pub fn init() Serial {
     var serial = Serial{};
-    arch.serial.initSerial(&serial, .com1, 9600);
+    arch.serial.initSerial(&serial, .com1, 115200);
 
     return serial;
 }

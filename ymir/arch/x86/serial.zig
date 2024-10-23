@@ -23,7 +23,7 @@ const Irq = struct {
 };
 
 const divisor_latch_numerator = 115200;
-const default_baufd_rate = 9600;
+const default_baud_rate = 9600;
 
 const offsets = struct {
     /// Transmitter Holding Buffer: DLAB=0, W
@@ -58,7 +58,6 @@ pub fn initSerial(serial: *Serial, port: Ports, baud: u32) void {
     am.outb(0b00_000_0_00, p + offsets.lcr); // 8n1: no paritiy, 1 stop bit, 8 data bit
     am.outb(0, p + offsets.ier); // Disable interrupts
     am.outb(0, p + offsets.fcr); // Disable FIFO
-    am.outb(0b0000_0011, p + offsets.mcr); // Request-to-send, Data-terminal-ready
 
     // Set baud rate
     const divisor = divisor_latch_numerator / baud;
@@ -93,15 +92,6 @@ pub fn enableInterrupt(port: Ports) void {
     var ie = am.inb(@intFromEnum(port) + offsets.ier);
     ie |= 0b0000_0011; // Rx-available, Tx-empty
     am.outb(ie, @intFromEnum(port) + offsets.ier); // Rx-available, Tx-empty
-}
-
-/// Check if the given port is holding a transmitter buffer of any ports.
-pub fn isTxHoldingReg(port: u16) bool {
-    const base = port - offsets.lsr;
-    inline for (@typeInfo(Ports).Enum.fields) |field| {
-        if (field.value == base) return true;
-    }
-    return false;
 }
 
 /// Check if the given port is any of serial ports.
