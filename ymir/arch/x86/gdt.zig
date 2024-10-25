@@ -19,8 +19,6 @@ var gdtr = GdtRegister{
     .base = undefined,
 };
 
-/// Index of the null descriptor.
-pub const null_desc_index: u16 = 0x00;
 /// Index of the kernel data segment.
 pub const kernel_ds_index: u16 = 0x01;
 /// Index of the kernel code segment.
@@ -33,7 +31,6 @@ pub fn init() void {
     // Init GDT.
     gdtr.base = &gdt;
 
-    gdt[null_desc_index] = SegmentDescriptor.newNull();
     gdt[kernel_cs_index] = SegmentDescriptor.new(
         true,
         false,
