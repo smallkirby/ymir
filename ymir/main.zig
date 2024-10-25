@@ -1,12 +1,16 @@
 const std = @import("std");
+const log = std.log.scoped(.main);
 
 const surtr = @import("surtr");
 const ymir = @import("ymir");
+const klog = ymir.klog;
 const serial = ymir.serial;
 const arch = ymir.arch;
 
 /// Guard page placed below the kernel stack.
 extern const __stackguard_lower: [*]const u8;
+
+pub const std_options = klog.default_log_options;
 
 /// Kernel entry point called by surtr.
 /// The function switches stack from the surtr stack to the kernel stack.
@@ -33,10 +37,12 @@ export fn kernelTrampoline(boot_info: surtr.BootInfo) callconv(.Win64) noreturn 
 fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Initialize the serial console and logger.
     const sr = serial.init();
-    sr.writeString("Hello, Ymir!\n");
+    klog.init(sr);
+    log.info("Booting Ymir...", .{});
 
     // Validate the boot info.
     validateBootInfo(boot_info) catch {
+        log.err("Invalid boot info", .{});
         return error.InvalidBootInfo;
     };
 

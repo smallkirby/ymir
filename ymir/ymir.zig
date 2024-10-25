@@ -1,5 +1,6 @@
 pub const arch = @import("arch.zig");
 pub const bits = @import("bits.zig");
+pub const klog = @import("log.zig");
 pub const serial = @import("serial.zig");
 
 const std = @import("std");
