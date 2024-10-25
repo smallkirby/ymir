@@ -81,6 +81,7 @@ fn loadKernelDs() void {
             .rpl = 0,
             .index = kernel_ds_index,
           }))),
+        : "di"
     );
 }
 
