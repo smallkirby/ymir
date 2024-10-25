@@ -40,6 +40,11 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     klog.init(sr);
     log.info("Booting Ymir...", .{});
 
+    // Initialize GDT.
+    // It switches GDT from the one prepared by surtr to the ymir GDT.
+    arch.gdt.init();
+    log.info("Initialized GDT.", .{});
+
     // Validate the boot info.
     validateBootInfo(boot_info) catch {
         log.err("Invalid boot info", .{});

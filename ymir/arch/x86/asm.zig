@@ -49,6 +49,14 @@ pub inline fn outl(value: u32, port: u16) void {
     );
 }
 
+pub inline fn lgdt(gdtr: u64) void {
+    asm volatile (
+        \\lgdt (%[gdtr])
+        :
+        : [gdtr] "r" (gdtr),
+    );
+}
+
 /// Pause the CPU for a short period of time.
 pub fn relax() void {
     asm volatile ("rep; nop");
