@@ -57,6 +57,26 @@ pub inline fn lgdt(gdtr: u64) void {
     );
 }
 
+pub inline fn lidt(idtr: u64) void {
+    asm volatile (
+        \\lidt (%[idtr])
+        :
+        : [idtr] "r" (idtr),
+    );
+}
+
+pub inline fn cli() void {
+    asm volatile ("cli");
+}
+
+pub inline fn sti() void {
+    asm volatile ("sti");
+}
+
+pub inline fn hlt() void {
+    asm volatile ("hlt");
+}
+
 /// Pause the CPU for a short period of time.
 pub fn relax() void {
     asm volatile ("rep; nop");

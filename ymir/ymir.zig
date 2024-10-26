@@ -6,6 +6,12 @@ pub const serial = @import("serial.zig");
 const std = @import("std");
 const testing = std.testing;
 
+/// Halt endlessly with interrupts disabled.
+pub fn endlessHalt() noreturn {
+    arch.disableIntr();
+    while (true) arch.halt();
+}
+
 test {
     testing.refAllDeclsRecursive(@This());
 }
