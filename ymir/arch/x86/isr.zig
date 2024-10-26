@@ -54,8 +54,6 @@ pub const Context = packed struct {
     rip: u64,
     cs: u64,
     rflags: u64,
-    rsp: u64,
-    ss: u64,
 };
 
 /// Structure holding general purpose registers as saved by PUSHA.
@@ -79,7 +77,7 @@ const Registers = packed struct {
 };
 
 /// Zig entry point of the interrupt handler.
-export fn intrZigEntry(ctx: *Context) void {
+export fn intrZigEntry(ctx: *Context) callconv(.C) void {
     intr.dispatch(ctx);
 }
 
@@ -137,17 +135,10 @@ export fn isrCommon() callconv(.Naked) void {
     );
 
     // Push the context and call the handler.
-    // NOTE: I'm not sure but we have to put context address both to RDI and stack.
     asm volatile (
         \\pushq %%rsp
         \\popq %%rdi
-        \\pushq %%rdi
         \\call  intrZigEntry
-    );
-
-    // Handler function must return the saved stack pointer, so restore it.
-    asm volatile (
-        \\add  $0x8, %%rsp
     );
 
     // Remove general-purpose registers, error code, and vector from the stack.

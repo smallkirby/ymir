@@ -134,7 +134,6 @@ fn unhandledHandler(context: *Context) void {
     });
     log.err("Error Code: 0x{X}", .{context.error_code});
     log.err("RIP    : 0x{X:0>16}", .{context.rip});
-    log.err("RSP    : 0x{X:0>16}", .{context.rsp});
     log.err("EFLAGS : 0x{X:0>16}", .{context.rflags});
     log.err("RAX    : 0x{X:0>16}", .{context.registers.rax});
     log.err("RBX    : 0x{X:0>16}", .{context.registers.rbx});
@@ -152,7 +151,6 @@ fn unhandledHandler(context: *Context) void {
     log.err("R14    : 0x{X:0>16}", .{context.registers.r14});
     log.err("R15    : 0x{X:0>16}", .{context.registers.r15});
     log.err("CS     : 0x{X:0>4}", .{context.cs});
-    log.err("SS     : 0x{X:0>4}", .{context.ss});
 
     ymir.endlessHalt();
 }
