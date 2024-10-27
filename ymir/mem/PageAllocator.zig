@@ -12,6 +12,7 @@ const MemoryMap = surtr.MemoryMap;
 const MemoryDescriptorIterator = surtr.MemoryDescriptorIterator;
 
 const ymir = @import("ymir");
+const bits = ymir.bits;
 const mem = ymir.mem;
 const spin = ymir.spin;
 const arch = ymir.arch;
@@ -78,22 +79,17 @@ pub fn newUninit() Self {
 
 /// Initialize the allocator.
 /// This function MUST be called before the direct mapping w/ offset 0x0 is unmapped.
-pub fn init(self: *PageAllocator, map_: MemoryMap) void {
+pub fn init(self: *PageAllocator, map: MemoryMap) void {
     const mask = self.lock.lockSaveIrq();
     defer self.lock.unlockRestoreIrq(mask);
 
-    var avail_end: Phys = 0;
-
-    // Replace the physical address with the virtual address.
-    var map = map_;
-    map.descriptors = @ptrFromInt(p2v(map.descriptors));
     self.memmap = map;
+    var avail_end: Phys = 0;
 
     // Scan memory map and mark usable regions.
     var desc_iter = MemoryDescriptorIterator.new(map);
     while (true) {
         const desc: *uefi.tables.MemoryDescriptor = desc_iter.next() orelse break;
-        if (desc.type == .ReservedMemoryType) continue;
 
         // Mark holes between regions as allocated (used).
         if (avail_end < desc.physical_start) {
@@ -153,15 +149,15 @@ const Status = enum(u1) {
 fn get(self: *Self, frame: FrameId) Status {
     const line_index = frame / bits_per_mapline;
     const bit_index: u6 = @truncate(frame % bits_per_mapline);
-    return Status.from(self.bitmap[line_index] & (@as(MapLineType, 1) << bit_index) != 0);
+    return Status.from(self.bitmap[line_index] & bits.tobit(MapLineType, bit_index) != 0);
 }
 
 fn set(self: *Self, frame: FrameId, status: Status) void {
     const line_index = frame / bits_per_mapline;
     const bit_index: u6 = @truncate(frame % bits_per_mapline);
     switch (status) {
-        .used => self.bitmap[line_index] |= (@as(MapLineType, 1) << bit_index),
-        .unused => self.bitmap[line_index] &= ~(@as(MapLineType, 1) << bit_index),
+        .used => self.bitmap[line_index] |= bits.tobit(MapLineType, bit_index),
+        .unused => self.bitmap[line_index] &= ~bits.tobit(MapLineType, bit_index),
     }
 }
 
