@@ -27,9 +27,6 @@ const MemoryMap = surtr.MemoryMap;
 const ymir = @import("ymir");
 const arch = ymir.arch;
 
-/// Temporary page allocator.
-/// This allocator should be used until the general page allocator is initialized.
-pub const BootstrapPageAllocator = @import("mem/BootstrapPageAllocator.zig");
 /// Page allocator.
 pub const page_allocator = Allocator{
     .ptr = &page_allocator_instance,
@@ -115,7 +112,7 @@ pub const isCanonical = switch (builtin.target.cpu.arch) {
 /// Discard the initial direct mapping and construct Ymir's page tables.
 /// It creates two mappings: direct mapping and kernel text mapping.
 /// For the detail, refer to this module documentation.
-pub fn reconstructMapping() !void {
+pub fn reconstructMapping(allocator: Allocator) !void {
     arch.disableIntr();
     defer arch.enableIntr();
 
@@ -129,16 +126,19 @@ pub fn reconstructMapping() !void {
     }
 
     log.debug("Cloning UEFI page tables...", .{});
-    try arch.page.cloneUefiPageTables();
+    try arch.page.cloneUefiPageTables(allocator);
     // --- UEFI page tables are cloned. The initial direct mapping is still in use. ---
     log.debug("Creating new page tables...", .{});
-    try arch.page.directOffsetMap();
+    try arch.page.directOffsetMap(allocator);
     // --- Direct mapping is created. Now, the initial direct mapping can be discarded. ---
     log.debug("Unmapping initial direct mapping...", .{});
     try arch.page.unmapStraightMap();
     // --- The initial direct mapping is discarded. ---
 
     mapping_reconstructed.store(.inited, .release);
+
+    // Notify that BootServicesData region is no longer needed.
+    page_allocator_instance.discardBootService();
 }
 
 /// Translate the given virtual address to physical address.

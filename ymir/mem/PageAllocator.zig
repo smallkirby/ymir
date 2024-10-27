@@ -1,9 +1,5 @@
 //! Page allocator.
 //!
-//! This allocator can be used after the necessary structures (eg. GDT, Page Tables)
-//! are copied to ymir region frmo surtr region.
-//! This allocator is initialized using BootstrapPageAllocator.
-//!
 //! This allocator allocates pages from direct map region.
 //! Therefore, returned pages are ensured to be physically contiguous.
 
@@ -14,7 +10,6 @@ const Allocator = std.mem.Allocator;
 const surtr = @import("surtr");
 const MemoryMap = surtr.MemoryMap;
 const MemoryDescriptorIterator = surtr.MemoryDescriptorIterator;
-const BootstrapPageAllocator = @import("BootstrapPageAllocator.zig");
 
 const ymir = @import("ymir");
 const mem = ymir.mem;
@@ -69,6 +64,9 @@ bitmap: BitMap = undefined,
 /// Spin lock.
 lock: spin.SpinLock = spin.SpinLock{},
 
+/// Memory map provided by UEFI.
+memmap: MemoryMap = undefined,
+
 /// Instantiate an uninitialized PageAllocator.
 /// Returned instance must be initialized by calling `init`.
 pub fn newUninit() Self {
@@ -88,7 +86,8 @@ pub fn init(self: *PageAllocator, map_: MemoryMap) void {
 
     // Replace the physical address with the virtual address.
     var map = map_;
-    map.descriptors = @ptrFromInt(ymir.mem.phys2virt(map.descriptors));
+    map.descriptors = @ptrFromInt(p2v(map.descriptors));
+    self.memmap = map;
 
     // Scan memory map and mark usable regions.
     var desc_iter = MemoryDescriptorIterator.new(map);
@@ -102,7 +101,7 @@ pub fn init(self: *PageAllocator, map_: MemoryMap) void {
         }
         // Mark the region described by the descriptor as used or unused.
         const phys_end = desc.physical_start + desc.number_of_pages * page_size;
-        if (surtr.isUsableMemory(desc)) {
+        if (isUsableMemory(desc)) {
             avail_end = phys_end;
             self.markNotUsed(phys2frame(desc.physical_start), desc.number_of_pages);
         } else {
@@ -111,16 +110,20 @@ pub fn init(self: *PageAllocator, map_: MemoryMap) void {
 
         self.frame_end = phys2frame(avail_end);
     }
+}
 
-    // Mark pages allocated by BootstrapPageAllocator as used.
-    var inuse_page_node = BootstrapPageAllocator.getAllocatedPages();
-    while (inuse_page_node != null) : (inuse_page_node = inuse_page_node.?.next) {
-        const phys = inuse_page_node.?.data;
-        self.markAllocated(phys2frame(phys), 1);
+/// Notify that BootServicesData region is no longer needed.
+/// This function makes these regions available for the page allocator.
+pub fn discardBootService(self: *PageAllocator) void {
+    self.memmap.descriptors = @ptrFromInt(p2v(self.memmap.descriptors));
+    var desc_iter = MemoryDescriptorIterator.new(self.memmap);
+    while (true) {
+        const desc: *uefi.tables.MemoryDescriptor = desc_iter.next() orelse break;
+        if (desc.type != .BootServicesData) continue;
+
+        const start = desc.physical_start;
+        self.markNotUsed(phys2frame(start), desc.number_of_pages);
     }
-
-    // Finalize BootstrapPageAllocator.
-    BootstrapPageAllocator.deinit();
 }
 
 fn markAllocated(self: *Self, frame: FrameId, num_frames: usize) void {
@@ -244,4 +247,17 @@ inline fn phys2frame(phys: Phys) FrameId {
 
 inline fn frame2phys(frame: FrameId) Phys {
     return frame * bytes_per_frame;
+}
+
+/// Check if the memory region described by the descriptor is usable for ymir kernel.
+/// Note that these memory areas may contain crucial data for the kernel,
+/// including page tables, stack, and GDT.
+/// You MUST copy them before using the area.
+inline fn isUsableMemory(descriptor: *uefi.tables.MemoryDescriptor) bool {
+    return switch (descriptor.type) {
+        .ConventionalMemory,
+        .BootServicesCode,
+        => true,
+        else => false,
+    };
 }

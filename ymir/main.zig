@@ -12,7 +12,6 @@ const klog = ymir.klog;
 const arch = ymir.arch;
 const mem = ymir.mem;
 const vmx = ymir.vmx;
-const BootstrapPageAllocator = ymir.mem.BootstrapPageAllocator;
 
 const page_size = mem.page_size;
 
@@ -71,19 +70,13 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     arch.intr.init();
     log.info("Initialized IDT.", .{});
 
-    // Initialize BootstrapPageAllocator.
-    BootstrapPageAllocator.init(memory_map);
-    log.info("Initialized early stage page allocator.", .{});
-
-    // Reconstruct memory mapping from the one provided by UEFI and Sutr.
-    // This operation must be done before initializing allocators other than BootstrapPageAllocator,
-    // that allocate pages from any usable regions.
-    log.info("Reconstructing memory mapping...", .{});
-    try mem.reconstructMapping();
-
     // Initialize page allocator.
     ymir.mem.initPageAllocator(memory_map);
     log.info("Initialized page allocator.", .{});
+
+    // Reconstruct memory mapping from the one provided by UEFI and Sutr.
+    log.info("Reconstructing memory mapping...", .{});
+    try mem.reconstructMapping(mem.page_allocator);
 
     // Now, stack, GDT, and page tables are switched to the ymir's ones.
     // We are ready to destroy any usable regions in UEFI memory map.

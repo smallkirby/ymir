@@ -24,7 +24,6 @@ const am = @import("asm.zig");
 const ymir = @import("ymir");
 const mem = ymir.mem;
 
-const BootstrapPageAllocator = mem.BootstrapPageAllocator;
 const direct_map_base = ymir.direct_map_base;
 const direct_map_size = ymir.direct_map_size;
 const virt2phys = mem.virt2phys;
@@ -249,13 +248,13 @@ pub fn guestTranslateWalk(gva: Virt, cr3: Phys, guest_base: Phys) ?Phys {
 /// Recursively clone page tables provided by UEFI.
 /// After calling this function, cloned page tables are set to CR3.
 /// Paged used for the old page tables can be safely freed / reused.
-pub fn cloneUefiPageTables() PageError!void {
+pub fn cloneUefiPageTables(allocator: Allocator) PageError!void {
     // Lv4 table provided by UEFI.
     const lv4tbl = getLv4Table(am.readCr3());
 
     // New Lv4 table. Assuming the initial direct mapping is still valid and VA is equal to PA.
     if (phys2virt(0) != 0) @panic("Invalid page mapping phase for cloning UEFI page tables");
-    const new_lv4ptr: [*]Lv4Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+    const new_lv4ptr: [*]Lv4Entry = @ptrCast(try allocatePage(allocator));
     const new_lv4tbl = new_lv4ptr[0..num_table_entries];
     @memcpy(new_lv4tbl, lv4tbl);
 
@@ -263,7 +262,7 @@ pub fn cloneUefiPageTables() PageError!void {
     for (new_lv4tbl) |*lv4ent| {
         if (lv4ent.present) {
             const lv3tbl = getLv3Table(lv4ent.address());
-            const new_lv3tbl = try cloneLevel3Table(lv3tbl);
+            const new_lv3tbl = try cloneLevel3Table(lv3tbl, allocator);
             lv4ent.phys = @truncate(virt2phys(new_lv3tbl.ptr) >> page_shift_4k);
         }
     }
@@ -271,8 +270,8 @@ pub fn cloneUefiPageTables() PageError!void {
     am.loadCr3(@intFromPtr(new_lv4tbl));
 }
 
-fn cloneLevel3Table(lv3_table: []Lv3Entry) PageError![]Lv3Entry {
-    const new_lv3ptr: [*]Lv3Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+fn cloneLevel3Table(lv3_table: []Lv3Entry, allocator: Allocator) PageError![]Lv3Entry {
+    const new_lv3ptr: [*]Lv3Entry = @ptrCast(try allocatePage(allocator));
     const new_lv3tbl = new_lv3ptr[0..num_table_entries];
     @memcpy(new_lv3tbl, lv3_table);
 
@@ -281,15 +280,15 @@ fn cloneLevel3Table(lv3_table: []Lv3Entry) PageError![]Lv3Entry {
         if (lv3ent.ps) continue;
 
         const lv2tbl = getLv2Table(lv3ent.address());
-        const new_lv2tbl = try cloneLevel2Table(lv2tbl);
+        const new_lv2tbl = try cloneLevel2Table(lv2tbl, allocator);
         lv3ent.phys = @truncate(virt2phys(new_lv2tbl.ptr) >> page_shift_4k);
     }
 
     return new_lv3tbl;
 }
 
-fn cloneLevel2Table(lv2_table: []Lv2Entry) PageError![]Lv2Entry {
-    const new_lv2ptr: [*]Lv2Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+fn cloneLevel2Table(lv2_table: []Lv2Entry, allocator: Allocator) PageError![]Lv2Entry {
+    const new_lv2ptr: [*]Lv2Entry = @ptrCast(try allocatePage(allocator));
     const new_lv2tbl = new_lv2ptr[0..num_table_entries];
     @memcpy(new_lv2tbl, lv2_table);
 
@@ -298,15 +297,15 @@ fn cloneLevel2Table(lv2_table: []Lv2Entry) PageError![]Lv2Entry {
         if (lv2ent.ps) continue;
 
         const lv1tbl = getLv1Table(lv2ent.address());
-        const new_lv1tbl = try cloneLevel1Table(lv1tbl);
+        const new_lv1tbl = try cloneLevel1Table(lv1tbl, allocator);
         lv2ent.phys = @truncate(virt2phys(new_lv1tbl.ptr) >> page_shift_4k);
     }
 
     return new_lv2tbl;
 }
 
-fn cloneLevel1Table(lv1_table: []Lv1Entry) PageError![]Lv1Entry {
-    const new_lv1ptr: [*]Lv1Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+fn cloneLevel1Table(lv1_table: []Lv1Entry, allocator: Allocator) PageError![]Lv1Entry {
+    const new_lv1ptr: [*]Lv1Entry = @ptrCast(try allocatePage(allocator));
     const new_lv1tbl = new_lv1ptr[0..num_table_entries];
     @memcpy(new_lv1tbl, lv1_table);
 
@@ -315,7 +314,7 @@ fn cloneLevel1Table(lv1_table: []Lv1Entry) PageError![]Lv1Entry {
 
 /// Directly map all memory with offset.
 /// After calling this function, it is safe to unmap direct mappings.
-pub fn directOffsetMap() PageError!void {
+pub fn directOffsetMap(allocator: Allocator) PageError!void {
     comptime {
         if (direct_map_size % page_size_512gb != 0) {
             @compileError("direct_map_size must be multiple of 512GB");
@@ -333,7 +332,7 @@ pub fn directOffsetMap() PageError!void {
     for (lv4idx_start..lv4idx_end, 0..) |lv4idx, i| {
         if (lv4tbl[lv4idx].present)
             @panic("UEFI mapping overlaps with direct mapping");
-        const lv3tbl: [*]Lv3Entry = @ptrCast(try BootstrapPageAllocator.allocatePage());
+        const lv3tbl: [*]Lv3Entry = @ptrCast(try allocatePage(allocator));
         for (0..num_table_entries) |lv3idx| {
             lv3tbl[lv3idx] = Lv3Entry.newMapPage(
                 (i << lv4_shift) + (lv3idx << lv3_shift),
@@ -471,6 +470,10 @@ pub fn showPageTable(lin_addr: Virt, logger: anytype) void {
         logger.info("Lv1: 0x{X:0>16}", .{@intFromPtr(lv1_table)});
         logger.info("\t[{d}]: 0x{X:0>16}", .{ pt_index, std.mem.bytesAsValue(u64, &lv1_entry).* });
     }
+}
+
+fn allocatePage(allocator: Allocator) PageError![*]align(page_size_4k) u8 {
+    return (allocator.alignedAlloc(u8, page_size_4k, page_size_4k) catch return PageError.OutOfMemory).ptr;
 }
 
 const TableLevel = enum {
