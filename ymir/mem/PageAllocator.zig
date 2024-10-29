@@ -79,7 +79,7 @@ pub fn newUninit() Self {
 
 /// Initialize the allocator.
 /// This function MUST be called before the direct mapping w/ offset 0x0 is unmapped.
-pub fn init(self: *PageAllocator, map: MemoryMap) void {
+pub fn init(self: *Self, map: MemoryMap) void {
     const mask = self.lock.lockSaveIrq();
     defer self.lock.unlockRestoreIrq(mask);
 
@@ -110,7 +110,7 @@ pub fn init(self: *PageAllocator, map: MemoryMap) void {
 
 /// Notify that BootServicesData region is no longer needed.
 /// This function makes these regions available for the page allocator.
-pub fn discardBootService(self: *PageAllocator) void {
+pub fn discardBootService(self: *Self) void {
     self.memmap.descriptors = @ptrFromInt(p2v(self.memmap.descriptors));
     var desc_iter = MemoryDescriptorIterator.new(self.memmap);
     while (true) {
@@ -162,7 +162,7 @@ fn set(self: *Self, frame: FrameId, status: Status) void {
 }
 
 /// Allocate physically contiguous and aligned pages.
-pub fn allocPages(self: *PageAllocator, num_pages: usize, align_size: usize) ?[]u8 {
+pub fn allocPages(self: *Self, num_pages: usize, align_size: usize) ?[]u8 {
     const mask = self.lock.lockSaveIrq();
     defer self.lock.unlockRestoreIrq(mask);
 
@@ -197,7 +197,7 @@ fn allocate(ctx: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
     //  because the allocator always returns a page-aligned address
     //  and Zig does not assumes an align larger than a page size is not requested for Allocator interface.
 
-    const self: *PageAllocator = @alignCast(@ptrCast(ctx));
+    const self: *Self = @alignCast(@ptrCast(ctx));
     const mask = self.lock.lockSaveIrq();
     defer self.lock.unlockRestoreIrq(mask);
 
@@ -223,7 +223,7 @@ fn free(ctx: *anyopaque, slice: []u8, _: u8, _: usize) void {
     // NOTE: 3rd argument (`ptr_align`) can be safely ignored for the page allocator.
     //  See the comment in `allocate` function.
 
-    const self: *PageAllocator = @alignCast(@ptrCast(ctx));
+    const self: *Self = @alignCast(@ptrCast(ctx));
     const mask = self.lock.lockSaveIrq();
     defer self.lock.unlockRestoreIrq(mask);
 
