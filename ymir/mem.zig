@@ -78,17 +78,8 @@ pub const page_mask_2mb: u64 = page_size_2mb - 1;
 /// Mask for a 1G page.
 pub const page_mask_1gb: u64 = page_size_1gb - 1;
 
-/// Status of the page table construction.
-const MappingStatus = enum(u8) {
-    /// Using the direct mapping provided by UEFI.
-    uninited,
-    /// Remapping is in progress.
-    remapping,
-    /// Using the new page tables.
-    inited,
-};
-/// Current status.
-var mapping_reconstructed = atomic.Value(MappingStatus).init(.uninited);
+/// Status of the page remap.
+var mapping_reconstructed = atomic.Value(bool).init(false);
 
 /// Initialize the page allocator.
 /// You MUST call this function before using `page_allocator`.
@@ -116,26 +107,10 @@ pub fn reconstructMapping(allocator: Allocator) !void {
     arch.disableIntr();
     defer arch.enableIntr();
 
-    if (mapping_reconstructed.cmpxchgWeak(
-        .uninited,
-        .remapping,
-        .acq_rel,
-        .monotonic,
-    ) != null) {
-        @panic("Mapping reconstruction is being called twice.");
-    }
-
-    log.debug("Cloning UEFI page tables...", .{});
-    try arch.page.cloneUefiPageTables(allocator);
-    // --- UEFI page tables are cloned. The initial direct mapping is still in use. ---
-    log.debug("Creating new page tables...", .{});
     try arch.page.directOffsetMap(allocator);
-    // --- Direct mapping is created. Now, the initial direct mapping can be discarded. ---
-    log.debug("Unmapping initial direct mapping...", .{});
-    try arch.page.unmapStraightMap();
-    // --- The initial direct mapping is discarded. ---
 
-    mapping_reconstructed.store(.inited, .release);
+    // Remap pages.
+    mapping_reconstructed.store(true, .release);
 
     // Notify that BootServicesData region is no longer needed.
     page_allocator_instance.discardBootService();
@@ -150,7 +125,7 @@ pub fn virt2phys(addr: anytype) Phys {
         .Pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
-    return if (mapping_reconstructed.load(.acquire) != .inited) b: {
+    return if (!mapping_reconstructed.load(.acquire)) b: {
         break :b value;
     } else if (value < ymir.kernel_base) b: {
         // Direct mapping region.
@@ -170,7 +145,7 @@ pub fn phys2virt(addr: anytype) Virt {
         .Pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
-    return if (mapping_reconstructed.load(.acquire) != .inited) b: {
+    return if (!mapping_reconstructed.load(.acquire)) b: {
         break :b value;
     } else b: {
         break :b value + ymir.direct_map_base;
@@ -189,7 +164,7 @@ test "address translation" {
     const direct_map_base = ymir.direct_map_base;
     const kernel_base = ymir.kernel_base;
 
-    mapping_reconstructed.store(.inited, .release);
+    mapping_reconstructed.store(true, .release);
 
     // virt -> phys
     try testing.expectEqual(0x0, virt2phys(direct_map_base));

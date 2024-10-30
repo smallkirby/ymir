@@ -1,19 +1,3 @@
-//! Provides kernel page table and memory management functionalities.
-//!
-//! Before calling `directOffsetMap()`, ymir uses page tables provided by surtr bootloader.
-//! That directly maps all available physical memory to virtual memory with offset 0x0.
-//! Additionally, surtr maps the ymir loadable image to the virtual address
-//! where the ymir ELF requested to load.
-//!
-//! After calling `directOffsetMap()`,
-//! ymir maps all available physical memory to the virtual address with offset `direct_map_base`.
-//! These region can be used to access physical memory.
-//!
-//! After calling `unmapStraightMap()`,
-//! ymir unmaps the straight map region starting at address 0x0.
-//! It means that ymir no longer uses the memory map provided by UEFI,
-//! and has to use the direct map region to access physical memory.
-
 const std = @import("std");
 const log = std.log.scoped(.archp);
 const Allocator = std.mem.Allocator;
@@ -69,6 +53,15 @@ const num_table_entries: usize = 512;
 const implemented_bit_length = 48;
 /// Most significant implemented bit in 0-origin.
 const msi_bit = 47;
+
+comptime {
+    if (ymir.direct_map_base % page_size_512gb != 0) {
+        @compileError("direct_map_base must be multiple of 512GB");
+    }
+    if (ymir.direct_map_size % page_size_512gb != 0) {
+        @compileError("direct_map_size must be multiple of 512GB");
+    }
+}
 
 /// Page type based on its size.
 pub const PageSize = enum {
@@ -245,31 +238,6 @@ pub fn guestTranslateWalk(gva: Virt, cr3: Phys, guest_base: Phys) ?Phys {
     return lv1ent.address() + (gva & page_mask_4k);
 }
 
-/// Recursively clone page tables provided by UEFI.
-/// After calling this function, cloned page tables are set to CR3.
-/// Paged used for the old page tables can be safely freed / reused.
-pub fn cloneUefiPageTables(allocator: Allocator) PageError!void {
-    // Lv4 table provided by UEFI.
-    const lv4tbl = getLv4Table(am.readCr3());
-
-    // New Lv4 table. Assuming the initial direct mapping is still valid and VA is equal to PA.
-    if (phys2virt(0) != 0) @panic("Invalid page mapping phase for cloning UEFI page tables");
-    const new_lv4ptr: [*]Lv4Entry = @ptrCast(try allocatePage(allocator));
-    const new_lv4tbl = new_lv4ptr[0..num_table_entries];
-    @memcpy(new_lv4tbl, lv4tbl);
-
-    // Recursively clone tables.
-    for (new_lv4tbl) |*lv4ent| {
-        if (lv4ent.present) {
-            const lv3tbl = getLv3Table(lv4ent.address());
-            const new_lv3tbl = try cloneLevel3Table(lv3tbl, allocator);
-            lv4ent.phys = @truncate(virt2phys(new_lv3tbl.ptr) >> page_shift_4k);
-        }
-    }
-
-    am.loadCr3(@intFromPtr(new_lv4tbl));
-}
-
 fn cloneLevel3Table(lv3_table: []Lv3Entry, allocator: Allocator) PageError![]Lv3Entry {
     const new_lv3ptr: [*]Lv3Entry = @ptrCast(try allocatePage(allocator));
     const new_lv3tbl = new_lv3ptr[0..num_table_entries];
@@ -315,23 +283,15 @@ fn cloneLevel1Table(lv1_table: []Lv1Entry, allocator: Allocator) PageError![]Lv1
 /// Directly map all memory with offset.
 /// After calling this function, it is safe to unmap direct mappings.
 pub fn directOffsetMap(allocator: Allocator) PageError!void {
-    comptime {
-        if (direct_map_size % page_size_512gb != 0) {
-            @compileError("direct_map_size must be multiple of 512GB");
-        }
-        if (direct_map_base % page_size_512gb != 0) {
-            @compileError("direct_map_base must be multiple of 512GB");
-        }
-    }
+    const lv4tbl_ptr: [*]Lv4Entry = @ptrCast(try allocatePage(allocator));
+    const lv4tbl = lv4tbl_ptr[0..num_table_entries];
+    @memset(lv4tbl, std.mem.zeroes(Lv4Entry));
 
-    const lv4tbl = getLv4Table(am.readCr3());
     const lv4idx_start = (direct_map_base >> lv4_shift) & index_mask;
     const lv4idx_end = lv4idx_start + (direct_map_size >> lv4_shift);
 
     // Create the direct mapping using 1GiB pages.
-    for (lv4idx_start..lv4idx_end, 0..) |lv4idx, i| {
-        if (lv4tbl[lv4idx].present)
-            @panic("UEFI mapping overlaps with direct mapping");
+    for (lv4tbl[lv4idx_start..lv4idx_end], 0..) |*lv4ent, i| {
         const lv3tbl: [*]Lv3Entry = @ptrCast(try allocatePage(allocator));
         for (0..num_table_entries) |lv3idx| {
             lv3tbl[lv3idx] = Lv3Entry.newMapPage(
@@ -339,33 +299,24 @@ pub fn directOffsetMap(allocator: Allocator) PageError!void {
                 true,
             );
         }
-        lv4tbl[lv4idx] = Lv4Entry.newMapTable(lv3tbl, true);
+        lv4ent.* = Lv4Entry.newMapTable(lv3tbl, true);
     }
 
-    // Flush all TLBs.
-    reloadCr3();
-}
-
-/// Unmap straight map region starting at address 0x0.
-/// Note that after calling this function,
-/// BootstrapPageAllocator returns invalid virtual address because they are unmapped by this function.
-pub fn unmapStraightMap() PageError!void {
-    const lv4_table = getLv4Table(am.readCr3());
-    const lv4idx_end = (direct_map_base >> lv4_shift) & index_mask;
-
-    for (lv4_table[0..lv4idx_end]) |*lv4_entry| {
-        if (!lv4_entry.present) continue;
-        lv4_entry.present = false;
+    // Recursively clone tables for the kernel region.
+    const old_lv4tbl = getLv4Table(am.readCr3());
+    for (lv4idx_end..num_table_entries) |lv4idx| {
+        if (old_lv4tbl[lv4idx].present) {
+            const lv3tbl = getLv3Table(old_lv4tbl[lv4idx].address());
+            const new_lv3tbl = try cloneLevel3Table(lv3tbl, allocator);
+            lv4tbl[lv4idx] = Lv4Entry.newMapTable(new_lv3tbl.ptr, true);
+        }
     }
 
-    // Flush all TLBs.
-    reloadCr3();
-}
+    var cr3 = @intFromPtr(lv4tbl) & ~@as(u64, 0xFFF);
+    cr3 |= 0x001; // PCID // TODO
 
-/// Reload CR3 register to flush all TLBs.
-fn reloadCr3() void {
-    const lv4_table = getLv4Table(am.readCr3());
-    am.loadCr3(virt2phys(lv4_table.ptr));
+    // Set new lv4-table and flush all TLBs.
+    am.loadCr3(cr3);
 }
 
 /// Change the page attribute.
