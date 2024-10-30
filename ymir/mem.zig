@@ -107,7 +107,7 @@ pub fn reconstructMapping(allocator: Allocator) !void {
     arch.disableIntr();
     defer arch.enableIntr();
 
-    try arch.page.directOffsetMap(allocator);
+    try arch.page.reconstruct(allocator);
 
     // Remap pages.
     mapping_reconstructed.store(true, .release);

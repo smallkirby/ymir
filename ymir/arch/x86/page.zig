@@ -282,7 +282,7 @@ fn cloneLevel1Table(lv1_table: []Lv1Entry, allocator: Allocator) PageError![]Lv1
 
 /// Directly map all memory with offset.
 /// After calling this function, it is safe to unmap direct mappings.
-pub fn directOffsetMap(allocator: Allocator) PageError!void {
+pub fn reconstruct(allocator: Allocator) PageError!void {
     const lv4tbl_ptr: [*]Lv4Entry = @ptrCast(try allocatePage(allocator));
     const lv4tbl = lv4tbl_ptr[0..num_table_entries];
     @memset(lv4tbl, std.mem.zeroes(Lv4Entry));
