@@ -692,7 +692,7 @@ pub const Cr4 = packed struct(u64) {
     de: bool,
     /// Page size extension.
     pse: bool,
-    /// Physical address extension.
+    /// Physical address extension. If unset, 32-bit paging.
     pae: bool,
     /// Machine check exception.
     mce: bool,
@@ -706,8 +706,8 @@ pub const Cr4 = packed struct(u64) {
     osxmmexcpt: bool,
     /// Virtual machine extensions.
     umip: bool,
-    /// Reserved.
-    _reserved: u1 = 0,
+    /// 57-bit linear addresses. If set, CPU uses 5-level paging.
+    la57: bool = false,
     /// Virtual machine extensions enable.
     vmxe: bool,
     /// Safer mode extensions enable.

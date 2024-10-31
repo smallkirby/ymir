@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 
 const arch = @import("arch.zig");
 const am = @import("asm.zig");
+const cpuid = @import("cpuid.zig");
 
 const ymir = @import("ymir");
 const mem = ymir.mem;
@@ -313,7 +314,14 @@ pub fn reconstruct(allocator: Allocator) PageError!void {
     }
 
     var cr3 = @intFromPtr(lv4tbl) & ~@as(u64, 0xFFF);
-    cr3 |= 0x001; // PCID // TODO
+
+    // Enable PCID.
+    // Note that KVM disallows enabling PCID when CR3[11:0]!=000H though it is not documented in SDM.
+    // Anyway on KVM, we have to enable PCID before loading CR3 that has CPUID.
+    // See https://github.com/torvalds/linux/blob/0fc810ae3ae110f9e2fcccce80fc8c8d62f97907/arch/x86/kvm/x86.c#L1395
+    if (enablePcid()) {
+        cr3 |= 0x001; // PCID // TODO
+    }
 
     // Set new lv4-table and flush all TLBs.
     am.loadCr3(cr3);
@@ -387,6 +395,18 @@ fn splitTable(T: type, ent: *T, allocator: Allocator) PageError!void {
         tbl[i] = U.newMapPage(page + i * page_size, true);
     }
     ent.* = T.newMapTable(tbl.ptr, true);
+}
+
+/// Enable PCID.
+fn enablePcid() bool {
+    const cpuid_result = cpuid.Leaf.from(0x01).query(null);
+    if (ymir.bits.isset(cpuid_result.ecx, 17)) {
+        var cr4 = am.readCr4();
+        cr4.pcide = true;
+        am.loadCr4(cr4);
+
+        return true;
+    } else return false;
 }
 
 /// Show the process of the address translation for the given linear address.
@@ -480,7 +500,9 @@ fn EntryBase(table_level: TableLevel) type {
         restart: bool = false,
         /// When the entry maps a page, physical address of the page.
         /// When the entry references a page table, 4KB aligned address of the page table.
-        phys: u51,
+        phys: u21,
+        /// ReservedZ
+        _reserved: u30 = 0,
         /// Execute Disable.
         xd: bool = false,
 
