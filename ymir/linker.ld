@@ -28,11 +28,13 @@ SECTIONS {
 
     .data ALIGN(4K) : AT (ADDR(.data) - KERNEL_VADDR_BASE) {
         *(.data)
+        *(.ldata)
     } :data
 
     .bss ALIGN(4K) : AT (ADDR(.bss) - KERNEL_VADDR_BASE) {
         *(COMMON)
         *(.bss)
+        *(.lbss)
     } :bss
 
     __stackguard_upper ALIGN(4K) (NOLOAD) : AT (ADDR(__stackguard_upper) - KERNEL_VADDR_BASE) {
