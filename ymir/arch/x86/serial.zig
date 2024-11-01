@@ -82,6 +82,13 @@ pub fn getSerial(serial: *Serial, port: Ports) void {
     };
 }
 
+/// Enable serial console interrupt for Rx-available and Tx-empty.
+pub fn enableInterrupt(port: Ports) void {
+    var ie = am.inb(@intFromEnum(port) + offsets.ier);
+    ie |= 0b0000_0011; // Rx-available, Tx-empty
+    am.outb(ie, @intFromEnum(port) + offsets.ier); // Rx-available, Tx-empty
+}
+
 fn writeByteCom1(byte: u8) void {
     writeByte(byte, .com1);
 }

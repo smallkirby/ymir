@@ -7,6 +7,7 @@ const klog = ymir.klog;
 const serial = ymir.serial;
 const arch = ymir.arch;
 const mem = ymir.mem;
+const idefs = ymir.idefs;
 
 /// Guard page placed below the kernel stack.
 extern const __stackguard_lower: [*]const u8;
@@ -76,6 +77,20 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     ymir.mem.initGeneralAllocator();
     log.info("Initialized general allocator.", .{});
 
+    // Initialize PIC.
+    arch.pic.init();
+    log.info("Initialized PIC.", .{});
+
+    // Enable PIT.
+    arch.intr.registerHandler(idefs.pic_timer, blobIrqHandler);
+    arch.pic.unsetMask(.timer);
+    log.info("Enabled PIT.", .{});
+
+    // Unmask serial interrupt.
+    arch.intr.registerHandler(idefs.pic_serial1, blobIrqHandler);
+    arch.pic.unsetMask(.serial1);
+    arch.serial.enableInterrupt(.com1);
+
     while (true) asm volatile ("hlt");
 }
 
@@ -83,4 +98,10 @@ fn validateBootInfo(boot_info: surtr.BootInfo) !void {
     if (boot_info.magic != surtr.magic) {
         return error.InvalidMagic;
     }
+}
+
+fn blobIrqHandler(ctx: *arch.intr.Context) void {
+    const vector: u16 = @intCast(ctx.vector - idefs.user_intr_base);
+    log.debug("IRQ: {d}", .{vector});
+    arch.pic.notifyEoi(@enumFromInt(vector));
 }
