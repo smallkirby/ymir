@@ -6,6 +6,8 @@
 //! - https://wiki.osdev.org/8259_PIC
 //! - https://pdos.csail.mit.edu/6.828/2014/readings/hardware/8259A.pdf
 
+const std = @import("std");
+
 const ymir = @import("ymir");
 const bits = ymir.bits;
 
@@ -27,26 +29,89 @@ const secondary_command_port: u16 = 0xA0;
 /// Secondary data port
 const secondary_data_port: u16 = secondary_command_port + 1;
 
-/// Command constants
-const cmd = struct {
-    /// Indicates that ICW4 is needed.
-    const icw1_icw4 = 0x01;
-    /// Single (cascade) mode.
-    const icw1_single = 0x02;
-    /// Call address interval 4 (8).
-    const icw1_interval4 = 0x04;
-    /// Level triggered (edge) mode.
-    const icw1_level = 0x08;
-    /// Initialization command.
-    const icw1_init = 0x10;
-    /// 8086/88 mode.
-    const icw4_8086 = 0x01;
-    /// Auto EOI.
-    const icw4_auto = 0x02;
-    /// Buffered mode/secondary.
-    const icw4_buf_secondary = 0x08;
-    /// Buffered mode/primary.
-    const icw4_buf_primary = 0x0C;
+const icw = enum { icw1, icw2, icw3, icw4 };
+const ocw = enum { ocw1, ocw2, ocw3 };
+
+const Icw = union(icw) {
+    icw1: Icw1,
+    icw2: Icw2,
+    icw3: Icw3,
+    icw4: Icw4,
+
+    const Icw1 = packed struct(u8) {
+        /// ICW4 is needed.
+        icw4: bool = true,
+        /// Sigle or cascade mode.
+        single: bool = false,
+        /// CALL address interval 4 or 8.
+        interval4: bool = false,
+        /// Level triggered or edge triggered.
+        level: bool = false,
+        /// Initialization command.
+        _icw1: u1 = 1,
+        /// Unused in 8085 mode.
+        _unused: u3 = 0,
+    };
+    const Icw2 = packed struct(u8) {
+        /// Vector offset.
+        offset: u8,
+    };
+    const Icw3 = packed struct(u8) {
+        /// For primary PIC, IRQ that is cascaded.
+        /// For secondary PIC, cascade identity.
+        cascade_id: u8,
+    };
+    const Icw4 = packed struct(u8) {
+        /// 8086/8088 mode or MCS-80/85 mode.
+        mode_8086: bool = true,
+        /// Auto EOI or normal EOI.
+        auto_eoi: bool = false,
+        /// Buffered mode.
+        buf: u2 = 0,
+        /// Special fully nested mode.
+        full_nested: bool = false,
+        /// ReservedZ.
+        _reserved: u3 = 0,
+    };
+};
+
+const Ocw = union(ocw) {
+    ocw1: Ocw1,
+    ocw2: Ocw2,
+    ocw3: Ocw3,
+
+    const Ocw1 = packed struct(u8) {
+        /// Interrupt mask.
+        imr: u8,
+    };
+    const Ocw2 = packed struct(u8) {
+        /// Target IRQ.
+        level: u3 = 0,
+        /// ReservedZ.
+        _reserved: u2 = 0,
+        /// EOI
+        eoi: bool,
+        /// If set, specific EOI.
+        sl: bool,
+        /// Rotate priority.
+        rotate: bool = false,
+    };
+    const Ocw3 = packed struct(u8) {
+        /// Target register to read.
+        ris: Reg,
+        /// Read register command.
+        read: bool,
+        /// Unused in Ymir.
+        _unused1: u1 = 0,
+        /// Reserved 01.
+        _reserved1: u2 = 0b01,
+        /// Unused in Ymir.
+        _unused2: u2 = 0,
+        /// ReservedZ.
+        _reserved2: u1 = 0,
+
+        const Reg = enum(u1) { irr = 0, isr = 1 };
+    };
 };
 
 // PS/2 I/O Ports
@@ -63,51 +128,69 @@ pub fn init() void {
     defer am.sti();
 
     // Start initialization sequence.
-    am.outb(cmd.icw1_init | cmd.icw1_icw4, primary_command_port);
-    am.relax();
-    am.outb(cmd.icw1_init | cmd.icw1_icw4, secondary_command_port);
-    am.relax();
+    issue(Icw{ .icw1 = .{} }, primary_command_port);
+    issue(Icw{ .icw1 = .{} }, secondary_command_port);
 
     // Set the vector offsets.
-    am.outb(primary_vector_offset, primary_data_port);
-    am.relax();
-    am.outb(secondary_vector_offset, secondary_data_port);
-    am.relax();
+    issue(Icw{ .icw2 = .{ .offset = primary_vector_offset } }, primary_data_port);
+    issue(Icw{ .icw2 = .{ .offset = secondary_vector_offset } }, secondary_data_port);
 
     // Tell primary PIC that there is a slave PIC at IRQ2.
-    am.outb(4, primary_data_port);
-    am.relax();
+    issue(Icw{ .icw3 = .{ .cascade_id = 0b100 } }, primary_data_port);
     // Tell secondary PIC its cascade identity.
-    am.outb(2, secondary_data_port);
-    am.relax();
+    issue(Icw{ .icw3 = .{ .cascade_id = 2 } }, secondary_data_port);
 
     // Set the mode.
-    am.outb(cmd.icw4_8086, primary_data_port);
-    am.relax();
-    am.outb(cmd.icw4_8086, secondary_data_port);
-    am.relax();
+    issue(Icw{ .icw4 = .{} }, primary_data_port);
+    issue(Icw{ .icw4 = .{} }, secondary_data_port);
 
     // Mask all IRQ lines.
-    am.outb(0xFF, primary_data_port);
-    am.outb(0xFF, secondary_data_port);
+    setImr(0xFF, primary_data_port);
+    setImr(0xFF, secondary_data_port);
+}
+
+/// Issue the CW to the PIC.
+fn issue(cw: anytype, port: u16) void {
+    const T = @TypeOf(cw);
+    if (T != Icw and T != Ocw) {
+        @compileError("Unsupported type for pic.issue()");
+    }
+    switch (cw) {
+        inline else => |s| am.outb(@bitCast(s), port),
+    }
+    am.relax();
+}
+
+/// Set IMR.
+fn setImr(imr: u8, port: u16) void {
+    issue(Ocw{ .ocw1 = .{ .imr = imr } }, port);
 }
 
 /// Mask the given IRQ line.
 pub fn setMask(irq: IrqLine) void {
     const port = irq.dataPort();
-    am.outb(am.inb(port) | bits.tobit(u8, irq.delta()), port);
+    setImr(am.inb(port) | bits.tobit(u8, irq.delta()), port);
 }
 
 /// Unset the mask of the given IRQ line.
 pub fn unsetMask(irq: IrqLine) void {
     const port = irq.dataPort();
-    am.outb(am.inb(port) & ~bits.tobit(u8, irq.delta()), port);
+    setImr(am.inb(port) & ~bits.tobit(u8, irq.delta()), port);
 }
 
 /// Notify the end of interrupt (EOI) to the PIC.
 /// This function uses specific-EOI.
 pub fn notifyEoi(irq: IrqLine) void {
-    am.outb(eoiOcw2Value(irq), irq.commandPort());
+    issue(
+        Ocw{ .ocw2 = .{ .eoi = true, .sl = true, .level = irq.delta() } },
+        irq.commandPort(),
+    );
+    if (!irq.isPrimary()) {
+        issue(
+            Ocw{ .ocw2 = .{ .eoi = true, .sl = true, .level = 2 } },
+            primary_command_port,
+        );
+    }
 }
 
 /// Get IRQ mask from the PIC.
@@ -119,13 +202,8 @@ pub inline fn getIrqMask() u16 {
 
 /// Set IRQ mask to the PIC.
 pub inline fn setIrqMask(mask: u16) void {
-    am.outb(@truncate(mask), primary_data_port);
-    am.outb(@truncate(mask >> 8), secondary_data_port);
-}
-
-/// Get the OCW2 value for a specific EOI to the given IRQ.
-inline fn eoiOcw2Value(irq: IrqLine) u8 {
-    return 0x60 + irq.delta();
+    setImr(@truncate(mask), primary_data_port);
+    setImr(@truncate(mask >> 8), secondary_data_port);
 }
 
 /// Line numbers for the PIC.
@@ -179,7 +257,7 @@ pub const IrqLine = enum(u8) {
     }
 
     /// Get the offset of the IRQ within the PIC.
-    pub fn delta(self: IrqLine) u8 {
-        return if (self.isPrimary()) @intFromEnum(self) else (@intFromEnum(self) - 8);
+    pub fn delta(self: IrqLine) u3 {
+        return @intCast(if (self.isPrimary()) @intFromEnum(self) else (@intFromEnum(self) - 8));
     }
 };
