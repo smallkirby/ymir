@@ -60,6 +60,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     const guest_info = boot_info.guest_info;
     const memory_map = boot_info.memory_map;
 
+    // Enable CPUID instruction.
+    arch.enableCpuid();
+
     // Initialize GDT.
     // It switches GDT from the one prepared by surtr to the ymir GDT.
     arch.gdt.init();
@@ -98,9 +101,6 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     arch.intr.registerHandler(idefs.pic_serial1, blobIrqHandler);
     arch.pic.unsetMask(.serial1);
     arch.serial.enableInterrupt(.com1);
-
-    // Check if VMX is supported.
-    arch.enableCpuid();
 
     // Enable XSAVE features.
     arch.enableXstateFeature();
