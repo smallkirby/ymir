@@ -434,9 +434,8 @@ fn adjustControlRegisters() void {
 }
 
 /// Read VMCS revision identifier.
-fn getVmcsRevisionId() u31 {
-    const vmx_basic = am.readMsrVmxBasic();
-    return vmx_basic.vmcs_revision_id;
+inline fn getVmcsRevisionId() u31 {
+    return am.readMsrVmxBasic().vmcs_revision_id;
 }
 
 /// Puts the logical processor in VMX operation with no VMCS loaded.
@@ -784,9 +783,10 @@ const VmxonRegion = packed struct {
     zero: u1 = 0,
 
     /// Allocate VMXON region.
-    pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmxonRegion {
-        const page = page_allocator.alloc(u8, 4096) catch return VmxError.OutOfMemory;
-        if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
+    pub fn new(page_allocator: Allocator) VmxError!*align(mem.page_size) VmxonRegion {
+        const size = am.readMsrVmxBasic().vmxon_region_size;
+        const page = page_allocator.alloc(u8, size) catch return VmxError.OutOfMemory;
+        if (@intFromPtr(page.ptr) % mem.page_size != 0) {
             return error.OutOfMemory;
         }
         @memset(page, 0);
@@ -795,7 +795,7 @@ const VmxonRegion = packed struct {
 
     pub fn deinit(self: *VmxonRegion, page_allocator: Allocator) void {
         const ptr: [*]u8 = @ptrCast(self);
-        page_allocator.free(ptr[0..4096]);
+        page_allocator.free(ptr[0..mem.page_size]);
     }
 };
 
@@ -813,8 +813,9 @@ const VmcsRegion = packed struct {
 
     /// Allocate a VMCS region.
     pub fn new(page_allocator: Allocator) VmxError!*align(4096) VmcsRegion {
-        const page = try page_allocator.alloc(u8, 4096);
-        if (page.len != 4096 or @intFromPtr(page.ptr) % 4096 != 0) {
+        const size = am.readMsrVmxBasic().vmxon_region_size;
+        const page = try page_allocator.alloc(u8, size);
+        if (@intFromPtr(page.ptr) % mem.page_size != 0) {
             return error.OutOfMemory;
         }
         @memset(page, 0);
@@ -822,8 +823,9 @@ const VmcsRegion = packed struct {
     }
 
     pub fn deinit(self: *VmcsRegion, page_allocator: Allocator) void {
+        const size = am.readMsrVmxBasic().vmxon_region_size;
         const ptr: [*]u8 = @ptrCast(self);
-        page_allocator.free(ptr[0..4096]);
+        page_allocator.free(ptr[0..size]);
     }
 };
 

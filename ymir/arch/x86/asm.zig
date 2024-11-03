@@ -273,7 +273,7 @@ pub fn writeMsrFeatureControl(value: MsrFeatureControl) void {
 }
 
 pub fn readMsrVmxBasic() MsrVmxBasic {
-    const val = readMsr(Msr.vmx_basic);
+    const val = readMsr(.vmx_basic);
     return @bitCast(val);
 }
 

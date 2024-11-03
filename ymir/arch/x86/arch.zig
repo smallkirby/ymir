@@ -61,21 +61,17 @@ pub inline fn enableCpuid() void {
     }
 }
 
+/// Get CPU Vendr ID string.
+/// Note that the string is not null-terminated.
 pub fn getCpuVendorId() [12]u8 {
     var ret: [12]u8 = undefined;
-    const regs = cpuid.Leaf.maximum_input.query(null);
+    const regs = cpuid.Leaf.query(.maximum_input, null);
 
-    for (0..4) |i| {
-        const b: usize = (regs.ebx >> @truncate(i * 8));
-        ret[0 + i] = @as(u8, @truncate(b));
-    }
-    for (0..4) |i| {
-        const b: usize = (regs.edx >> @truncate(i * 8));
-        ret[4 + i] = @as(u8, @truncate(b));
-    }
-    for (0..4) |i| {
-        const b: usize = (regs.ecx >> @truncate(i * 8));
-        ret[8 + i] = @as(u8, @truncate(b));
+    for ([_]u32{ regs.ebx, regs.edx, regs.ecx }, 0..) |reg, i| {
+        for (0..4) |j| {
+            const b: usize = (reg >> @truncate(j * 8));
+            ret[i * 4 + j] = @as(u8, @truncate(b));
+        }
     }
     return ret;
 }
@@ -93,6 +89,7 @@ pub fn isVmxSupported() bool {
         // Enable VMX outside SMX.
         if (msr_fctl.lock) @panic("IA32_FEATURE_CONTROL is locked while VMX outside SMX is disabled");
         msr_fctl.vmx_outside_smx = true;
+        msr_fctl.lock = true;
         am.writeMsrFeatureControl(msr_fctl);
     }
     msr_fctl = am.readMsrFeatureControl();
