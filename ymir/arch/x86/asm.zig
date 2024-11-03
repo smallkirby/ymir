@@ -182,6 +182,32 @@ pub inline fn vmxon(vmxon_region: mem.Phys) VmxError!void {
     try vmxerr(rflags);
 }
 
+pub inline fn vmclear(vmcs_region: mem.Phys) VmxError!void {
+    var rflags: u64 = undefined;
+    asm volatile (
+        \\vmclear (%[vmcs_phys])
+        \\pushf
+        \\popq %[rflags]
+        : [rflags] "=r" (rflags),
+        : [vmcs_phys] "r" (&vmcs_region),
+        : "cc", "memory"
+    );
+    try vmxerr(rflags);
+}
+
+pub inline fn vmptrld(vmcs_region: mem.Phys) VmxError!void {
+    var rflags: u64 = undefined;
+    asm volatile (
+        \\vmptrld (%[vmcs_phys])
+        \\pushf
+        \\popq %[rflags]
+        : [rflags] "=r" (rflags),
+        : [vmcs_phys] "r" (&vmcs_region),
+        : "cc", "memory"
+    );
+    try vmxerr(rflags);
+}
+
 /// EFLAGS register.
 pub const FlagsRegister = packed struct(u64) {
     /// Carry flag.

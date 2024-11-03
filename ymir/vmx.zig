@@ -72,6 +72,9 @@ pub const Vm = struct {
         // Initialize vCPU.
         try self.vcpu.virtualize(allocator);
         log.info("vCPU #{X} is created.", .{self.vcpu.id});
+
+        // Setup VMCS.
+        try self.vcpu.setupVmcs(allocator);
     }
 
     /// Deinitialize the virtual machine, exiting VMX root operation.
