@@ -8,6 +8,7 @@ const serial = ymir.serial;
 const arch = ymir.arch;
 const mem = ymir.mem;
 const idefs = ymir.idefs;
+const vmx = ymir.vmx;
 
 /// Guard page placed below the kernel stack.
 extern const __stackguard_lower: [*]const u8;
@@ -91,6 +92,11 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     arch.pic.unsetMask(.serial1);
     arch.serial.enableInterrupt(.com1);
 
+    // Enter VMX root operation.
+    var vm = try vmx.Vm.new();
+    try vm.init(mem.general_allocator);
+    log.info("Entered VMX root operation.", .{});
+
     while (true) asm volatile ("hlt");
 }
 
@@ -102,6 +108,5 @@ fn validateBootInfo(boot_info: surtr.BootInfo) !void {
 
 fn blobIrqHandler(ctx: *arch.intr.Context) void {
     const vector: u16 = @intCast(ctx.vector - idefs.user_intr_base);
-    log.debug("IRQ: {d}", .{vector});
     arch.pic.notifyEoi(@enumFromInt(vector));
 }

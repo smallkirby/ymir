@@ -5,6 +5,7 @@ pub const klog = @import("log.zig");
 pub const mem = @import("mem.zig");
 pub const panic = @import("panic.zig");
 pub const serial = @import("serial.zig");
+pub const vmx = @import("vmx.zig");
 
 const std = @import("std");
 const builtin = @import("builtin");
