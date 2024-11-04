@@ -11,6 +11,7 @@ const mem = ymir.mem;
 /// Guard page placed below the kernel stack.
 extern const __stackguard_lower: [*]const u8;
 
+pub const panic = ymir.panic.panic_fn;
 pub const std_options = klog.default_log_options;
 
 /// Kernel entry point called by surtr.

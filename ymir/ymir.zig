@@ -2,10 +2,14 @@ pub const arch = @import("arch.zig");
 pub const bits = @import("bits.zig");
 pub const klog = @import("log.zig");
 pub const mem = @import("mem.zig");
+pub const panic = @import("panic.zig");
 pub const serial = @import("serial.zig");
 
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
+
+pub const is_debug = builtin.mode == .Debug;
 
 /// Base virtual address of direct mapping.
 /// The virtual address starting from the address is directly mapped to the physical address at 0x0.
