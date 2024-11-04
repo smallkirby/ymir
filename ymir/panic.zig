@@ -11,43 +11,20 @@ const format = std.fmt.format;
 
 const ymir = @import("ymir");
 const vmx = ymir.vmx;
-const serial = ymir.serial;
 const arch = ymir.arch;
 
 /// Implementation of the panic function.
 pub const panic_fn = panic;
 
-/// Instance of the initialized serial console.
-var sr: serial.Serial = undefined;
 /// Instance of the virtual machine.
 var vm: ?*vmx.Vm = null;
 
 /// Flag to indicate that a panic occurred.
 var panicked = false;
 
-const PanicError = error{};
-const Writer = std.io.Writer(
-    void,
-    PanicError,
-    writerFunction,
-);
-
 /// Set the target VM that is dumped when a panic occurs.
 pub fn setVm(target_vm: *vmx.Vm) void {
     vm = target_vm;
-}
-
-fn write(comptime fmt: []const u8, args: anytype) void {
-    format(
-        Writer{ .context = {} },
-        fmt,
-        args,
-    ) catch {};
-}
-
-fn writerFunction(_: void, bytes: []const u8) PanicError!usize {
-    sr.writeString(bytes);
-    return bytes.len;
 }
 
 fn panic(msg: []const u8, _: ?*builtin.StackTrace, _: ?usize) noreturn {
