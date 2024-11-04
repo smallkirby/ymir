@@ -97,6 +97,15 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try vm.init(mem.general_allocator);
     log.info("Entered VMX root operation.", .{});
 
+    // Launch
+    log.info("Starting the virtual machine...", .{});
+    try vm.loop();
+
+    // Devirtualize
+    log.info("Exiting VMX root operation...", .{});
+    vm.devirtualize();
+
+    log.warn("End of Life...", .{});
     while (true) asm volatile ("hlt");
 }
 

@@ -23,6 +23,8 @@ var gdtr = GdtRegister{
 pub const kernel_ds_index: u16 = 0x01;
 /// Index of the kernel code segment.
 pub const kernel_cs_index: u16 = 0x02;
+/// Index of the kernel TSS.
+pub const kernel_tss_index: u16 = 0x03;
 
 /// Initialize the GDT.
 pub fn init() void {
@@ -47,6 +49,12 @@ pub fn init() void {
         0,
         .kbyte,
     );
+    gdt[kernel_tss_index] = SegmentDescriptor.newTss(
+        0,
+        0,
+        0,
+        .kbyte,
+    );
 
     am.lgdt(@intFromPtr(&gdtr));
 
@@ -55,6 +63,7 @@ pub fn init() void {
     // To flush the changes, we need to set segment registers.
     loadKernelDs();
     loadKernelCs();
+    loadKernelTss();
 }
 
 /// Load the kernel data segment selector.
@@ -95,6 +104,20 @@ fn loadKernelCs() void {
         : [kernel_cs] "n" (@as(u16, @bitCast(SegmentSelector{
             .rpl = 0,
             .index = kernel_cs_index,
+          }))),
+    );
+}
+
+/// Load the kernel TSS selector to TR.
+/// Not used in Ymir.
+fn loadKernelTss() void {
+    asm volatile (
+        \\mov %[kernel_tss], %%di
+        \\ltr %%di
+        :
+        : [kernel_tss] "n" (@as(u16, @bitCast(SegmentSelector{
+            .rpl = 0,
+            .index = kernel_tss_index,
           }))),
     );
 }
@@ -174,6 +197,32 @@ pub const SegmentDescriptor = packed struct(u64) {
             .avl = 0,
             .long = executable,
             .db = @intFromBool(!executable),
+            .granularity = granularity,
+            .base_high = @truncate(base >> 24),
+        };
+    }
+
+    /// Create a new TSS descriptor.
+    pub fn newTss(
+        base: u32,
+        limit: u20,
+        dpl: u2,
+        granularity: Granularity,
+    ) SegmentDescriptor {
+        return SegmentDescriptor{
+            .limit_low = @truncate(limit),
+            .base_low = @truncate(base),
+            .accessed = true,
+            .rw = false,
+            .dc = false,
+            .executable = true,
+            .desc_type = .system,
+            .dpl = dpl,
+            .present = true,
+            .limit_high = @truncate(limit >> 16),
+            .avl = 0,
+            .long = false,
+            .db = 0,
             .granularity = granularity,
             .base_high = @truncate(base >> 24),
         };

@@ -315,3 +315,259 @@ const ComponentEncoding = packed struct(u32) {
     width: Width,
     _reserved2: u17 = 0,
 };
+
+/// Pin-Based VM-Execution Controls.
+/// Governs the handling of asynchronous events (e.g., interrupts).
+/// cf: SDM Vol3C 25.6.
+pub const PinExecCtrl = packed struct(u32) {
+    const Self = @This();
+
+    /// If set to true, external interrupts cause VM exits.
+    /// If set to false, they're delivered normally through the guest IDT.
+    external_interrupt: bool,
+    /// Reserved.
+    /// You MUST consult IA32_VMX_PINBASED_CTLS and IA32_VMX_TRUE_PINBASED_CTLS
+    /// to determine how to set reserved bits.
+    _reserved1: u2,
+    /// If set to true, NMIs cause VM exits.
+    nmi: bool,
+    /// Reserved.
+    /// You MUST consult IA32_VMX_PINBASED_CTLS and IA32_VMX_TRUE_PINBASED_CTLS
+    /// to determine how to set reserved bits.
+    _reserved2: u1,
+    /// If set to true, NMIs are never blocked.
+    virtual_nmi: bool,
+    /// If set to true, the VMX-preemption timer counts down in VMX non-root operation.
+    /// When the timer counts down to zero, a VM exit occurs.
+    activate_vmx_preemption_timer: bool,
+    /// If set to true, the processor treats interrupts with the posted-interrupt notificatin vector.
+    process_posted_interrupts: bool,
+    /// Reserved.
+    /// You MUST consult IA32_VMX_PINBASED_CTLS and IA32_VMX_TRUE_PINBASED_CTLS
+    /// to determine how to set reserved bits.
+    _reserved3: u24,
+
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
+    }
+
+    pub fn load(self: PinExecCtrl) VmxError!void {
+        const val: u32 = @bitCast(self);
+        try vmx.vmwrite(ctrl.pin_exec_ctrl, val);
+    }
+
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.pin_exec_ctrl));
+        return @bitCast(val);
+    }
+};
+
+/// Primary processor-based VM-execution controls.
+/// Governs the handling of synchronous events (e.g., instructions).
+/// cf. SDM Vol3C 25.6.2.
+pub const PrimaryProcExecCtrl = packed struct(u32) {
+    const Self = @This();
+
+    /// Reserved.
+    /// You MUST consult IA32_VMX_PROCBASED_CTLS and IA32_VMX_TRUE_PROCBASED_CTLS
+    /// to determine how to set reserved bits.
+    _reserved1: u2,
+    /// VM-Exit at the beginning of any instruction if RFLAGS.IF = 1 and there're no blocking of interrupts.
+    interrupt_window: bool,
+    /// If set to true, RDTSC/RDTSCP/RDMSR that read from IA32_TIME_STAMP_COUNTER_MSR
+    /// return a value modified by the TSC offset field.
+    tsc_offsetting: bool,
+    /// Reserved.
+    _reserved2: u3,
+    /// HLT
+    hlt: bool,
+    /// Reserved.
+    _reserved3: u1,
+    /// INVLPG
+    invlpg: bool,
+    /// MWAIT
+    mwait: bool,
+    /// RDPMC
+    rdpmc: bool,
+    /// RDTSC / RDTSCP
+    rdtsc: bool,
+    /// Reserved.
+    _reserved4: u2,
+    /// MOV to CR3 in conjuction with CR3-target controls.
+    cr3load: bool,
+    /// MOV from CR3.
+    cr3store: bool,
+    /// If set to false, the logical processor operates as if all the teritary processor-based VM-execution controls were also 0.
+    activate_teritary_controls: bool,
+    /// Reserved.
+    _reserved: u1,
+    /// MOV to CR8.
+    cr8load: bool,
+    /// MOV from CR8.
+    cr8store: bool,
+    /// If set to true, TPR virtualization and other APIC-virtualization features are enabled.
+    use_tpr_shadow: bool,
+    /// If set to true, VM-exit at the beginning of any instruction if there's no virtual-NMI blocking.
+    nmi_window: bool,
+    /// MOV DR
+    mov_dr: bool,
+    /// I/O instructions
+    unconditional_io: bool,
+    /// If set to true, I/O bitmaps are used to control I/O access.
+    /// If set to true, unconditional_io bit is ignored.
+    use_io_bitmap: bool,
+    /// Reserved.
+    _reserved5: u1,
+    /// If set to true, monitor trap flag debugging feature is enabled.
+    monitor_trap: bool,
+    /// If set to true, MSR bitmaps are used to control MSR access.
+    /// If set to false, all executions of RDMSR / WRMSR cause VM exits.
+    use_msr_bitmap: bool,
+    /// MONITOR
+    monitor: bool,
+    /// PAUSE
+    pause: bool,
+    /// If set to true, secondary processor-based VM-execution controls are used.
+    activate_secondary_controls: bool,
+
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
+    }
+
+    pub fn load(self: Self) VmxError!void {
+        const val: u32 = @bitCast(self);
+        try vmx.vmwrite(ctrl.proc_exec_ctrl, val);
+    }
+
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.proc_exec_ctrl));
+        return @bitCast(val);
+    }
+};
+
+/// VM-Entry Controls.
+pub const EntryCtrl = packed struct(u32) {
+    pub const Self = @This();
+
+    /// Reserved.
+    /// You MUST consult IA32_VMX_ENTRY_CTLS and IA32_VMX_TRUE_ENTRY_CTLS
+    /// to determine how to set reserved bits.
+    _reserved1: u2,
+    /// Whether DR7 and IA32_DEBUGCTL MSR are loaded on VM entry.
+    load_debug_controls: bool,
+    /// Reserved.
+    _reserved2: u6,
+    /// Whether the logical processor is in IA-32e mode after VM entry.
+    ia32e_mode_guest: bool,
+    /// Whether the logical processor is in SMM after VM entry.
+    entry_smm: bool,
+    ///
+    deactivate_dualmonitor: bool,
+    /// Reserved.
+    _reserved3: u1,
+    /// Whether IA32_PERF_GLOBAL_CTRL MSR is loaded on VM entry.
+    load_perf_global_ctrl: bool,
+    /// Whether IA32_PAT MSR is loaded on VM entry.
+    load_ia32_pat: bool,
+    /// Whether IA32_EFER MSR is loaded on VM entry.
+    load_ia32_efer: bool,
+    /// Whether IA32_BNDCFGS MSR is loaded on VM entry.
+    load_ia32_bndcfgs: bool,
+    ///
+    conceal_vmx_from_pt: bool,
+    ///
+    load_rtit_ctl: bool,
+    /// Whether UINV is loaded on VM entry.
+    load_uinv: bool,
+    /// Whether CET-related MSRs and SSP are loaded on VM entry.
+    load_cet_state: bool,
+    /// Whether IA32_LBR_CTL MSR is loaded on VM entry.
+    load_guest_lbr_ctl: bool,
+    /// Whether IA32_PKRS MSR is loaded on VM entry.
+    load_pkrs: bool,
+    /// Reserved.
+    _reserved4: u9,
+
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
+    }
+
+    pub fn load(self: Self) VmxError!void {
+        const val: u32 = @bitCast(self);
+        try vmx.vmwrite(ctrl.entry_ctrl, val);
+    }
+
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.entry_ctrl));
+        return @bitCast(val);
+    }
+};
+
+/// Primary VM-Exit Controls.
+pub const PrimaryExitCtrl = packed struct(u32) {
+    const Self = @This();
+
+    /// Reserved.
+    /// You MUST consult IA32_VMX_EXIT_CTLS and IA32_VMX_TRUE_EXIT_CTLS
+    /// to determine how to set reserved bits.
+    _reserved1: u2,
+    /// If set to true, DR7 and IA32_DEBUGCTL MSR are saved on VM exit.
+    save_debug: bool,
+    /// Reserved.
+    _reserved2: u6,
+    /// If set to true, a processor is in 64-bit mode after the next VM exit.
+    /// Its value is loaded into CS.L, IA32_EFER.LME, and IA32_EFER.LMA on every VM exit.
+    host_addr_space_size: bool,
+    /// Reserved.
+    _reserved3: u2,
+    /// If set to true, IA32_PERF_GLOBAL_CTRL MSR is loaded on VM exit.
+    load_perf_global_ctrl: bool,
+    /// Reserved.
+    _reserved4: u2,
+    /// If set to true, the logical processor acks the interrupt controller and acquires the vector.
+    ack_interrupt_onexit: bool,
+    /// Reserved.
+    _reserved5: u2,
+    /// If set to true, IA32_PAT_MSR is saved on VM exit.
+    save_ia32_pat: bool,
+    /// If set to true, IA32_PAT MSR is loaded on VM entry.
+    load_ia32_pat: bool,
+    /// If set to true, IA32_EFER MSR is saved on VM exit.
+    save_ia32_efer: bool,
+    /// If set to true, IA32_EFER MSR is loaded on VM entry.
+    load_ia32_efer: bool,
+    /// If set to true, the value of VMX-preemption timer is saved on VM exit.
+    save_vmx_preemption_timer: bool,
+    /// If set to true, IA32_BNDCFGS MSR is cleared on VM exit.
+    clear_ia32_bndcfgs: bool,
+    ///
+    conceal_vmx_from_pt: bool,
+    ///
+    clear_ia32_rtit_ctl: bool,
+    ///
+    clear_ia32_lbr_ctl: bool,
+    /// If set to true, UINV is cleared on VM exit.
+    clear_uinv: bool,
+    /// If set to true, CET-related MSRs and SSP are loaded on VM entry.
+    load_cet_state: bool,
+    /// If set to true, IA32_PKRS MSR is loaded on VM entry.
+    load_pkrs: bool,
+    /// If set to true, IA32_PERF_GLOBAL_CTL MSR is saved on VM exit.
+    save_perf_global_ctl: bool,
+    /// If set to true, the secondary VM-exit controls are used.
+    activate_secondary_controls: bool,
+
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
+    }
+
+    pub fn load(self: Self) VmxError!void {
+        const val: u32 = @bitCast(self);
+        try vmx.vmwrite(ctrl.primary_exit_ctrl, val);
+    }
+
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.primary_exit_ctrl));
+        return @bitCast(val);
+    }
+};

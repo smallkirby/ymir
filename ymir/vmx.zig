@@ -81,4 +81,10 @@ pub const Vm = struct {
     pub fn devirtualize(self: *Self) void {
         self.vcpu.devirtualize();
     }
+
+    /// Kick off the virtual machine.
+    pub fn loop(self: *Self) Error!void {
+        arch.disableIntr();
+        try self.vcpu.loop();
+    }
 };

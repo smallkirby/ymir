@@ -169,6 +169,74 @@ pub fn readMsrVmxBasic() MsrVmxBasic {
     return @bitCast(val);
 }
 
+const Segment = enum {
+    cs,
+    ss,
+    ds,
+    es,
+    fs,
+    gs,
+    tr,
+    ldtr,
+};
+
+pub fn readSegSelector(segment: Segment) u16 {
+    return switch (segment) {
+        .cs => asm volatile ("mov %%cs, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .ss => asm volatile ("mov %%ss, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .ds => asm volatile ("mov %%ds, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .es => asm volatile ("mov %%es, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .fs => asm volatile ("mov %%fs, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .gs => asm volatile ("mov %%gs, %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .tr => asm volatile ("str %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+        .ldtr => asm volatile ("sldt %[ret]"
+            : [ret] "=r" (-> u16),
+        ),
+    };
+}
+
+const SgdtRet = packed struct {
+    limit: u16,
+    base: u64,
+};
+
+pub inline fn sgdt() SgdtRet {
+    var gdtr: SgdtRet = undefined;
+    asm volatile (
+        \\sgdt %[ret]
+        : [ret] "=m" (gdtr),
+    );
+    return gdtr;
+}
+
+const SidtRet = packed struct {
+    limit: u16,
+    base: u64,
+};
+
+pub inline fn sidt() SidtRet {
+    var idtr: SidtRet = undefined;
+    asm volatile (
+        \\sidt %[ret]
+        : [ret] "=m" (idtr),
+    );
+    return idtr;
+}
+
 pub inline fn vmxon(vmxon_region: mem.Phys) VmxError!void {
     var rflags: u64 = undefined;
     asm volatile (
@@ -180,6 +248,10 @@ pub inline fn vmxon(vmxon_region: mem.Phys) VmxError!void {
         : "cc", "memory"
     );
     try vmxerr(rflags);
+}
+
+pub inline fn vmxoff() void {
+    asm volatile ("vmxoff");
 }
 
 pub inline fn vmclear(vmcs_region: mem.Phys) VmxError!void {
