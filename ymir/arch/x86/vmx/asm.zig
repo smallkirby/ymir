@@ -123,7 +123,7 @@ export fn asmVmEntry() callconv(.Naked) u8 {
     );
 }
 
-pub fn asmVmExit() callconv(.Naked) noreturn {
+pub fn asmVmExit() callconv(.Naked) void {
     // Disable IRQ.
     asm volatile (
         \\cli
