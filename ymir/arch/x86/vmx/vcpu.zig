@@ -45,7 +45,7 @@ pub const Vcpu = struct {
     /// ID of the logical processor.
     id: usize = 0,
     /// VPID of the virtual machine.
-    vpid: u16 = 0,
+    vpid: u16 = 1,
     /// VMXON region.
     vmxon_region: *VmxonRegion = undefined,
     /// VMCS region.

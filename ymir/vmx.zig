@@ -28,7 +28,7 @@ const VmError = error{
 pub const Error = VmError || impl.VmxError;
 
 /// Next virtual processor ID.
-var vpid_next: u16 = 0;
+var vpid_next: u16 = 1;
 /// Global VMX lock.
 var global_lock = spin.SpinLock{};
 
