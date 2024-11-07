@@ -127,14 +127,25 @@ pub fn dispatch(context: *Context) void {
 fn unhandledHandler(context: *Context) void {
     @setCold(true);
 
+    const status = context.status.to(context.vector);
     log.err("============ Oops! ===================", .{});
     log.err("Unhandled interrupt: {s} ({})", .{
         exceptionName(context.vector),
         context.vector,
     });
-    log.err("Error Code: 0x{X}", .{context.error_code});
-    log.err("RIP    : 0x{X:0>16}", .{context.rip});
-    log.err("EFLAGS : 0x{X:0>16}", .{context.rflags});
+    switch (status) {
+        .ec => |s| {
+            log.err("Error Code: 0x{X}", .{s.error_code});
+            log.err("RIP    : 0x{X:0>16}", .{s.rip});
+            log.err("EFLAGS : 0x{X:0>16}", .{s.rflags});
+            log.err("CS     : 0x{X:0>4}", .{s.cs});
+        },
+        .no_ec => |s| {
+            log.err("RIP    : 0x{X:0>16}", .{s.rip});
+            log.err("EFLAGS : 0x{X:0>16}", .{s.rflags});
+            log.err("CS     : 0x{X:0>4}", .{s.cs});
+        },
+    }
     log.err("RAX    : 0x{X:0>16}", .{context.registers.rax});
     log.err("RBX    : 0x{X:0>16}", .{context.registers.rbx});
     log.err("RCX    : 0x{X:0>16}", .{context.registers.rcx});
@@ -150,7 +161,6 @@ fn unhandledHandler(context: *Context) void {
     log.err("R13    : 0x{X:0>16}", .{context.registers.r13});
     log.err("R14    : 0x{X:0>16}", .{context.registers.r14});
     log.err("R15    : 0x{X:0>16}", .{context.registers.r15});
-    log.err("CS     : 0x{X:0>4}", .{context.cs});
 
     ymir.endlessHalt();
 }
@@ -166,6 +176,11 @@ fn unhandledFaultHandler(context: *Context) void {
     log.err("\nCommon unhandled handler continues...\n", .{});
 
     unhandledHandler(context);
+}
+
+/// Check if the interrupt has an error code.
+pub fn isErrorCodeAvailable(vector: u64) bool {
+    return vector == 8 or (10 <= vector and vector <= 14) or vector == 17;
 }
 
 // Exception vectors.
