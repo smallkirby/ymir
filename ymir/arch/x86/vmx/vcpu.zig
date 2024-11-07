@@ -551,6 +551,7 @@ fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
     ppb_exec_ctrl2.virtualize_apic_accesses = true;
     ppb_exec_ctrl2.virtualize_x2apic_mode = false;
     ppb_exec_ctrl2.virtual_interrupt_delivery = true;
+    ppb_exec_ctrl2.vpid = isVpidSupported();
     try adjustRegMandatoryBits(
         ppb_exec_ctrl2,
         am.readMsr(.vmx_procbased_ctls2),
@@ -566,6 +567,14 @@ fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
     var exception_bitmap: u32 = 0;
     exception_bitmap |= 1 << 13; // General protection fault
     try vmwrite(vmcs.ctrl.exception_bitmap, exception_bitmap);
+
+    // VPID
+    if (isVpidSupported()) {
+        log.debug("INVVPID is supported.", .{});
+        try vmwrite(vmcs.ctrl.vpid, vcpu.vpid);
+    } else {
+        log.err("INVVPID is not supported.", .{});
+    }
 }
 
 /// Set up VM-Exit control fields.
@@ -774,6 +783,12 @@ fn adjustRegMandatoryBits(control: anytype, mask: u64) @TypeOf(control) {
 /// Get a VM-exit qualification from VMCS.
 fn getExitQual(T: anytype) VmxError!T {
     return @bitCast(@as(u64, try vmread(vmcs.ro.exit_qual)));
+}
+
+/// Check if INVVPID is supported.
+fn isVpidSupported() bool {
+    const cap: am.MsrVmxEptVpidCap = @bitCast(am.readMsr(.vmx_ept_vpid_cap));
+    return cap.invvpid and cap.invvpid_single and cap.invvpid_all and cap.invvpid_individual and cap.invvpid_single_globals;
 }
 
 /// VMXON region.

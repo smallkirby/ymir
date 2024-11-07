@@ -23,9 +23,11 @@ pub fn handleAccessCr(vcpu: *Vcpu, qual: QualCr) VmxError!void {
                 },
                 3 => {
                     const val = try getValue(vcpu, qual);
-                    // NOTE: If CR3.PCIDE is set and bit 64 of `val` is 1, it means the operation is not necessarily invalidate TLBs.
-                    //      However, we clear bit 63 to avoid the failure of VM-entry.
+                    // NOTE: If CR3.PCIDE is set and bit 63 of `val` is 1, it means the operation is not necessarily invalidate TLBs.
+                    //      However, SDM says that the bit 63 MUST be cleared even if CR4.PCIDE is set.
                     try vmx.vmwrite(vmcs.guest.cr3, val & ~@as(u64, (1 << 63)));
+                    // Invalidate GPA to HPA mapping.
+                    am.invvpid(.single_context, vcpu.vpid);
                 },
                 else => try passthroughWrite(vcpu, qual),
             }
