@@ -57,17 +57,7 @@ export fn asmVmEntry() callconv(.Naked) u8 {
             \\mov {[r13]}(%%rax), %%r13
             \\mov {[r14]}(%%rax), %%r14
             \\mov {[r15]}(%%rax), %%r15
-            \\movaps {[xmm0]}(%%rax), %%xmm0
-            \\movaps {[xmm1]}(%%rax), %%xmm1
-            \\movaps {[xmm2]}(%%rax), %%xmm2
-            \\movaps {[xmm3]}(%%rax), %%xmm3
-            \\movaps {[xmm4]}(%%rax), %%xmm4
-            \\movaps {[xmm5]}(%%rax), %%xmm5
-            \\movaps {[xmm6]}(%%rax), %%xmm6
-            \\movaps {[xmm7]}(%%rax), %%xmm7
-            \\mov {[rax]}(%%rax), %%rax
         , .{
-            .rax = @offsetOf(vmx.GuestRegisters, "rax"),
             .rcx = @offsetOf(vmx.GuestRegisters, "rcx"),
             .rdx = @offsetOf(vmx.GuestRegisters, "rdx"),
             .rbx = @offsetOf(vmx.GuestRegisters, "rbx"),
@@ -82,6 +72,27 @@ export fn asmVmEntry() callconv(.Naked) u8 {
             .r13 = @offsetOf(vmx.GuestRegisters, "r13"),
             .r14 = @offsetOf(vmx.GuestRegisters, "r14"),
             .r15 = @offsetOf(vmx.GuestRegisters, "r15"),
+        }));
+    asm volatile (std.fmt.comptimePrint(
+            \\movaps {[xmm0]}(%%rax), %%xmm0
+            \\movaps {[xmm1]}(%%rax), %%xmm1
+            \\movaps {[xmm2]}(%%rax), %%xmm2
+            \\movaps {[xmm3]}(%%rax), %%xmm3
+            \\movaps {[xmm4]}(%%rax), %%xmm4
+            \\movaps {[xmm5]}(%%rax), %%xmm5
+            \\movaps {[xmm6]}(%%rax), %%xmm6
+            \\movaps {[xmm7]}(%%rax), %%xmm7
+            \\movaps {[xmm8]}(%%rax), %%xmm8
+            \\movaps {[xmm9]}(%%rax), %%xmm9
+            \\movaps {[xmm10]}(%%rax), %%xmm10
+            \\movaps {[xmm11]}(%%rax), %%xmm11
+            \\movaps {[xmm12]}(%%rax), %%xmm12
+            \\movaps {[xmm13]}(%%rax), %%xmm13
+            \\movaps {[xmm14]}(%%rax), %%xmm14
+            \\movaps {[xmm15]}(%%rax), %%xmm15
+            \\mov {[rax]}(%%rax), %%rax
+        , .{
+            .rax = @offsetOf(vmx.GuestRegisters, "rax"),
             .xmm0 = @offsetOf(vmx.GuestRegisters, "xmm0"),
             .xmm1 = @offsetOf(vmx.GuestRegisters, "xmm1"),
             .xmm2 = @offsetOf(vmx.GuestRegisters, "xmm2"),
@@ -90,6 +101,14 @@ export fn asmVmEntry() callconv(.Naked) u8 {
             .xmm5 = @offsetOf(vmx.GuestRegisters, "xmm5"),
             .xmm6 = @offsetOf(vmx.GuestRegisters, "xmm6"),
             .xmm7 = @offsetOf(vmx.GuestRegisters, "xmm7"),
+            .xmm8 = @offsetOf(vmx.GuestRegisters, "xmm8"),
+            .xmm9 = @offsetOf(vmx.GuestRegisters, "xmm9"),
+            .xmm10 = @offsetOf(vmx.GuestRegisters, "xmm10"),
+            .xmm11 = @offsetOf(vmx.GuestRegisters, "xmm11"),
+            .xmm12 = @offsetOf(vmx.GuestRegisters, "xmm12"),
+            .xmm13 = @offsetOf(vmx.GuestRegisters, "xmm13"),
+            .xmm14 = @offsetOf(vmx.GuestRegisters, "xmm14"),
+            .xmm15 = @offsetOf(vmx.GuestRegisters, "xmm15"),
         }));
 
     // VMLAUNCH or VMRESUME.
@@ -167,6 +186,14 @@ pub fn asmVmExit() callconv(.Naked) void {
             \\movaps %%xmm5, {[xmm5]}(%%rax)
             \\movaps %%xmm6, {[xmm6]}(%%rax)
             \\movaps %%xmm7, {[xmm7]}(%%rax)
+            \\movaps %%xmm8, {[xmm8]}(%%rax)
+            \\movaps %%xmm9, {[xmm9]}(%%rax)
+            \\movaps %%xmm10, {[xmm10]}(%%rax)
+            \\movaps %%xmm11, {[xmm11]}(%%rax)
+            \\movaps %%xmm12, {[xmm12]}(%%rax)
+            \\movaps %%xmm13, {[xmm13]}(%%rax)
+            \\movaps %%xmm14, {[xmm14]}(%%rax)
+            \\movaps %%xmm15, {[xmm15]}(%%rax)
         ,
             .{
                 .rax = @offsetOf(vmx.GuestRegisters, "rax"),
@@ -192,6 +219,14 @@ pub fn asmVmExit() callconv(.Naked) void {
                 .xmm5 = @offsetOf(vmx.GuestRegisters, "xmm5"),
                 .xmm6 = @offsetOf(vmx.GuestRegisters, "xmm6"),
                 .xmm7 = @offsetOf(vmx.GuestRegisters, "xmm7"),
+                .xmm8 = @offsetOf(vmx.GuestRegisters, "xmm8"),
+                .xmm9 = @offsetOf(vmx.GuestRegisters, "xmm9"),
+                .xmm10 = @offsetOf(vmx.GuestRegisters, "xmm10"),
+                .xmm11 = @offsetOf(vmx.GuestRegisters, "xmm11"),
+                .xmm12 = @offsetOf(vmx.GuestRegisters, "xmm12"),
+                .xmm13 = @offsetOf(vmx.GuestRegisters, "xmm13"),
+                .xmm14 = @offsetOf(vmx.GuestRegisters, "xmm14"),
+                .xmm15 = @offsetOf(vmx.GuestRegisters, "xmm15"),
             },
         ));
 

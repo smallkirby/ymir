@@ -144,6 +144,14 @@ pub const GuestRegisters = extern struct {
     xmm5: u128 align(16),
     xmm6: u128 align(16),
     xmm7: u128 align(16),
+    xmm8: u128 align(16),
+    xmm9: u128 align(16),
+    xmm10: u128 align(16),
+    xmm11: u128 align(16),
+    xmm12: u128 align(16),
+    xmm13: u128 align(16),
+    xmm14: u128 align(16),
+    xmm15: u128 align(16),
 };
 
 /// Reason of failures of VMX instructions.
