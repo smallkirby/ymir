@@ -115,6 +115,7 @@ export fn asmVmEntry() callconv(.Naked) u8 {
         \\pop %%r13
         \\pop %%r14
         \\pop %%r15
+        \\pop %%rbp
     );
 
     // Return to caller of asmVmEntry()
