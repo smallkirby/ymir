@@ -145,7 +145,7 @@ export fn isrCommon() callconv(.Naked) void {
         // Call the dispatcher.
         \\call intrZigEntry
         // Restore the stack.
-        \\movq (%%rsp), %%rsp
+        \\movq 8(%%rsp), %%rsp
     );
 
     // Remove general-purpose registers, error code, and vector from the stack.
