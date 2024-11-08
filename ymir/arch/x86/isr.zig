@@ -47,39 +47,13 @@ pub const Context = packed struct {
     registers: Registers,
     /// Interrupt Vector.
     vector: u64,
-    /// CPU Status.
-    status: Status,
+    /// Error Code.
+    error_code: u64,
 
-    const Status = packed union {
-        ec: StatusEc,
-        no_ec: StatusNoEc,
-
-        pub fn to(self: Status, vector: u64) StatusUnion {
-            if (intr.isErrorCodeAvailable(vector)) {
-                return .{ .ec = self.ec };
-            } else {
-                return .{ .no_ec = self.no_ec };
-            }
-        }
-    };
-    const StatusType = enum { ec, no_ec };
-    const StatusUnion = union(enum) {
-        ec: StatusEc,
-        no_ec: StatusNoEc,
-    };
-    /// Data pushed by CPU when Error Code is available.
-    const StatusEc = packed struct {
-        error_code: u64,
-        rip: u64,
-        cs: u64,
-        rflags: u64,
-    };
-    /// Data pushed by CPU when Error Code is not available.
-    const StatusNoEc = packed union {
-        rip: u64,
-        cs: u64,
-        rflags: u64,
-    };
+    // CPU status:
+    rip: u64,
+    cs: u64,
+    rflags: u64,
 };
 
 /// Structure holding general purpose registers as saved by PUSHA.
@@ -115,6 +89,13 @@ pub fn generateIsr(comptime vector: usize) idt.Isr {
             asm volatile (
                 \\cli
             );
+
+            // If the interrupt does not provide an error code, push a dummy one.
+            if (vector != 8 and !(vector >= 10 and vector <= 14) and vector != 17) {
+                asm volatile (
+                    \\pushq $0
+                );
+            }
 
             // Push the vector.
             asm volatile (
@@ -185,7 +166,7 @@ export fn isrCommon() callconv(.Naked) void {
         \\popq %%rdx
         \\popq %%rcx
         \\popq %%rax
-        \\add  $0x8, %%rsp
+        \\add   $0x10, %%rsp
         \\iretq
     );
 }
