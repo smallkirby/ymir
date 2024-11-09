@@ -97,6 +97,13 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try vm.init(mem.general_allocator);
     log.info("Entered VMX root operation.", .{});
 
+    // Setup guest memory.
+    try vm.setupGuestMemory(
+        mem.general_allocator,
+        &mem.page_allocator_instance,
+    );
+    log.info("Setup guest memory.", .{});
+
     // Launch
     log.info("Starting the virtual machine...", .{});
     try vm.loop();

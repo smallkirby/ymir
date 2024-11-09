@@ -11,9 +11,12 @@ const am = arch.am;
 const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
 const vmam = @import("asm.zig");
+const ept = @import("ept.zig");
 const VmxError = vmx.VmxError;
 const vmread = vmx.vmread;
 const vmwrite = vmx.vmwrite;
+
+const Phys = mem.Phys;
 
 pub const Vcpu = struct {
     const Self = @This();
@@ -21,7 +24,7 @@ pub const Vcpu = struct {
     /// ID of the logical processor.
     id: usize = 0,
     /// VPID of the virtual machine.
-    vpid: u16 = 0,
+    vpid: u16,
     /// VMXON region.
     vmxon_region: *VmxonRegion = undefined,
     /// VMCS region.
@@ -30,6 +33,10 @@ pub const Vcpu = struct {
     launch_done: bool = false,
     /// Saved guest registers.
     guest_regs: vmx.GuestRegisters = undefined,
+    /// EPT pointer.
+    eptp: ept.Eptp = undefined,
+    /// Host physical address where the guest is mapped.
+    guest_base: Phys = undefined,
 
     /// Create a new virtual CPU.
     /// This function does not virtualize the CPU.
@@ -80,6 +87,12 @@ pub const Vcpu = struct {
 
     /// Start executing vCPU.
     pub fn loop(self: *Self) VmxError!void {
+        // Copy blobGuest() to the guest memory at physical address 0x0.
+        const func: [*]const u8 = @ptrCast(&blobGuest);
+        const guest_map: [*]u8 = @ptrFromInt(mem.phys2virt(self.guest_base));
+        @memcpy(guest_map[0..0x20], func[0..0x20]);
+        try vmwrite(vmcs.guest.rip, 0);
+
         // Start endless VM-entry / VM-exit loop.
         while (true) {
             // Enter VMX non-root operation.
@@ -95,6 +108,13 @@ pub const Vcpu = struct {
             // Handle VM-exit.
             try self.handleExit(try vmx.ExitInfo.load());
         }
+    }
+
+    /// Set EPTP to the vCPU.
+    pub fn setEptp(self: *Self, eptp: ept.Eptp, host_start: [*]u8) VmxError!void {
+        self.eptp = eptp;
+        self.guest_base = ymir.mem.virt2phys(host_start);
+        try vmwrite(vmcs.ctrl.eptp, eptp);
     }
 
     // Enter VMX non-root operation.
@@ -211,7 +231,7 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
     try am.vmptrld(mem.virt2phys(vmcs_region));
 }
 
-fn setupExecCtrls(_: *Vcpu, _: Allocator) VmxError!void {
+fn setupExecCtrls(vcpu: *Vcpu, _: Allocator) VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // Pin-based VM-Execution control.
@@ -223,12 +243,27 @@ fn setupExecCtrls(_: *Vcpu, _: Allocator) VmxError!void {
 
     // Primary Processor-based VM-Execution control.
     var ppb_exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
-    ppb_exec_ctrl.hlt = true;
-    ppb_exec_ctrl.activate_secondary_controls = false;
+    ppb_exec_ctrl.activate_secondary_controls = true;
+    ppb_exec_ctrl.use_tpr_shadow = false;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
     ).load();
+
+    // Secondary Processor-based VM-Execution control.
+    var ppb_exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();
+    ppb_exec_ctrl2.unrestricted_guest = true;
+    ppb_exec_ctrl2.ept = true;
+    ppb_exec_ctrl2.vpid = isVpidSupported();
+    try adjustRegMandatoryBits(
+        ppb_exec_ctrl2,
+        am.readMsr(.vmx_procbased_ctls2),
+    ).load();
+
+    // VPID
+    if (isVpidSupported()) {
+        try vmwrite(vmcs.ctrl.vpid, vcpu.vpid);
+    }
 }
 
 fn setupExitCtrls(_: *Vcpu) VmxError!void {
@@ -249,7 +284,7 @@ fn setupEntryCtrls(_: *Vcpu) VmxError!void {
 
     // VM-Entry control.
     var entry_ctrl = try vmcs.EntryCtrl.store();
-    entry_ctrl.ia32e_mode_guest = true;
+    entry_ctrl.ia32e_mode_guest = false;
     try adjustRegMandatoryBits(
         entry_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
@@ -285,7 +320,12 @@ fn setupHostState(_: *Vcpu) VmxError!void {
 
 fn setupGuestState(_: *Vcpu) VmxError!void {
     // Control registers.
-    try vmwrite(vmcs.guest.cr0, am.readCr0());
+    var cr0 = std.mem.zeroes(am.Cr0);
+    cr0.pe = true; // Protected-mode
+    cr0.ne = true; // Numeric error
+    cr0.et = true; // Extension type
+    cr0.pg = false; // Paging
+    try vmwrite(vmcs.guest.cr0, cr0);
     try vmwrite(vmcs.guest.cr3, am.readCr3());
     try vmwrite(vmcs.guest.cr4, am.readCr4());
 
@@ -391,7 +431,6 @@ fn setupGuestState(_: *Vcpu) VmxError!void {
 
     // Other crucial fields.
     try vmwrite(vmcs.guest.vmcs_link_pointer, std.math.maxInt(u64));
-    try vmwrite(vmcs.guest.rip, &blobGuest);
 }
 
 /// Set host stack pointer.
@@ -430,6 +469,12 @@ fn vmxon(allocator: Allocator) VmxError!*VmxonRegion {
     };
 
     return vmxon_region;
+}
+
+/// Check if INVVPID is supported.
+fn isVpidSupported() bool {
+    const cap: am.MsrVmxEptVpidCap = @bitCast(am.readMsr(.vmx_ept_vpid_cap));
+    return cap.invvpid and cap.invvpid_single and cap.invvpid_all and cap.invvpid_individual and cap.invvpid_single_globals;
 }
 
 /// VMXON region.

@@ -538,6 +538,8 @@ pub const Msr = enum(u32) {
     vmx_cr4_fixed1 = 0x0489,
     /// IA32_VMX_PROCBASED_CTLS2 MSR.
     vmx_procbased_ctls2 = 0x048B,
+    /// IA32_VMX_EPT_VPID_CAP MSR.
+    vmx_ept_vpid_cap = 0x048C,
     /// IA32_VMX_TRUE_PINBASED_CTLS MSR.
     vmx_true_pinbased_ctls = 0x048D,
     /// IA32_VMX_TRUE_PROCBASED_CTLS MSR.
@@ -571,6 +573,32 @@ pub const Msr = enum(u32) {
     _,
 };
 
+/// IA32_EFER MSR.
+pub const Efer = packed struct(u64) {
+    /// System call extensions.
+    sce: bool,
+    /// ReservedZ.
+    reserved1: u7 = 0,
+    /// Long mode enable.
+    lme: bool,
+    ///
+    ignored: bool,
+    /// Long mode active.
+    lma: bool,
+    /// No execute enable.
+    nxe: bool,
+    /// Secure virtual machine enable.
+    svme: bool,
+    /// Long mode segment limit enable.
+    lmsle: bool,
+    /// Fast FXSAVE/FXRSTOR.
+    ffxsr: bool,
+    /// Translation cache extension.
+    tce: bool,
+    /// ReservedZ.
+    reserved2: u48 = 0,
+};
+
 /// IA32_VMX_BASIC MSR.
 pub const MsrVmxBasic = packed struct(u64) {
     /// VMCS revision identifier.
@@ -585,6 +613,38 @@ pub const MsrVmxBasic = packed struct(u64) {
     true_control: bool,
     /// Reserved.
     _reserved2: u8,
+};
+
+/// IA32_VMX_EPT_VPID_CAP MSR.
+pub const MsrVmxEptVpidCap = packed struct(u64) {
+    ept_exec_only: bool,
+    _reserved1: u5 = 0,
+    ept_lv4: bool,
+    ept_lv5: bool,
+    ept_uc: bool,
+    _reserved2: u5 = 0,
+    ept_wb: bool,
+    _reserved3: u1 = 0,
+    ept_2m: bool,
+    ept_1g: bool,
+    _reserved4: u2 = 0,
+    invept: bool,
+    ept_dirty: bool,
+    ept_advanced_exit: bool,
+    shadow_stack: bool,
+    _reserved5: u1 = 0,
+    invept_single: bool,
+    invept_all: bool,
+    _reserved6: u5 = 0,
+    invvpid: bool,
+    _reserved7: u7 = 0,
+    invvpid_individual: bool,
+    invvpid_single: bool,
+    invvpid_all: bool,
+    invvpid_single_globals: bool,
+    _reserved8: u4 = 0,
+    hlat_prefix: u6,
+    _reserved9: u10 = 0,
 };
 
 /// IA32_FEATURE_CONTROL MSR.

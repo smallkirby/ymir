@@ -445,6 +445,94 @@ pub const PrimaryProcExecCtrl = packed struct(u32) {
     }
 };
 
+/// Secondary processor-based VM-execution controls.
+/// Governs the handling of synchronous events (e.g., instructions).
+/// cf. SDM Vol3C 25.6.2.
+pub const SecondaryProcExecCtrl = packed struct(u32) {
+    const Self = @This();
+
+    /// If set to true, the logical processor treats specially accesses to the page with APIC access address.
+    virtualize_apic_accesses: bool,
+    /// If set to true, EPT is enabled.
+    ept: bool,
+    /// LGDT / LIDT / LLDT / LTR / SGDT / SIDT / SLDT / STR
+    descriptor_table: bool,
+    /// RDTSCP (#UD)
+    rdtscp: bool,
+    /// If set to true, the logical processor treats specially RDMSR/WRMSR to APIC MSRs.
+    virtualize_x2apic_mode: bool,
+    /// If set to true, cached translations of virtual addresses are associated with VPID.
+    vpid: bool,
+    /// WBINVD / NBNOINVD
+    wbinvd: bool,
+    /// Determines whether guest may run in unpaged protected mode or in real address mode.
+    unrestricted_guest: bool,
+    /// If set to true, certain APIC accesses are virtualized.
+    apic_register_virtualization: bool,
+    /// If set to true, it enables the evaluation and delivery of pending virtual interrupts.
+    virtual_interrupt_delivery: bool,
+    /// Series of PAUSE
+    pause_loop: bool,
+    /// RDRAND
+    rdrand: bool,
+    /// If set to false, INVPCID causes #UD.
+    enable_invpcid: bool,
+    /// Enable VMFUNC.
+    enable_vmfunc: bool,
+    /// If set to true, VMREAD / VMWRITE in VMX non-root may access a shadow VMCS.
+    vmcs_shadowing: bool,
+    /// If set to true, ENCLS causes VM exits depending on ENCLS-exiting bitmap.
+    enable_encls: bool,
+    /// RDSEED.
+    rdseed: bool,
+    /// If set to true, first access to GPA that sets EPT dirty bit adds an entry to the page-modification log.
+    enable_pml: bool,
+    /// If set to true, EPT violations cause #VE instead of VM exits.
+    ept_violation: bool,
+    ///
+    conceal_vmx_from_pt: bool,
+    /// If set to false, XSAVES or XRSTORS cause #UD.
+    enable_xsaves_xrstors: bool,
+    /// If set to true, PASID translation is performed for executions of ENQCMD / ENQCMDS.
+    pasid_translation: bool,
+    /// If set to true, EPT permissions are based on if whether the accessed VA is supervisor/user mode.
+    mode_based_control_ept: bool,
+    /// If set to true, EPT write permissions are specified at the granualrity of 128 bytes.
+    subpage_write_eptr: bool,
+    ///
+    pt_guest_pa: bool,
+    /// Determines whether RDTSC / RDTSCP / RDMSR that read from IA32_TIME_STAMP_COUNTER MSR
+    /// return a value modified by the TSC multiplier field.
+    tsc_scaling: bool,
+    /// If set to false, TPAUSE / UMONITOR / UMWAIT cause #UD.
+    enable_user_wait_pause: bool,
+    /// PCONFIG (#UD)
+    enable_pconfig: bool,
+    ///
+    enable_enclv: bool,
+    /// Reserved.
+    /// You MUST consult IA32_VMX_PROCBASED_CTLS2 to determine how to set reserved bits.
+    _reserved1: u1,
+    /// Determines whether assertion of a bus lock cause VM exits.
+    vmm_buslock_detect: bool,
+    ///
+    instruction_timeout: bool,
+
+    pub fn new() Self {
+        return std.mem.zeroes(Self);
+    }
+
+    pub fn load(self: Self) VmxError!void {
+        const val: u32 = @bitCast(self);
+        try vmx.vmwrite(ctrl.secondary_proc_exec_ctrl, val);
+    }
+
+    pub fn store() VmxError!Self {
+        const val: u32 = @truncate(try vmx.vmread(ctrl.secondary_proc_exec_ctrl));
+        return @bitCast(val);
+    }
+};
+
 /// VM-Entry Controls.
 pub const EntryCtrl = packed struct(u32) {
     pub const Self = @This();

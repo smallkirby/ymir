@@ -41,6 +41,8 @@ pub const Vm = struct {
 
     /// Virtualized logical CPU.
     vcpu: impl.Vcpu,
+    /// Guest memory.
+    guest_mem: []u8 = undefined,
 
     /// Create a new virtual machine instance.
     /// You MUST initialize the VM before using it.
@@ -61,7 +63,7 @@ pub const Vm = struct {
             return Error.SystemNotSupported;
         }
 
-        const vcpu = impl.Vcpu.new(0);
+        const vcpu = impl.Vcpu.new(1);
         return Self{
             .vcpu = vcpu,
         };
@@ -86,5 +88,23 @@ pub const Vm = struct {
     pub fn loop(self: *Self) Error!void {
         arch.disableIntr();
         try self.vcpu.loop();
+    }
+
+    /// Setup guest memory.
+    pub fn setupGuestMemory(
+        self: *Self,
+        allocator: Allocator,
+        page_allocator: *PageAllocator,
+    ) Error!void {
+        // Allocate guest memory.
+        self.guest_mem = page_allocator.allocPages(
+            guest_memory_size / mem.page_size_4k,
+            mem.page_size_2mb, // This alignment is required because EPT maps 2MiB pages.
+        ) orelse return Error.OutOfMemory;
+
+        // Create simple EPT mapping.
+        const eptp = try impl.mapGuest(self.guest_mem, allocator);
+        try self.vcpu.setEptp(eptp, self.guest_mem.ptr);
+        log.info("Guet memory is mapped: HVA=0x{X:0>16} (size=0x{X})", .{ @intFromPtr(self.guest_mem.ptr), self.guest_mem.len });
     }
 };
