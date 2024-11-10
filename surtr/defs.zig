@@ -9,6 +9,7 @@ pub const BootInfo = extern struct {
     magic: usize = magic,
     /// UEFI memory map.
     memory_map: MemoryMap,
+    guest_info: GuestInfo,
 };
 
 /// Memory map provided by UEFI.
@@ -25,6 +26,14 @@ pub const MemoryMap = extern struct {
     descriptor_size: usize,
     /// UEFI memory descriptor version.
     descriptor_version: u32,
+};
+
+/// Guest kernel information.
+pub const GuestInfo = extern struct {
+    /// Physical address the guest image is loaded.
+    guest_image: [*]u8,
+    /// Size in bytes of the guest image.
+    guest_size: usize,
 };
 
 pub const MemoryDescriptorIterator = struct {

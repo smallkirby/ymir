@@ -52,6 +52,7 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
 
     // Copy boot_info into Ymir's stack since it becomes inaccessible soon.
     const memory_map = boot_info.memory_map;
+    const guest_info = boot_info.guest_info;
 
     // Initialize GDT.
     // It switches GDT from the one prepared by surtr to the ymir GDT.
@@ -97,8 +98,13 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     try vm.init(mem.general_allocator);
     log.info("Entered VMX root operation.", .{});
 
-    // Setup guest memory.
+    // Setup guest memory and load kernel.
+    const guest_kernel = b: {
+        const ptr: [*]u8 = @ptrFromInt(ymir.mem.phys2virt(guest_info.guest_image));
+        break :b ptr[0..guest_info.guest_size];
+    };
     try vm.setupGuestMemory(
+        guest_kernel,
         mem.general_allocator,
         &mem.page_allocator_instance,
     );

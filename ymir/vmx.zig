@@ -93,6 +93,7 @@ pub const Vm = struct {
     /// Setup guest memory.
     pub fn setupGuestMemory(
         self: *Self,
+        guest_image: []u8,
         allocator: Allocator,
         page_allocator: *PageAllocator,
     ) Error!void {
@@ -102,9 +103,82 @@ pub const Vm = struct {
             mem.page_size_2mb, // This alignment is required because EPT maps 2MiB pages.
         ) orelse return Error.OutOfMemory;
 
+        // Load kernel
+        try self.loadKernel(guest_image);
+
         // Create simple EPT mapping.
         const eptp = try impl.mapGuest(self.guest_mem, allocator);
         try self.vcpu.setEptp(eptp, self.guest_mem.ptr);
         log.info("Guet memory is mapped: HVA=0x{X:0>16} (size=0x{X})", .{ @intFromPtr(self.guest_mem.ptr), self.guest_mem.len });
+    }
+
+    /// Load a protected kernel image and cmdline to the guest physical memory.
+    fn loadKernel(self: *Self, kernel: []u8) Error!void {
+        const guest_mem = self.guest_mem;
+
+        if (kernel.len >= guest_mem.len) {
+            return Error.OutOfMemory;
+        }
+
+        var bp = BootParams.from(kernel);
+        bp.e820_entries = 0;
+
+        // Setup necessary fields
+        bp.hdr.type_of_loader = 0xFF;
+        bp.hdr.ext_loader_ver = 0;
+        bp.hdr.loadflags.loaded_high = true; // load kernel at 0x10_0000
+        bp.hdr.loadflags.can_use_heap = true; // use memory 0..BOOTPARAM as heap
+        bp.hdr.heap_end_ptr = linux.layout.bootparam - 0x200;
+        bp.hdr.loadflags.keep_segments = true; // we set CS/DS/SS/ES to flag segments with a base of 0.
+        bp.hdr.cmd_line_ptr = linux.layout.cmdline;
+        bp.hdr.vid_mode = 0xFFFF; // VGA (normal)
+
+        // Setup E820 map
+        bp.addE820entry(0, linux.layout.kernel_base, .ram);
+        bp.addE820entry(
+            linux.layout.kernel_base,
+            guest_mem.len - linux.layout.kernel_base,
+            .ram,
+        );
+
+        // Setup cmdline
+        const cmdline_max_size = if (bp.hdr.cmdline_size < 256) bp.hdr.cmdline_size else 256;
+        const cmdline = guest_mem[linux.layout.cmdline .. linux.layout.cmdline + cmdline_max_size];
+        const cmdline_val = "console=ttyS0 earlyprintk=serial nokaslr";
+        @memset(cmdline, 0);
+        @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
+
+        // Load initrd (TODO)
+        bp.hdr.ramdisk_image = 0xDEADBEEF;
+        bp.hdr.ramdisk_size = 0;
+
+        // Copy boot_params
+        try loadImage(
+            guest_mem,
+            std.mem.asBytes(&bp),
+            linux.layout.bootparam,
+        );
+
+        // Load protected-mode kernel code
+        const code_offset = bp.hdr.getProtectedCodeOffset();
+        const code_size = kernel.len - code_offset;
+        try loadImage(
+            guest_mem,
+            kernel[code_offset .. code_offset + code_size],
+            linux.layout.kernel_base,
+        );
+        if (linux.layout.kernel_base + code_size > guest_mem.len) {
+            return Error.OutOfMemory;
+        }
+
+        log.info("Guest memory region: 0x{X:0>16} - 0x{X:0>16}", .{ 0, guest_mem.len });
+        log.info("Guest kernel code offset: 0x{X:0>16}", .{code_offset});
+    }
+
+    fn loadImage(memory: []u8, image: []u8, addr: usize) !void {
+        if (memory.len < addr + image.len) {
+            return Error.OutOfMemory;
+        }
+        @memcpy(memory[addr .. addr + image.len], image);
     }
 };
