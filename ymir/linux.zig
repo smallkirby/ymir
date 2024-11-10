@@ -110,18 +110,6 @@ pub const SetupHeader = extern struct {
         return hdr;
     }
 
-    /// Get the version string.
-    /// Caller must free the returned string.
-    pub fn getVersionString(self: @This(), allocator: std.mem.Allocator) ![]const u8 {
-        const minor = self.version & 0xFF;
-        const major = (self.version >> 8) & 0xFF;
-        return try std.fmt.allocPrint(
-            allocator,
-            "{d}.{d}",
-            .{ major, minor },
-        );
-    }
-
     /// Get the offset of the protected-mode kernel code.
     /// Real-mode code consists of the boot sector (1 sector == 512 bytes)
     /// plus the setup code (`setup_sects` sectors).
