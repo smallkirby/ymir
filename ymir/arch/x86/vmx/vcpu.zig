@@ -13,6 +13,7 @@ const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
 const vmam = @import("asm.zig");
 const ept = @import("ept.zig");
+const cpuid = @import("cpuid.zig");
 const VmxError = vmx.VmxError;
 const vmread = vmx.vmread;
 const vmwrite = vmx.vmwrite;
@@ -135,9 +136,9 @@ pub const Vcpu = struct {
     /// Handle the VM-exit.
     fn handleExit(self: *Self, exit_info: vmx.ExitInfo) VmxError!void {
         switch (exit_info.basic_reason) {
-            .hlt => {
+            .cpuid => {
+                try cpuid.handleCpuidExit(self);
                 try self.stepNextInst();
-                log.debug("HLT", .{});
             },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
