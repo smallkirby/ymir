@@ -142,8 +142,7 @@ pub const Vcpu = struct {
             }
 
             // Save MSR.
-            storeHostMsrs(self);
-            try updateVmcsMsrs(self);
+            try updateMsrs(self);
 
             // Enter VMX non-root operation.
             self.vmentry() catch |err| {
@@ -465,15 +464,14 @@ fn resetVmcs(vmcs_region: *VmcsRegion) VmxError!void {
     try am.vmptrld(mem.virt2phys(vmcs_region));
 }
 
-/// Save current host MSR values to MSR page.
-fn storeHostMsrs(vcpu: *Vcpu) void {
+/// Save current host MSR values to MSR page, then update MSR counts.
+fn updateMsrs(vcpu: *Vcpu) VmxError!void {
+    // Save host MSRs.
     for (vcpu.host_msr.savedEnts()) |ent| {
         vcpu.host_msr.setByIndex(ent.index, am.readMsr(@enumFromInt(ent.index)));
     }
-}
 
-/// Update MSR count fields in VMCS.
-fn updateVmcsMsrs(vcpu: *Vcpu) VmxError!void {
+    // Update MSR counts.
     try vmwrite(vmcs.ctrl.vexit_msr_load_count, vcpu.host_msr.num_ents);
     try vmwrite(vmcs.ctrl.exit_msr_store_count, vcpu.guest_msr.num_ents);
     try vmwrite(vmcs.ctrl.entry_msr_load_count, vcpu.guest_msr.num_ents);
@@ -587,6 +585,8 @@ fn setupExitCtrls(_: *Vcpu) VmxError!void {
     exit_ctrl.host_addr_space_size = true;
     exit_ctrl.load_ia32_efer = true;
     exit_ctrl.save_ia32_efer = true;
+    exit_ctrl.load_ia32_pat = true;
+    exit_ctrl.save_ia32_pat = true;
     exit_ctrl.ack_interrupt_onexit = false; // Ymir wants to handle interrupt by herself.
     try adjustRegMandatoryBits(
         exit_ctrl,
@@ -606,6 +606,7 @@ fn setupEntryCtrls(_: *Vcpu) VmxError!void {
     var entry_ctrl = try vmcs.EntryCtrl.store();
     entry_ctrl.ia32e_mode_guest = false;
     entry_ctrl.load_ia32_efer = true;
+    entry_ctrl.load_ia32_pat = true;
     try adjustRegMandatoryBits(
         entry_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
