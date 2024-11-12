@@ -15,6 +15,9 @@ const vmam = @import("asm.zig");
 const ept = @import("ept.zig");
 const cpuid = @import("cpuid.zig");
 const msr = @import("msr.zig");
+const cr = @import("cr.zig");
+
+const qual = vmx.qual;
 const VmxError = vmx.VmxError;
 const vmread = vmx.vmread;
 const vmwrite = vmx.vmwrite;
@@ -44,6 +47,8 @@ pub const Vcpu = struct {
     host_msr: msr.ShadowMsr = undefined,
     /// Guest saved MSRs.
     guest_msr: msr.ShadowMsr = undefined,
+    /// IA-32e mode is enabled.
+    ia32e_enabled: bool = false,
 
     /// Create a new virtual CPU.
     /// This function does not virtualize the CPU.
@@ -155,6 +160,11 @@ pub const Vcpu = struct {
             },
             .wrmsr => {
                 try msr.handleWrmsrExit(self);
+                try self.stepNextInst();
+            },
+            .cr => {
+                const q = try getExitQual(qual.QualCr);
+                try cr.handleAccessCr(self, q);
                 try self.stepNextInst();
             },
             else => {
@@ -269,10 +279,15 @@ fn setupExecCtrls(vcpu: *Vcpu, _: Allocator) VmxError!void {
     ppb_exec_ctrl2.unrestricted_guest = true;
     ppb_exec_ctrl2.ept = true;
     ppb_exec_ctrl2.vpid = isVpidSupported();
+    ppb_exec_ctrl2.enable_invpcid = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl2,
         am.readMsr(.vmx_procbased_ctls2),
     ).load();
+
+    // Exit on access to CR0/CR4.
+    try vmwrite(vmcs.ctrl.cr0_mask, std.math.maxInt(u64));
+    try vmwrite(vmcs.ctrl.cr4_mask, std.math.maxInt(u64));
 
     // VPID
     if (isVpidSupported()) {
@@ -349,8 +364,8 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
     cr4.vmxe = true;
     try vmwrite(vmcs.guest.cr0, cr0);
     try vmwrite(vmcs.guest.cr4, cr4);
-
-    // TODO: CR0/CR4 shadow
+    try vmwrite(vmcs.ctrl.cr0_read_shadow, cr0);
+    try vmwrite(vmcs.ctrl.cr4_read_shadow, cr4);
 
     // Segment registers.
     {
@@ -535,6 +550,11 @@ fn vmxon(allocator: Allocator) VmxError!*VmxonRegion {
     };
 
     return vmxon_region;
+}
+
+/// Get a VM-exit qualification from VMCS.
+fn getExitQual(T: anytype) VmxError!T {
+    return @bitCast(@as(u64, try vmread(vmcs.ro.exit_qual)));
 }
 
 /// Check if INVVPID is supported.

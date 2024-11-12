@@ -280,6 +280,28 @@ pub inline fn vmptrld(vmcs_region: mem.Phys) VmxError!void {
     try vmxerr(rflags);
 }
 
+const InvvpidType = enum(u64) {
+    individual_address = 0,
+    single_context = 1,
+    all_context = 2,
+    single_global = 3,
+};
+
+pub inline fn invvpid(comptime inv_type: InvvpidType, vpid: u16) void {
+    const descriptor: packed struct(u128) {
+        vpid: u16,
+        _reserved: u48 = 0,
+        linear_addr: u64 = 0,
+    } align(128) = .{ .vpid = vpid };
+    asm volatile (
+        \\invvpid (%[descriptor]), %[inv_type]
+        :
+        : [inv_type] "r" (@intFromEnum(inv_type)),
+          [descriptor] "r" (&descriptor),
+        : "memory"
+    );
+}
+
 /// EFLAGS register.
 pub const FlagsRegister = packed struct(u64) {
     /// Carry flag.
