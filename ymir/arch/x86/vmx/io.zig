@@ -84,7 +84,7 @@ fn handleSerialIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         // Line Status Register.
         0x3FD => regs.rax = am.inb(qual.port), // pass-through
         // Modem Status Register.
-        0x3FE => regs.rax = vcpu.serial.msr,
+        0x3FE => regs.rax = am.inb(qual.port), // pass-through
         // Scratch Register.
         0x3FF => regs.rax = 0, // 8250
         else => {
@@ -98,13 +98,7 @@ fn handleSerialOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     const regs = &vcpu.guest_regs;
     switch (qual.port) {
         // Transmit buffer.
-        0x3F8 => {
-            sr.writeByte(@truncate(regs.rax), .com1);
-            // If "TX empty" interrupt is enabled, set the pending IRQ.
-            if (vcpu.serial.ier & 0b0010 != 0) {
-                vcpu.pending_irq |= 1 << @intFromEnum(IrqLine.serial1);
-            }
-        },
+        0x3F8 => sr.writeByte(@truncate(regs.rax), .com1),
         // Interrupt Enable Register.
         0x3F9 => vcpu.serial.ier = @truncate(regs.rax),
         // FIFO control registers.
@@ -113,8 +107,6 @@ fn handleSerialOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         0x3FB => {}, // ignore
         // Modem Control Register.
         0x3FC => vcpu.serial.mcr = @truncate(regs.rax),
-        // Modem Status Register.
-        0x3FE => vcpu.serial.msr = @truncate(regs.rax),
         // Scratch Register.
         0x3FF => {}, // ignore
         else => {
@@ -284,8 +276,6 @@ pub const Serial = struct {
     ier: u8 = 0,
     /// Modem Control Register.
     mcr: u8 = 0,
-    /// Line Status Register.
-    msr: u8 = 0,
 
     pub fn new() Serial {
         return Serial{};
