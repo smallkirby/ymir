@@ -523,7 +523,7 @@ fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
     // Primary Processor-based VM-Execution control.
     var ppb_exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
     ppb_exec_ctrl.activate_secondary_controls = true;
-    ppb_exec_ctrl.unconditional_io = true;
+    ppb_exec_ctrl.unconditional_io = false;
     ppb_exec_ctrl.use_io_bitmap = true;
     ppb_exec_ctrl.hlt = true;
     ppb_exec_ctrl.use_tpr_shadow = true;
@@ -538,6 +538,9 @@ fn setupExecCtrls(vcpu: *Vcpu, allocator: Allocator) VmxError!void {
 
     // Init I/O bitmap
     vcpu.io_bitmap = try vmx.IoBitmap.new(allocator);
+    for (0x40..0x48) |port| {
+        vcpu.io_bitmap.set(@intCast(port), false);
+    }
 
     // Secondary Processor-based VM-Execution control.
     var ppb_exec_ctrl2 = try vmcs.SecondaryProcExecCtrl.store();

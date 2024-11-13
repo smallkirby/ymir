@@ -23,8 +23,7 @@ fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     const regs = &vcpu.guest_regs;
     switch (qual.port) {
         0x0020, 0x0021 => try handlePicIn(vcpu, qual),
-        0x0040...0x0047 => try handlePitIn(vcpu, qual),
-        0x0060...0x64 => regs.rax = 0, // PS/2. Unimplemented.
+        0x0060...0x0064 => regs.rax = 0, // PS/2. Unimplemented.
         0x0070, 0x0071 => regs.rax = 0, // RTC. Unimplemented.
         0x0080...0x008F => {}, // DMA. Unimplemented.
         0x00A0, 0x00A1 => try handlePicIn(vcpu, qual),
@@ -46,16 +45,15 @@ fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
 fn handleIoOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     switch (qual.port) {
         0x0020, 0x0021 => try handlePicOut(vcpu, qual),
-        0x0040...0x0047 => try handlePitOut(vcpu, qual),
-        0x0060...0x64 => {}, // PS/2. Unimplemented.
+        0x0060...0x0064 => {}, // PS/2. Unimplemented.
         0x0070, 0x0071 => {}, // RTC. Unimplemented.
         0x0080...0x008F => {}, // DMA. Unimplemented.
         0x00A0, 0x00A1 => try handlePicOut(vcpu, qual),
-        0x2E8...0x2EF => {}, // Fourth serial port. Ignore.
+        0x02E8...0x02EF => {}, // Fourth serial port. Ignore.
         0x02F8...0x02FF => {}, // Second serial port. Ignore.
         0x03B0...0x03DF => {}, // VGA. Uniimplemented.
         0x03F8...0x03FF => try handleSerialOut(vcpu, qual),
-        0x3E8...0x3EF => {}, // Third serial port. Ignore.
+        0x03E8...0x03EF => {}, // Third serial port. Ignore.
         0x0CF8...0x0CFF => {}, // PCI. Unimplemented.
         0xC000...0xCFFF => {}, // Old PCI. Ignore.
         else => {
@@ -113,25 +111,6 @@ fn handleSerialOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             log.err("Unsupported I/O-out to the first serial port: 0x{X}", .{qual.port});
             vcpu.abort();
         },
-    }
-}
-
-fn handlePitIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
-    const regs = &vcpu.guest_regs;
-    // Pass-through.
-    switch (qual.size) {
-        .byte => regs.rax = @as(u64, am.inb(qual.port)),
-        .word => regs.rax = @as(u64, am.inw(qual.port)),
-        .dword => regs.rax = @as(u64, am.inl(qual.port)),
-    }
-}
-
-fn handlePitOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
-    // Pass-through.
-    switch (qual.size) {
-        .byte => am.outb(@truncate(vcpu.guest_regs.rax), qual.port),
-        .word => am.outw(@truncate(vcpu.guest_regs.rax), qual.port),
-        .dword => am.outl(@truncate(vcpu.guest_regs.rax), qual.port),
     }
 }
 
