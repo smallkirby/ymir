@@ -16,6 +16,7 @@ const ept = @import("ept.zig");
 const cpuid = @import("cpuid.zig");
 const msr = @import("msr.zig");
 const cr = @import("cr.zig");
+const io = @import("io.zig");
 
 const qual = vmx.qual;
 const VmxError = vmx.VmxError;
@@ -49,6 +50,10 @@ pub const Vcpu = struct {
     guest_msr: msr.ShadowMsr = undefined,
     /// IA-32e mode is enabled.
     ia32e_enabled: bool = false,
+    /// 8250 serial port.
+    serial: io.Serial = io.Serial.new(),
+    /// PIC
+    pic: io.Pic = io.Pic.new(),
 
     /// Create a new virtual CPU.
     /// This function does not virtualize the CPU.
@@ -167,6 +172,11 @@ pub const Vcpu = struct {
                 try cr.handleAccessCr(self, q);
                 try self.stepNextInst();
             },
+            .io => {
+                const q = try getExitQual(qual.QualIo);
+                try io.handleIo(self, q);
+                try self.stepNextInst();
+            },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
                 self.abort();
@@ -269,6 +279,7 @@ fn setupExecCtrls(vcpu: *Vcpu, _: Allocator) VmxError!void {
     ppb_exec_ctrl.activate_secondary_controls = true;
     ppb_exec_ctrl.use_tpr_shadow = false;
     ppb_exec_ctrl.use_msr_bitmap = false;
+    ppb_exec_ctrl.unconditional_io = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
