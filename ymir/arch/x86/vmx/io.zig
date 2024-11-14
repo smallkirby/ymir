@@ -22,11 +22,11 @@ pub fn handleIo(vcpu: *Vcpu, qual: QualIo) VmxError!void {
 fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     const regs = &vcpu.guest_regs;
     switch (qual.port) {
-        0x0020, 0x0021 => try handlePicIn(vcpu, qual),
+        0x0020...0x0021 => try handlePicIn(vcpu, qual),
         0x0060...0x0064 => regs.rax = 0, // PS/2. Unimplemented.
-        0x0070, 0x0071 => regs.rax = 0, // RTC. Unimplemented.
+        0x0070...0x0071 => regs.rax = 0, // RTC. Unimplemented.
         0x0080...0x008F => {}, // DMA. Unimplemented.
-        0x00A0, 0x00A1 => try handlePicIn(vcpu, qual),
+        0x00A0...0x00A1 => try handlePicIn(vcpu, qual),
         0x02E8...0x02EF => {}, // Fourth serial port. Ignore.
         0x02F8...0x02FF => {}, // Second serial port. Ignore.
         0x03B0...0x03DF => regs.rax = 0, // VGA. Uniimplemented.
@@ -44,11 +44,11 @@ fn handleIoIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
 
 fn handleIoOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     switch (qual.port) {
-        0x0020, 0x0021 => try handlePicOut(vcpu, qual),
+        0x0020...0x0021 => try handlePicOut(vcpu, qual),
         0x0060...0x0064 => {}, // PS/2. Unimplemented.
-        0x0070, 0x0071 => {}, // RTC. Unimplemented.
+        0x0070...0x0071 => {}, // RTC. Unimplemented.
         0x0080...0x008F => {}, // DMA. Unimplemented.
-        0x00A0, 0x00A1 => try handlePicOut(vcpu, qual),
+        0x00A0...0x00A1 => try handlePicOut(vcpu, qual),
         0x02E8...0x02EF => {}, // Fourth serial port. Ignore.
         0x02F8...0x02FF => {}, // Second serial port. Ignore.
         0x03B0...0x03DF => {}, // VGA. Uniimplemented.
