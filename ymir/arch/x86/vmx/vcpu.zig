@@ -183,7 +183,7 @@ pub const Vcpu = struct {
     fn handleExit(self: *Self, exit_info: vmx.ExitInfo) VmxError!void {
         switch (exit_info.basic_reason) {
             .exception_nmi => {
-                const ii = try vmx.EntryIntrInfo.load(.exit);
+                const ii = try vmx.ExitIntrInfo.load(.exit);
                 if (!ii.valid) {
                     log.err("Invalid VM-exit interrupt information.", .{});
                     self.abort();

@@ -404,9 +404,42 @@ pub const EntryIntrInfo = packed struct(u32) {
         entry,
         exit,
     };
+};
+
+/// VM-Exit Interruption-information.
+/// SDM Vol.3C. Table 25-19.
+pub const ExitIntrInfo = packed struct(u32) {
+    /// Vector of interrupt or exception.
+    vector: u8,
+    /// Interruption type.
+    type: Type,
+    /// Error Code is valid.
+    ec_valid: bool,
+    /// NMI unblocking due to IRET.
+    nmi_unblocking: bool,
+    /// Not currently defined.
+    _notused: u18 = 0,
+    /// Valid.
+    valid: bool,
+
+    const Type = enum(u3) {
+        external = 0,
+        _unused1 = 1,
+        nmi = 2,
+        hw = 3,
+        _unused2 = 4,
+        priviledged_sw = 5,
+        exception = 6,
+        _unused3 = 7,
+    };
+
+    const Kind = enum {
+        entry,
+        exit,
+    };
 
     /// Get a VM-entry or VM-exit interrupt information from VMCS.
-    pub fn load(kind: Kind) VmxError!EntryIntrInfo {
+    pub fn load(kind: Kind) VmxError!ExitIntrInfo {
         return @bitCast(@as(u32, @truncate(switch (kind) {
             .entry => try vmread(vmcs.ctrl.entry_intr_info),
             .exit => try vmread(vmcs.ro.exit_intr_info),
