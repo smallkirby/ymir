@@ -183,7 +183,7 @@ pub const Vcpu = struct {
     fn handleExit(self: *Self, exit_info: vmx.ExitInfo) VmxError!void {
         switch (exit_info.basic_reason) {
             .exception_nmi => {
-                const ii = try vmx.InterruptInfo.load(.exit);
+                const ii = try vmx.EntryIntrInfo.load(.exit);
                 if (!ii.valid) {
                     log.err("Invalid VM-exit interrupt information.", .{});
                     self.abort();
@@ -383,11 +383,10 @@ pub const Vcpu = struct {
             if (is_masked) continue;
 
             // Inject the interrupt.
-            const intr_info = vmx.InterruptInfo{
+            const intr_info = vmx.EntryIntrInfo{
                 .vector = irq.delta() + if (irq.isPrimary()) self.pic.primary_base else self.pic.secondary_base,
                 .type = .external,
-                .ec_valid = false,
-                .nmi_unblocking = false,
+                .ec_available = false,
                 .valid = true,
             };
             try vmwrite(vmcs.ctrl.entry_intr_info, intr_info);

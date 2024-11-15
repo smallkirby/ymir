@@ -375,19 +375,17 @@ pub const ExitReason = enum(u16) {
     tdcall = 77,
 };
 
-/// VM-exit interruption information.
-/// cf. SDM Vol.3C. 28.2.2. Table 25-19.
-pub const InterruptInfo = packed struct(u32) {
+/// VM-entry interruption-information.
+/// cf. SDM Vol.3C. Table 25-17.
+pub const EntryIntrInfo = packed struct(u32) {
     /// Vector of interrupt or exception.
     vector: u8,
     /// Interruption type.
     type: Type,
-    /// Error code valid.
-    ec_valid: bool,
-    /// NMI unblocking due to IRET.
-    nmi_unblocking: bool,
+    /// Error Code is delivered.
+    ec_available: bool,
     /// Not currently defined.
-    _notused: u18 = 0,
+    _notused: u19 = 0,
     /// Valid.
     valid: bool,
 
@@ -408,7 +406,7 @@ pub const InterruptInfo = packed struct(u32) {
     };
 
     /// Get a VM-entry or VM-exit interrupt information from VMCS.
-    pub fn load(kind: Kind) VmxError!InterruptInfo {
+    pub fn load(kind: Kind) VmxError!EntryIntrInfo {
         return @bitCast(@as(u32, @truncate(switch (kind) {
             .entry => try vmread(vmcs.ctrl.entry_intr_info),
             .exit => try vmread(vmcs.ro.exit_intr_info),
