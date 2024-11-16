@@ -26,6 +26,11 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption(std.log.Level, "log_level", log_level);
 
+    // Modules
+    const surtr_module = b.createModule(.{
+        .root_source_file = b.path("surtr/defs.zig"),
+    });
+
     // Executables
     const surtr = b.addExecutable(.{
         .name = "BOOTX64.EFI",
@@ -55,6 +60,7 @@ pub fn build(b: *std.Build) void {
     });
     ymir.entry = .{ .symbol_name = "kernelEntry" };
     ymir.linker_script = b.path("ymir/linker.ld");
+    ymir.root_module.addImport("surtr", surtr_module);
     b.installArtifact(ymir);
 
     // EFI directory
