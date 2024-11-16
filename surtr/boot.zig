@@ -176,6 +176,21 @@ pub fn main() uefi.Status {
         if (zero_count > 0) {
             boot_service.setMem(@ptrFromInt(phdr.p_vaddr + phdr.p_filesz), zero_count, 0);
         }
+
+        // Change memory protection.
+        const page_start = phdr.p_vaddr & ~page_mask;
+        const page_end = (phdr.p_vaddr + phdr.p_memsz + (page_size - 1)) & ~page_mask;
+        const size = (page_end - page_start) / page_size;
+        const attribute = arch.page.PageAttribute.fromFlags(phdr.p_flags);
+        for (0..size) |i| {
+            arch.page.changeMap4k(
+                page_start + page_size * i,
+                attribute,
+            ) catch |err| {
+                log.err("Failed to change memory protection: {?}", .{err});
+                return .LoadError;
+            };
+        }
     }
 
     // Clean up memory.

@@ -6,6 +6,7 @@ const ymir = @import("ymir");
 const klog = ymir.klog;
 const serial = ymir.serial;
 const arch = ymir.arch;
+const mem = ymir.mem;
 
 /// Guard page placed below the kernel stack.
 extern const __stackguard_lower: [*]const u8;
@@ -62,6 +63,10 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // Initialize page allocator.
     ymir.mem.initPageAllocator(memory_map);
     log.info("Initialized page allocator.", .{});
+
+    // Reconstruct memory mapping from the one provided by UEFI and Sutr.
+    log.info("Reconstructing memory mapping...", .{});
+    try mem.reconstructMapping(mem.page_allocator);
 
     while (true) asm volatile ("hlt");
 }

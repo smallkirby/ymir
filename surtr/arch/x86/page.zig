@@ -204,6 +204,31 @@ fn clearPage(addr: Phys) void {
     @memset(page_ptr[0..page_size_4k], 0);
 }
 
+/// Change the attribute of the 4KiB page.
+pub fn changeMap4k(virt: Virt, attr: PageAttribute) PageError!void {
+    if (virt & 0xFFF != 0) return PageError.InvalidAddress;
+    if (!isCanonical(virt)) return PageError.NotCanonical;
+
+    const rw = switch (attr) {
+        .read_only, .executable => false,
+        .read_write => true,
+    };
+    const xd = attr != .executable;
+
+    const lv4ent = getLv4Entry(virt, am.readCr3());
+    if (!lv4ent.present) return PageError.NotPresent;
+    const lv3ent = getLv3Entry(virt, lv4ent.address());
+    if (!lv3ent.present) return PageError.NotPresent;
+    const lv2ent = getLv2Entry(virt, lv3ent.address());
+    if (!lv2ent.present) return PageError.NotPresent;
+    const lv1ent = getLv1Entry(virt, lv2ent.address());
+    if (!lv1ent.present) return PageError.NotPresent;
+
+    lv1ent.rw = rw;
+    lv1ent.xd = xd;
+    am.flushTlbSingle(virt);
+}
+
 const TableLevel = enum { lv4, lv3, lv2, lv1 };
 
 fn EntryBase(table_level: TableLevel) type {

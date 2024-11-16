@@ -123,6 +123,8 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     ymir_tests.root_module.addImport("ymir", &ymir_tests.root_module);
+    ymir_tests.root_module.addImport("surtr", surtr_module);
+    ymir_tests.root_module.addOptions("option", options);
 
     const run_ymir_tests = b.addRunArtifact(ymir_tests);
     const test_step = b.step("test", "Run unit tests");

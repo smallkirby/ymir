@@ -68,6 +68,19 @@ pub const isCanonical = switch (builtin.target.cpu.arch) {
     else => @compileError("Unsupported architecture."),
 };
 
+/// Discard the initial direct mapping and construct Ymir's page tables.
+/// It creates two mappings: direct mapping and kernel text mapping.
+/// For the detail, refer to this module documentation.
+pub fn reconstructMapping(allocator: Allocator) !void {
+    try arch.page.reconstruct(allocator);
+
+    // Remap pages.
+    mapping_reconstructed.store(true, .release);
+
+    // Notify that BootServicesData region is no longer needed.
+    page_allocator_instance.discardBootService();
+}
+
 /// Translate the given virtual address to physical address.
 /// This function just use simple calculation and does not walk page tables.
 /// To do page table walk, use arch-specific functions.
@@ -77,7 +90,15 @@ pub fn virt2phys(addr: anytype) Phys {
         .Pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
-    return value; // TODO
+    return if (!mapping_reconstructed.load(.acquire)) b: {
+        break :b value;
+    } else if (value < ymir.kernel_base) b: {
+        // Direct mapping region.
+        break :b value - ymir.direct_map_base;
+    } else b: {
+        // Kernel image mapping region.
+        break :b value - ymir.kernel_base;
+    };
 }
 
 /// Translate the given physical address to virtual address.
@@ -91,7 +112,7 @@ pub fn phys2virt(addr: anytype) Virt {
     };
     return if (!mapping_reconstructed.load(.acquire)) b: {
         break :b value;
-    } else {
-        @panic("phys2virt: unimplemented");
+    } else b: {
+        break :b value + ymir.direct_map_base;
     };
 }
