@@ -1,6 +1,9 @@
 const std = @import("std");
 
 const surtr = @import("surtr");
+const ymir = @import("ymir");
+const serial = ymir.serial;
+const arch = ymir.arch;
 
 /// Guard page placed below the kernel stack.
 extern const __stackguard_lower: [*]const u8;
@@ -28,6 +31,10 @@ export fn kernelTrampoline(boot_info: surtr.BootInfo) callconv(.Win64) noreturn 
 
 /// Kernel main function.
 fn kernelMain(boot_info: surtr.BootInfo) !void {
+    // Initialize the serial console and logger.
+    const sr = serial.init();
+    sr.writeString("Hello, Ymir!\n");
+
     // Validate the boot info.
     validateBootInfo(boot_info) catch {
         return error.InvalidBootInfo;

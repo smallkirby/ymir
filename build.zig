@@ -30,6 +30,11 @@ pub fn build(b: *std.Build) void {
     const surtr_module = b.createModule(.{
         .root_source_file = b.path("surtr/defs.zig"),
     });
+    const ymir_module = b.createModule(.{
+        .root_source_file = b.path("ymir/ymir.zig"),
+    });
+    ymir_module.addImport("ymir", ymir_module);
+    ymir_module.addImport("surtr", surtr_module);
 
     // Executables
     const surtr = b.addExecutable(.{
@@ -61,6 +66,7 @@ pub fn build(b: *std.Build) void {
     ymir.entry = .{ .symbol_name = "kernelEntry" };
     ymir.linker_script = b.path("ymir/linker.ld");
     ymir.root_module.addImport("surtr", surtr_module);
+    ymir.root_module.addImport("ymir", ymir_module);
     b.installArtifact(ymir);
 
     // EFI directory
