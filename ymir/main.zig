@@ -103,8 +103,13 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
         const ptr: [*]u8 = @ptrFromInt(ymir.mem.phys2virt(guest_info.guest_image));
         break :b ptr[0..guest_info.guest_size];
     };
+    const initrd = b: {
+        const ptr: [*]u8 = @ptrFromInt(ymir.mem.phys2virt(guest_info.initrd_addr));
+        break :b ptr[0..guest_info.initrd_size];
+    };
     try vm.setupGuestMemory(
         guest_kernel,
+        initrd,
         mem.general_allocator,
         &mem.page_allocator_instance,
     );

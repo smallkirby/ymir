@@ -94,6 +94,7 @@ pub const Vm = struct {
     pub fn setupGuestMemory(
         self: *Self,
         guest_image: []u8,
+        initrd: []u8,
         allocator: Allocator,
         page_allocator: *PageAllocator,
     ) Error!void {
@@ -104,7 +105,7 @@ pub const Vm = struct {
         ) orelse return Error.OutOfMemory;
 
         // Load kernel
-        try self.loadKernel(guest_image);
+        try self.loadKernel(guest_image, initrd);
 
         // Create simple EPT mapping.
         const eptp = try impl.mapGuest(self.guest_mem, allocator);
@@ -113,7 +114,7 @@ pub const Vm = struct {
     }
 
     /// Load a protected kernel image and cmdline to the guest physical memory.
-    fn loadKernel(self: *Self, kernel: []u8) Error!void {
+    fn loadKernel(self: *Self, kernel: []u8, initrd: []u8) Error!void {
         const guest_mem = self.guest_mem;
 
         if (kernel.len >= guest_mem.len) {
@@ -148,9 +149,16 @@ pub const Vm = struct {
         @memset(cmdline, 0);
         @memcpy(cmdline[0..cmdline_val.len], cmdline_val);
 
-        // Load initrd (TODO)
-        bp.hdr.ramdisk_image = 0xDEADBEEF;
-        bp.hdr.ramdisk_size = 0;
+        // Load initrd
+        if (guest_mem.len - linux.layout.initrd < initrd.len) {
+            return Error.OutOfMemory;
+        }
+        if (bp.hdr.initrd_addr_max < linux.layout.initrd + initrd.len) {
+            return Error.OutOfMemory;
+        }
+        bp.hdr.ramdisk_image = linux.layout.initrd;
+        bp.hdr.ramdisk_size = @truncate(initrd.len);
+        try loadImage(guest_mem, initrd, linux.layout.initrd);
 
         // Copy boot_params
         try loadImage(

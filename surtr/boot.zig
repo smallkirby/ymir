@@ -225,10 +225,46 @@ pub fn main() uefi.Status {
     }
     log.info("Loaded guest kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ guest_start, guest_start + guest_size });
 
+    // Load initrd.
+    const initrd = openFile(root_dir, "rootfs.cpio.gz") catch return .Aborted;
+    log.info("Opened initrd file.", .{});
+
+    const initrd_info_buffer_size: usize = @sizeOf(uefi.FileInfo) + 0x100;
+    var initrd_info_actual_size = initrd_info_buffer_size;
+    var initrd_info_buffer: [initrd_info_buffer_size]u8 align(@alignOf(uefi.FileInfo)) = undefined;
+    status = initrd.getInfo(&uefi.FileInfo.guid, &initrd_info_actual_size, &initrd_info_buffer);
+    if (status != .Success) {
+        log.err("Failed to get initrd file info.", .{});
+        return status;
+    }
+    const initrd_info: *const uefi.FileInfo = @alignCast(@ptrCast(&initrd_info_buffer));
+    var initrd_size = initrd_info.file_size;
+    log.info("Initrd size: 0x{X:0>16} bytes", .{initrd_size});
+
+    var initrd_start: u64 = undefined;
+    const initrd_size_pages = (initrd_size + (page_size - 1)) / page_size;
+    status = boot_service.allocatePages(.AllocateAnyPages, .LoaderData, initrd_size_pages, @ptrCast(&initrd_start));
+    if (status != .Success) {
+        log.err("Failed to allocate memory for initrd.", .{});
+        return status;
+    }
+
+    status = initrd.read(&initrd_size, @ptrFromInt(initrd_start));
+    if (status != .Success) {
+        log.err("Failed to read initrd.", .{});
+        return status;
+    }
+    log.info("Loaded initrd @ 0x{X:0>16} ~ 0x{X:0>16}", .{ initrd_start, initrd_start + initrd_size });
+
     // Clean up memory.
     status = boot_service.freePool(header_buffer);
     if (status != .Success) {
         log.err("Failed to free memory for kernel ELF header.", .{});
+        return status;
+    }
+    status = initrd.close();
+    if (status != .Success) {
+        log.err("Failed to close initrd file.", .{});
         return status;
     }
     status = kernel.close();
@@ -306,6 +342,8 @@ pub fn main() uefi.Status {
         .guest_info = .{
             .guest_image = @ptrFromInt(guest_start),
             .guest_size = guest_size,
+            .initrd_addr = @ptrFromInt(initrd_start),
+            .initrd_size = initrd_size,
         },
     };
     kernel_entry(boot_info);

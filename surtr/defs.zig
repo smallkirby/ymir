@@ -34,6 +34,10 @@ pub const GuestInfo = extern struct {
     guest_image: [*]u8,
     /// Size in bytes of the guest image.
     guest_size: usize,
+    /// Physical address the initrd is loaded.
+    initrd_addr: [*]u8,
+    /// Size in bytes of the initrd.
+    initrd_size: usize,
 };
 
 pub const MemoryDescriptorIterator = struct {
