@@ -69,6 +69,13 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     log.info("Reconstructing memory mapping...", .{});
     try mem.reconstructMapping(mem.page_allocator);
 
+    // Now, stack, GDT, and page tables are switched to the ymir's ones.
+    // We are ready to destroy any usable regions in UEFI memory map.
+
+    // Initialize general allocator.
+    ymir.mem.initGeneralAllocator();
+    log.info("Initialized general allocator.", .{});
+
     while (true) asm volatile ("hlt");
 }
 

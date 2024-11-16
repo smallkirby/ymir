@@ -14,11 +14,19 @@ pub const page_allocator = Allocator{
     .ptr = &page_allocator_instance,
     .vtable = &PageAllocator.vtable,
 };
+/// General memory allocator.
+pub const general_allocator = Allocator{
+    .ptr = &bin_allocator_instance,
+    .vtable = &BinAllocator.vtable,
+};
 
 pub const PageAllocator = @import("mem/PageAllocator.zig");
 /// Page allocator instance.
 /// You should use this allocator via `page_allocator` interface.
 pub var page_allocator_instance = PageAllocator.newUninit();
+
+const BinAllocator = @import("mem/BinAllocator.zig");
+var bin_allocator_instance = BinAllocator.newUninit();
 
 /// Physical address.
 pub const Phys = u64;
@@ -59,6 +67,12 @@ var mapping_reconstructed = atomic.Value(bool).init(false);
 /// You MUST call this function before using `page_allocator`.
 pub fn initPageAllocator(map: MemoryMap) void {
     page_allocator_instance.init(map);
+}
+
+/// Initialize the general allocator.
+/// You mUST call this function before using `general_allocator`.
+pub fn initGeneralAllocator() void {
+    bin_allocator_instance.init(page_allocator);
 }
 
 /// Check if the address is canonical form.
