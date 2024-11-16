@@ -1,4 +1,5 @@
 const ymir = @import("ymir");
+const bits = ymir.bits;
 const Serial = ymir.serial.Serial;
 
 const am = @import("asm.zig");
@@ -62,7 +63,7 @@ pub fn initSerial(serial: *Serial, port: Ports, baud: u32) void {
 /// Write a single byte to the serial console.
 pub fn writeByte(byte: u8, port: Ports) void {
     // Wait until the transmitter holding buffer is empty
-    while ((am.inb(@intFromEnum(port) + offsets.lsr) & 0b0010_0000) == 0) {
+    while (!bits.isset(am.inb(@intFromEnum(port) + offsets.lsr), 5)) {
         am.relax();
     }
 
