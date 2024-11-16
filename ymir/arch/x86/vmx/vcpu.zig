@@ -21,6 +21,7 @@ const cpuid = @import("cpuid.zig");
 const msr = @import("msr.zig");
 const cr = @import("cr.zig");
 const io = @import("io.zig");
+const vmc = @import("vmc.zig");
 
 const qual = vmx.qual;
 const VmxError = vmx.VmxError;
@@ -209,6 +210,10 @@ pub const Vcpu = struct {
 
                 try vmwrite(vmcs.guest.activity_state, 0);
                 try vmwrite(vmcs.guest.interruptibility_state, 0);
+                try self.stepNextInst();
+            },
+            .vmcall => {
+                try vmc.handleVmcall(self);
                 try self.stepNextInst();
             },
             else => {

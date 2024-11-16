@@ -87,6 +87,21 @@ pub fn build(b: *std.Build) void {
     install_ymir.step.dependOn(&ymir.step);
     b.getInstallStep().dependOn(&install_ymir.step);
 
+    // ymirsh
+    const ymirsh = b.addExecutable(.{
+        .name = "ymirsh",
+        .root_source_file = b.path("ymirsh/main.zig"),
+        .target = b.resolveTargetQuery(.{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .cpu_model = .baseline,
+        }),
+        .optimize = optimize,
+        .linkage = .static,
+    });
+    ymirsh.root_module.addOptions("option", options);
+    b.installArtifact(ymirsh);
+
     // Run QEMU
     // WARN: VVFAT somehow overwrites /ymir.elf.
     //  DO NOT use /zig-out/img/ymir.elf to analyze/debug ymir.
