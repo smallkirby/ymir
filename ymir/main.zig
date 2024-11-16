@@ -46,6 +46,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
         return error.InvalidBootInfo;
     };
 
+    // Copy boot_info into Ymir's stack since it becomes inaccessible soon.
+    const memory_map = boot_info.memory_map;
+
     // Initialize GDT.
     // It switches GDT from the one prepared by surtr to the ymir GDT.
     arch.gdt.init();
@@ -55,6 +58,10 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     // From this moment, interrupts are enabled.
     arch.intr.init();
     log.info("Initialized IDT.", .{});
+
+    // Initialize page allocator.
+    ymir.mem.initPageAllocator(memory_map);
+    log.info("Initialized page allocator.", .{});
 
     while (true) asm volatile ("hlt");
 }
