@@ -14,6 +14,7 @@ const vmcs = @import("vmcs.zig");
 const vmam = @import("asm.zig");
 const ept = @import("ept.zig");
 const cpuid = @import("cpuid.zig");
+const msr = @import("msr.zig");
 const VmxError = vmx.VmxError;
 const vmread = vmx.vmread;
 const vmwrite = vmx.vmwrite;
@@ -39,6 +40,10 @@ pub const Vcpu = struct {
     eptp: ept.Eptp = undefined,
     /// Host physical address where the guest is mapped.
     guest_base: Phys = undefined,
+    /// Host saved MSRs.
+    host_msr: msr.ShadowMsr = undefined,
+    /// Guest saved MSRs.
+    guest_msr: msr.ShadowMsr = undefined,
 
     /// Create a new virtual CPU.
     /// This function does not virtualize the CPU.
@@ -80,6 +85,7 @@ pub const Vcpu = struct {
         try resetVmcs(self.vmcs_region);
 
         // Initialize VMCS fields.
+        try registerMsrs(self, allocator);
         try setupExecCtrls(self, allocator);
         try setupExitCtrls(self);
         try setupEntryCtrls(self);
@@ -91,6 +97,9 @@ pub const Vcpu = struct {
     pub fn loop(self: *Self) VmxError!void {
         // Start endless VM-entry / VM-exit loop.
         while (true) {
+            // Save MSR.
+            try updateMsrs(self);
+
             // Enter VMX non-root operation.
             self.vmentry() catch |err| {
                 log.err("VM-entry failed: {?}", .{err});
@@ -138,6 +147,14 @@ pub const Vcpu = struct {
         switch (exit_info.basic_reason) {
             .cpuid => {
                 try cpuid.handleCpuidExit(self);
+                try self.stepNextInst();
+            },
+            .rdmsr => {
+                try msr.handleRdmsrExit(self);
+                try self.stepNextInst();
+            },
+            .wrmsr => {
+                try msr.handleWrmsrExit(self);
                 try self.stepNextInst();
             },
             else => {
@@ -241,6 +258,7 @@ fn setupExecCtrls(vcpu: *Vcpu, _: Allocator) VmxError!void {
     var ppb_exec_ctrl = try vmcs.PrimaryProcExecCtrl.store();
     ppb_exec_ctrl.activate_secondary_controls = true;
     ppb_exec_ctrl.use_tpr_shadow = false;
+    ppb_exec_ctrl.use_msr_bitmap = false;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
@@ -270,6 +288,8 @@ fn setupExitCtrls(_: *Vcpu) VmxError!void {
     exit_ctrl.host_addr_space_size = true;
     exit_ctrl.load_ia32_efer = true;
     exit_ctrl.save_ia32_efer = true;
+    exit_ctrl.load_ia32_pat = true;
+    exit_ctrl.save_ia32_pat = true;
     try adjustRegMandatoryBits(
         exit_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_exit_ctls) else am.readMsr(.vmx_exit_ctls),
@@ -283,6 +303,7 @@ fn setupEntryCtrls(_: *Vcpu) VmxError!void {
     var entry_ctrl = try vmcs.EntryCtrl.store();
     entry_ctrl.ia32e_mode_guest = false;
     entry_ctrl.load_ia32_efer = true;
+    entry_ctrl.load_ia32_pat = true;
     try adjustRegMandatoryBits(
         entry_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_entry_ctls) else am.readMsr(.vmx_entry_ctls),
@@ -433,6 +454,49 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
     try vmwrite(vmcs.guest.vmcs_link_pointer, std.math.maxInt(u64));
     try vmwrite(vmcs.guest.rip, linux.layout.kernel_base);
     vcpu.guest_regs.rsi = linux.layout.bootparam;
+}
+
+/// Register host-saved and guest-saved MSRs to MSR Area.
+fn registerMsrs(vcpu: *Vcpu, allocator: Allocator) !void {
+    vcpu.host_msr = try msr.ShadowMsr.init(allocator);
+    vcpu.guest_msr = try msr.ShadowMsr.init(allocator);
+
+    const hm = &vcpu.host_msr;
+    const gm = &vcpu.guest_msr;
+
+    // Host MSRs.
+    hm.set(.tsc_aux, am.readMsr(.tsc_aux));
+    hm.set(.star, am.readMsr(.star));
+    hm.set(.lstar, am.readMsr(.lstar));
+    hm.set(.cstar, am.readMsr(.cstar));
+    hm.set(.fmask, am.readMsr(.fmask));
+    hm.set(.kernel_gs_base, am.readMsr(.kernel_gs_base));
+
+    // Guest MSRs.
+    gm.set(.tsc_aux, 0);
+    gm.set(.star, 0);
+    gm.set(.lstar, 0);
+    gm.set(.cstar, 0);
+    gm.set(.fmask, 0);
+    gm.set(.kernel_gs_base, 0);
+
+    // Init MSR data in VMCS.
+    try vmwrite(vmcs.ctrl.exit_msr_load_address, hm.phys());
+    try vmwrite(vmcs.ctrl.exit_msr_store_address, gm.phys());
+    try vmwrite(vmcs.ctrl.entry_msr_load_address, gm.phys());
+}
+
+/// Save current host MSR values to MSR page, then update MSR counts.
+fn updateMsrs(vcpu: *Vcpu) VmxError!void {
+    // Save host MSRs.
+    for (vcpu.host_msr.savedEnts()) |ent| {
+        vcpu.host_msr.setByIndex(ent.index, am.readMsr(@enumFromInt(ent.index)));
+    }
+
+    // Update MSR counts.
+    try vmwrite(vmcs.ctrl.vexit_msr_load_count, vcpu.host_msr.num_ents);
+    try vmwrite(vmcs.ctrl.exit_msr_store_count, vcpu.guest_msr.num_ents);
+    try vmwrite(vmcs.ctrl.entry_msr_load_count, vcpu.guest_msr.num_ents);
 }
 
 /// Set host stack pointer.
