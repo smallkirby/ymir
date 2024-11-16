@@ -120,6 +120,9 @@ pub const Vcpu = struct {
             // Save MSR.
             try updateMsrs(self);
 
+            // Check VMCS status for debug.
+            if (ymir.is_debug) try @import("dbg.zig").partialCheckGuest();
+
             // Enter VMX non-root operation.
             self.vmentry() catch |err| {
                 log.err("VM-entry failed: {?}", .{err});
