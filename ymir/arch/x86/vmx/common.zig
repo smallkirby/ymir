@@ -360,6 +360,37 @@ pub const ExitInfo = packed struct(u32) {
     }
 };
 
+/// VM-entry interruption-information.
+/// cf. SDM Vol.3C. Table 25-17.
+pub const EntryIntrInfo = packed struct(u32) {
+    /// Vector of interrupt or exception.
+    vector: u8,
+    /// Interruption type.
+    type: Type,
+    /// Error Code is delivered.
+    ec_available: bool,
+    /// Not currently defined.
+    _notused: u19 = 0,
+    /// Valid.
+    valid: bool,
+
+    const Type = enum(u3) {
+        external = 0,
+        _unused1 = 1,
+        nmi = 2,
+        hw = 3,
+        _unused2 = 4,
+        priviledged_sw = 5,
+        exception = 6,
+        _unused3 = 7,
+    };
+
+    const Kind = enum {
+        entry,
+        exit,
+    };
+};
+
 /// VM-exit qualifications.
 pub const qual = struct {
     /// Exit qualification for I/O instructions.

@@ -5,9 +5,13 @@ const Allocator = std.mem.Allocator;
 const ymir = @import("ymir");
 const mem = ymir.mem;
 const linux = ymir.linux;
+const bits = ymir.bits;
 
 const arch = @import("arch.zig");
 const am = arch.am;
+const intr = arch.intr;
+const isr = arch.isr;
+const IrqLine = arch.pic.IrqLine;
 
 const vmx = @import("common.zig");
 const vmcs = @import("vmcs.zig");
@@ -54,6 +58,8 @@ pub const Vcpu = struct {
     serial: io.Serial = io.Serial.new(),
     /// PIC
     pic: io.Pic = io.Pic.new(),
+    /// Pending IRQ.
+    pending_irq: u16 = 0,
 
     /// Create a new virtual CPU.
     /// This function does not virtualize the CPU.
@@ -105,6 +111,9 @@ pub const Vcpu = struct {
 
     /// Start executing vCPU.
     pub fn loop(self: *Self) VmxError!void {
+        // Subscribe to interrupts.
+        intr.subscribe(self, intrSubscriberCallback) catch return error.InterruptFull;
+
         // Start endless VM-entry / VM-exit loop.
         while (true) {
             // Save MSR.
@@ -177,6 +186,31 @@ pub const Vcpu = struct {
                 try io.handleIo(self, q);
                 try self.stepNextInst();
             },
+            .extintr => {
+                // Consume the interrupt by Ymir.
+                // At the same time, interrupt subscriber sets the pending IRQ.
+                asm volatile (
+                    \\sti
+                    \\nop
+                    \\cli
+                );
+                // Give the external interrupt to guest.
+                _ = try self.injectExtIntr();
+            },
+            .hlt => {
+                // Wait until the external interrupt is generated.
+                while (!try self.injectExtIntr()) {
+                    asm volatile (
+                        \\sti
+                        \\hlt
+                        \\cli
+                    );
+                }
+
+                try vmwrite(vmcs.guest.activity_state, 0);
+                try vmwrite(vmcs.guest.interruptibility_state, 0);
+                try self.stepNextInst();
+            },
             else => {
                 log.err("Unhandled VM-exit: reason={?}", .{exit_info.basic_reason});
                 self.abort();
@@ -188,6 +222,71 @@ pub const Vcpu = struct {
     fn stepNextInst(_: *Self) VmxError!void {
         const rip = try vmread(vmcs.guest.rip);
         try vmwrite(vmcs.guest.rip, rip + try vmread(vmcs.ro.exit_inst_len));
+    }
+
+    /// Inject external interrupt to the guest if possible.
+    /// Returns true if the interrupt is injected, otherwise false.
+    /// It's the totally Ymir's responsibility to send an EOI to the PIC
+    /// because Ymir blocks EOI commands from the guest.
+    fn injectExtIntr(self: *Self) VmxError!bool {
+        const pending = self.pending_irq;
+        const is_secondary_masked = bits.isset(self.pic.primary_mask, IrqLine.secondary);
+
+        // No interrupts to inject.
+        if (pending == 0) return false;
+        // PIC is not initialized.
+        if (self.pic.primary_phase != .inited) return false;
+
+        // Guest is blocking interrupts.
+        const eflags: am.FlagsRegister = @bitCast(try vmread(vmcs.guest.rflags));
+        if (!eflags.ief) return false;
+
+        // Iterate all possible IRQs and inject one if possible.
+        for (0..15) |i| {
+            if (is_secondary_masked and i >= 8) break;
+
+            const irq: IrqLine = @enumFromInt(i);
+            const irq_bit = bits.tobit(u16, irq);
+            // The IRQ is not pending.
+            if (pending & irq_bit == 0) continue;
+
+            // Check if the IRQ is masked.
+            const is_masked = if (irq.isPrimary()) b: {
+                break :b bits.isset(self.pic.primary_mask, irq.delta());
+            } else b: {
+                const is_irq_masked = bits.isset(self.pic.secondary_mask, irq.delta());
+                break :b is_secondary_masked or is_irq_masked;
+            };
+            if (is_masked) continue;
+
+            // Inject the interrupt.
+            const intr_info = vmx.EntryIntrInfo{
+                .vector = irq.delta() + if (irq.isPrimary()) self.pic.primary_base else self.pic.secondary_base,
+                .type = .external,
+                .ec_available = false,
+                .valid = true,
+            };
+            try vmwrite(vmcs.ctrl.entry_intr_info, intr_info);
+
+            // Clear the pending IRQ.
+            self.pending_irq &= ~irq_bit;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// Callback function for interrupts.
+    /// This function is to "share" IRQs between Ymir and the guest.
+    /// This function is called before Ymir's interrupt handler and mark the incoming IRQ as pending.
+    /// After that, Ymir's interrupt handler consumes the IRQ and send EOI to the PIC.
+    fn intrSubscriberCallback(self_: *anyopaque, ctx: *isr.Context) void {
+        const self: *Self = @alignCast(@ptrCast(self_));
+        const vector = ctx.vector;
+
+        if (0x20 <= vector and vector < 0x20 + 16) {
+            self.pending_irq |= bits.tobit(u16, vector - 0x20);
+        }
     }
 
     /// Print guest state and stack trace, and abort.
@@ -268,7 +367,8 @@ fn setupExecCtrls(vcpu: *Vcpu, _: Allocator) VmxError!void {
     const basic_msr = am.readMsrVmxBasic();
 
     // Pin-based VM-Execution control.
-    const pin_exec_ctrl = try vmcs.PinExecCtrl.store();
+    var pin_exec_ctrl = try vmcs.PinExecCtrl.store();
+    pin_exec_ctrl.external_interrupt = true;
     try adjustRegMandatoryBits(
         pin_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_pinbased_ctls) else am.readMsr(.vmx_pinbased_ctls),
@@ -280,6 +380,7 @@ fn setupExecCtrls(vcpu: *Vcpu, _: Allocator) VmxError!void {
     ppb_exec_ctrl.use_tpr_shadow = false;
     ppb_exec_ctrl.use_msr_bitmap = false;
     ppb_exec_ctrl.unconditional_io = true;
+    ppb_exec_ctrl.hlt = true;
     try adjustRegMandatoryBits(
         ppb_exec_ctrl,
         if (basic_msr.true_control) am.readMsr(.vmx_true_procbased_ctls) else am.readMsr(.vmx_procbased_ctls),
