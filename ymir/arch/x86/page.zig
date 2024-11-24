@@ -324,7 +324,19 @@ pub fn reconstruct(allocator: Allocator) PageError!void {
     }
 
     // Set new lv4-table and flush all TLBs.
-    am.loadCr3(cr3);
+    const rsp = asm volatile ("movq %%rsp, %[ret]"
+        : [ret] "={rax}" (-> u64),
+    );
+    const new_rsp = rsp + ymir.direct_map_base;
+    asm volatile (
+        \\mov %[cr3], %%cr3
+        \\mov %[rsp], %%rsp
+        :
+        : [cr3] "r" (cr3),
+          [rsp] "r" (new_rsp),
+        : "memory"
+    );
+    while (true) asm volatile ("pause");
 }
 
 /// Change the page attribute.

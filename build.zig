@@ -123,6 +123,8 @@ pub fn build(b: *std.Build) void {
         "-enable-kvm",
         "-cpu",
         "host",
+        "-smp",
+        "2",
         "-s",
     };
     const qemu_cmd = b.addSystemCommand(&qemu_args);

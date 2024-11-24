@@ -12,6 +12,9 @@ pub const BootInfo = extern struct {
     memory_map: MemoryMap,
     guest_info: GuestInfo,
     acpi_table: *anyopaque,
+    num_cpus: usize,
+    stack_top: *u8,
+    stack_size: usize,
 };
 
 /// Memory map provided by UEFI.

@@ -8,6 +8,7 @@
 //!
 
 const std = @import("std");
+const atomic = std.atomic;
 const uefi = std.os.uefi;
 const elf = std.elf;
 const log = std.log.scoped(.surtr);
@@ -15,12 +16,17 @@ const log = std.log.scoped(.surtr);
 const blog = @import("log.zig");
 const defs = @import("defs.zig");
 const arch = @import("arch.zig");
+const mp = @import("mp.zig");
+const spin = @import("spin.zig");
 
 const page_size = arch.page.page_size_4k;
 const page_mask = arch.page.page_mask_4k;
 
 // Override the default log options
 pub const std_options = blog.default_log_options;
+
+var lock = spin.SpinLock{};
+var num_ap_started = atomic.Value(usize).init(0);
 
 // Bootloader entry point.
 pub fn main() uefi.Status {
@@ -191,7 +197,7 @@ pub fn main() uefi.Status {
                 page_start + page_size * i,
                 attribute,
             ) catch |err| {
-                log.err("Failed to change memory protection: {?}", .{err});
+                log.err("Failed to change meggmory protection: {?}", .{err});
                 return .LoadError;
             };
         }
@@ -305,6 +311,78 @@ pub fn main() uefi.Status {
         return status;
     }
 
+    // Get MP Services protocol.
+    var mps: *mp.MpService = undefined;
+    status = boot_service.locateProtocol(&mp.MpService.guid, null, @ptrCast(&mps));
+    if (status != .Success) {
+        log.err("Failed to locate MP Services protocol.", .{});
+        return status;
+    }
+    log.info("Located MP Services protocol.", .{});
+
+    // Get the number of processors.
+    var num_proc: u64 = undefined;
+    var num_enabled_proc: u64 = undefined;
+    status = mps.getNumberOfProcessors(&num_proc, &num_enabled_proc);
+    if (status != .Success) {
+        log.err("Failed to get number of processors.", .{});
+        return status;
+    }
+    log.info("Number of processors: {d} (enabled: {d})", .{ num_proc, num_enabled_proc });
+
+    status = mps.whoAmI(&num_proc);
+    if (status != .Success) {
+        log.err("Failed to get processor ID.", .{});
+        return status;
+    }
+    log.info("BSP ID: {d}", .{num_proc});
+
+    // Start APs.
+    const kernel_entry: *KernelEntryType = @ptrFromInt(elf_header.entry);
+    var boot_info = defs.BootInfo{
+        .magic = defs.magic,
+        .memory_map = undefined,
+        .guest_info = .{
+            .guest_image = @ptrFromInt(guest_start),
+            .guest_size = guest_size,
+            .initrd_addr = @ptrFromInt(initrd_start),
+            .initrd_size = initrd_info.file_size,
+        },
+        .acpi_table = acpi_table,
+        .num_cpus = num_proc,
+        .stack_top = undefined,
+        .stack_size = undefined,
+    };
+
+    var ap_arg = ApArg{
+        .mps = mps,
+        .bs = boot_service,
+        .boot_info = boot_info,
+        .kernel_entry = kernel_entry,
+    };
+    status = mps.startupAllAps(
+        apMain,
+        false,
+        null,
+        1000 * 1000, // 3sec // TODO
+        &ap_arg,
+        null,
+    );
+    while (num_ap_started.load(.acquire) < num_enabled_proc - 1) {
+        atomic.spinLoopHint();
+    }
+    log.info("All APs started.", .{});
+
+    // Allocate memory for BSP.
+    const stack_size = 5 * page_size;
+    var stack_top: u64 = undefined;
+    status = boot_service.allocatePages(.AllocateAnyPages, .LoaderData, stack_size / page_size, @ptrCast(&stack_top));
+    if (status != .Success) {
+        log.err("Failed to allocate stack for BSP.", .{});
+        return status;
+    }
+    log.debug("Allocated stack for BSP @ 0x{X:0>16}", .{stack_top});
+
     // Get memory map.
     const map_buffer_size = page_size * 4;
     var map_buffer: [map_buffer_size]u8 = undefined;
@@ -361,20 +439,19 @@ pub fn main() uefi.Status {
     }
 
     // Jump to kernel entry point.
-    const KernelEntryType = fn (defs.BootInfo) callconv(.Win64) noreturn;
-    const kernel_entry: *KernelEntryType = @ptrFromInt(elf_header.entry);
-    const boot_info = defs.BootInfo{
-        .magic = defs.magic,
-        .memory_map = map,
-        .guest_info = .{
-            .guest_image = @ptrFromInt(guest_start),
-            .guest_size = guest_size,
-            .initrd_addr = @ptrFromInt(initrd_start),
-            .initrd_size = initrd_info.file_size,
-        },
-        .acpi_table = acpi_table,
-    };
-    kernel_entry(boot_info);
+    boot_info.memory_map = map;
+    boot_info.stack_size = stack_size;
+    boot_info.stack_top = @ptrFromInt(stack_top);
+    const stack = @intFromPtr(boot_info.stack_top) + stack_size - 0x10;
+    asm volatile (
+        \\movq %[boot_info], %%rdi
+        \\movq %[rsp], %%rsp
+        \\call *%[kernel_entry]
+        :
+        : [boot_info] "r" (&boot_info),
+          [rsp] "r" (stack),
+          [kernel_entry] "r" (kernel_entry),
+    );
 
     unreachable;
 }
@@ -420,4 +497,74 @@ fn getMemoryMap(map: *defs.MemoryMap, boot_services: *uefi.tables.BootServices) 
 
 fn halt() void {
     asm volatile ("hlt");
+}
+
+const KernelEntryType = fn (defs.BootInfo, u64) callconv(.Win64) noreturn;
+
+const ApArg = struct {
+    mps: *mp.MpService,
+    bs: *uefi.tables.BootServices,
+    boot_info: defs.BootInfo,
+    kernel_entry: *KernelEntryType,
+};
+
+fn apMain(arg: *anyopaque) callconv(uefi.cc) void {
+    const ap_arg: *ApArg = @alignCast(@ptrCast(arg));
+    const mps = ap_arg.mps;
+    const bs = ap_arg.bs;
+
+    var boot_info = ap_arg.boot_info;
+    var status: uefi.Status = undefined;
+
+    // Print AP ID.
+    var id: u64 = undefined;
+    lock.lock();
+    {
+        status = mps.whoAmI(&id);
+        if (status != .Success) {
+            log.err("Failed to get processor ID.", .{});
+            return;
+        }
+        log.info("AP started: #{d}", .{id});
+    }
+    lock.unlock();
+
+    // Allocate stack.
+    const stack_size = 5 * page_size;
+    var stack_top: u64 = undefined;
+    lock.lock();
+    {
+        status = bs.allocatePages(.AllocateAnyPages, .LoaderData, stack_size / page_size, @ptrCast(&stack_top));
+        if (status != .Success) {
+            log.err("Failed to allocate stack for AP.", .{});
+            return;
+        }
+        boot_info.stack_size = stack_size;
+        boot_info.stack_top = @ptrFromInt(stack_top);
+        log.debug("Allocated stack for AP#{d} @ 0x{X:0>16}", .{ id, stack_top });
+    }
+    lock.unlock();
+
+    _ = num_ap_started.fetchAdd(1, .acq_rel);
+
+    lock.lock();
+    log.info("AP#{d} entering Ymir....", .{id});
+    lock.unlock();
+
+    while (true) {
+        halt();
+    }
+
+    const rsp = stack_top + stack_size - 0x10;
+    asm volatile (
+        \\movq %[ap_arg], %%rdi
+        \\movq %[new_stack], %%rsp
+        \\call  *%[kernel_entry]
+        :
+        : [ap_arg] "r" (ap_arg),
+          [new_stack] "r" (rsp),
+          [kernel_entry] "r" (ap_arg.kernel_entry),
+    );
+
+    unreachable;
 }
