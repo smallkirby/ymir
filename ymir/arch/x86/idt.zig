@@ -43,7 +43,7 @@ const gdt = @import("gdt.zig");
 /// Maximum number of gates in the IDT.
 pub const max_num_gates = 256;
 /// Interrupt Descriptor Table.
-var idt: [max_num_gates]GateDesriptor align(4096) = [_]GateDesriptor{std.mem.zeroes(GateDesriptor)} ** max_num_gates;
+var idt: [max_num_gates]GateDescriptor align(4096) = [_]GateDescriptor{std.mem.zeroes(GateDescriptor)} ** max_num_gates;
 /// IDT Register.
 var idtr = IdtRegister{
     .limit = @sizeOf(@TypeOf(idt)) - 1,
@@ -69,7 +69,7 @@ pub fn setGate(
     gate_type: GateType,
     offset: Isr,
 ) void {
-    idt[index] = GateDesriptor{
+    idt[index] = GateDescriptor{
         .offset_low = @truncate(@intFromPtr(&offset)),
         .seg_selector = gdt.kernel_cs_index << 3,
         .gate_type = gate_type,
@@ -80,7 +80,7 @@ pub fn setGate(
 }
 
 /// Entry in the Interrupt Descriptor Table.
-pub const GateDesriptor = packed struct(u128) {
+pub const GateDescriptor = packed struct(u128) {
     /// Lower 16 bits of the offset to the ISR.
     offset_low: u16,
     /// Segment Selector that must point to a valid code segment in the GDT.
@@ -105,14 +105,14 @@ pub const GateDesriptor = packed struct(u128) {
     /// Reserved.
     _reserved3: u32 = 0,
 
-    pub fn offset(self: GateDesriptor) u64 {
+    pub fn offset(self: GateDescriptor) u64 {
         return @as(u64, self.offset_high) << 32 | @as(u64, self.offset_middle) << 16 | @as(u64, self.offset_low);
     }
 };
 
 const IdtRegister = packed struct {
     limit: u16,
-    base: *[max_num_gates]GateDesriptor,
+    base: *[max_num_gates]GateDescriptor,
 };
 
 /// Gate type of the gate descriptor in IDT.
@@ -128,7 +128,7 @@ pub const GateType = enum(u4) {
 const testing = std.testing;
 
 test "gate descriptor" {
-    const gate = GateDesriptor{
+    const gate = GateDescriptor{
         .offset_low = 0x1234,
         .seg_selector = 0x5678,
         .gate_type = .Interrupt64,
