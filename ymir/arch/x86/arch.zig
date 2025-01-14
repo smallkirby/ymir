@@ -79,7 +79,7 @@ pub fn getCpuVendorId() [12]u8 {
 /// Check if virtualization technology is supported.
 pub fn isVmxSupported() bool {
     // Check CPUID if VMX is supported.
-    const regs = cpuid.Leaf.maximum_input.query(null);
+    const regs = cpuid.Leaf.vers_and_feat_info.query(null);
     const ecx: cpuid.FeatureInfoEcx = @bitCast(regs.ecx);
     if (!ecx.vmx) return false;
 
