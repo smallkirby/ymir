@@ -1,0 +1,32 @@
+name: Cherry Pick Bot
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  cherry-pick:
+    if: contains(github.event.comment.body, '@.ymir cherry-pick') && github.event.comment.user.login == 'smallkirby'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        run: |
+          uv python install
+          uv sync --all-extras
+
+      - name: Setup Git
+        run: |
+          git config --global user.name 'Cherry-Pick Bot'
+          git config --global user.email 'ymir+github-actions[bot]@users.noreply.github.com'
+
+      - name: Run Cherry Pick Script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: uv run .github/scripts/cherry-picker.py
