@@ -3,8 +3,8 @@
 pub const Leaf = enum(u32) {
     /// Maximum input value for basic CPUID.
     maximum_input = 0x0,
-    /// Version information.
-    version_info = 0x1,
+    /// Version and feature information.
+    vers_and_feat_info = 0x1,
     /// Thermal and power management.
     thermal_power = 0x6,
     /// Structured extended feature enumeration.
