@@ -35,7 +35,7 @@ def cherry_pick_to_branch(commit_sha, target_branch):
 
         # Cherry-pick the commit
         result = subprocess.run(
-            ["git", "cherry-pick", commit_sha],
+            ["git", "cherry-pick", "-m", "1", commit_sha],
             capture_output=True,
             text=True,
         )
