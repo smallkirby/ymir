@@ -39,6 +39,7 @@ def cherry_pick_to_branch(commit_sha, target_branch):
             capture_output=True,
             text=True,
         )
+        print(result.stderr)
 
         if result.returncode == 0:
             # Push the changes
