@@ -28,8 +28,8 @@ jobs:
 
       - name: Setup Git
         run: |
-          git config --global user.name 'Cherry-Pick Bot'
-          git config --global user.email 'smallkirby+github-actions@users.noreply.github.com'
+          git config --global user.name 'smallkirby-ymir[bot]'
+          git config --global user.email '195134948+smallkirby-ymir[bot]@users.noreply.github.com'
           git fetch --all
 
       - name: Run Cherry Pick Script
