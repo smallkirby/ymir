@@ -23,6 +23,7 @@ jobs:
         run: |
           git config --global user.name 'Cherry-Pick Bot'
           git config --global user.email 'ymir+github-actions[bot]@users.noreply.github.com'
+          git fetch --all
 
       - name: Run Cherry Pick Script
         env:
