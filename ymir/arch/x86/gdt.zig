@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const ymir = @import("ymir");
+const Virt = ymir.mem.Virt;
+
 const am = @import("asm.zig");
 
 /// Maximum number of GDT entries.
@@ -24,7 +27,11 @@ pub const kernel_ds_index: u16 = 0x01;
 /// Index of the kernel code segment.
 pub const kernel_cs_index: u16 = 0x02;
 /// Index of the kernel TSS.
-pub const kernel_tss_index: u16 = 0x03;
+/// Note that TSS descriptor occupies two GDT entries.
+pub const kernel_tss_index: u16 = 0x04;
+
+/// Unused TSS segment.
+const tssUnused: [4096]u8 align(4096) = [_]u8{0} ** 4096;
 
 /// Initialize the GDT.
 pub fn init() void {
@@ -49,12 +56,6 @@ pub fn init() void {
         0,
         .kbyte,
     );
-    gdt[kernel_tss_index] = SegmentDescriptor.newTss(
-        0,
-        0,
-        0,
-        .kbyte,
-    );
 
     am.lgdt(@intFromPtr(&gdtr));
 
@@ -63,7 +64,9 @@ pub fn init() void {
     // To flush the changes, we need to set segment registers.
     loadKernelDs();
     loadKernelCs();
-    loadKernelTss();
+
+    // TSS is not used by Ymir. But we have to set it for VMX.
+    setTss(@intFromPtr(&tssUnused));
 }
 
 /// Load the kernel data segment selector.
@@ -83,6 +86,14 @@ fn loadKernelDs() void {
           }))),
         : "di"
     );
+}
+
+/// Set the TSS.
+fn setTss(tss: Virt) void {
+    const desc = TssDescriptor.new(tss, std.math.maxInt(u20));
+    @as(*TssDescriptor, @ptrCast(&gdt[kernel_tss_index])).* = desc;
+
+    loadKernelTss();
 }
 
 /// Load the kernel code segment selector.
@@ -119,6 +130,7 @@ fn loadKernelTss() void {
             .rpl = 0,
             .index = kernel_tss_index,
           }))),
+        : "di"
     );
 }
 
@@ -201,29 +213,47 @@ pub const SegmentDescriptor = packed struct(u64) {
             .base_high = @truncate(base >> 24),
         };
     }
+};
 
-    /// Create a new TSS descriptor.
-    pub fn newTss(
-        base: u32,
-        limit: u20,
-        dpl: u2,
-        granularity: Granularity,
-    ) SegmentDescriptor {
-        return SegmentDescriptor{
+/// TSS Descriptor in 64-bit mode.
+///
+/// Note that the descriptor is 16 bytes long and occupies two GDT entries.
+/// cf. SDM Vol.3A Figure 8-4.
+const TssDescriptor = packed struct(u128) {
+    /// Lower 16 bits of the segment limit.
+    limit_low: u16,
+    /// Lower 24 bits of the base address.
+    base_low: u24,
+
+    /// Type: TSS.
+    type: u4 = 0b1001, // tss-avail
+    /// Descriptor type: System.
+    desc_type: DescriptorType = .system,
+    /// Descriptor Privilege Level.
+    dpl: u2 = 0,
+    present: bool = true,
+
+    /// Upper 4 bits of the segment limit.
+    limit_high: u4,
+    /// Available for use by system software.
+    avl: u1 = 0,
+    /// Reserved.
+    long: bool = true,
+    /// Size flag.
+    db: u1 = 0,
+    /// Granularity.
+    granularity: Granularity = .kbyte,
+    /// Upper 40 bits of the base address.
+    base_high: u40,
+    /// Reserved.
+    _reserved: u32 = 0,
+
+    /// Create a new 64-bit TSS descriptor.
+    pub fn new(base: Virt, limit: u20) TssDescriptor {
+        return TssDescriptor{
             .limit_low = @truncate(limit),
             .base_low = @truncate(base),
-            .accessed = true,
-            .rw = false,
-            .dc = false,
-            .executable = true,
-            .desc_type = .system,
-            .dpl = dpl,
-            .present = true,
             .limit_high = @truncate(limit >> 16),
-            .avl = 0,
-            .long = false,
-            .db = 0,
-            .granularity = granularity,
             .base_high = @truncate(base >> 24),
         };
     }
