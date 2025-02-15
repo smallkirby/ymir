@@ -96,7 +96,7 @@ pub fn enableInterrupt(port: Ports) void {
 
 /// Check if the given port is any of serial ports.
 pub fn isSerialPort(port: u16) bool {
-    inline for (@typeInfo(Ports).Enum.fields) |field| {
+    inline for (@typeInfo(Ports).@"enum".fields) |field| {
         if (field.value == port) return true;
     }
     return false;

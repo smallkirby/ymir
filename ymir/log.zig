@@ -46,7 +46,7 @@ fn write(_: void, bytes: []const u8) LogError!usize {
 
 fn log(
     comptime level: stdlog.Level,
-    comptime scope: @Type(.EnumLiteral),
+    comptime scope: @Type(.enum_literal),
     comptime fmt: []const u8,
     args: anytype,
 ) void {

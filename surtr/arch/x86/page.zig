@@ -143,8 +143,8 @@ fn getLv1Entry(addr: Virt, lv1tbl_paddr: Phys) *Lv1Entry {
 /// and load the new level-4 page table to CR3.
 pub fn setLv4Writable(bs: *BootServices) PageError!void {
     var new_lv4ptr: [*]Lv4Entry = undefined;
-    const status = bs.allocatePages(.AllocateAnyPages, .BootServicesData, 1, @ptrCast(&new_lv4ptr));
-    if (status != .Success) return PageError.NoMemory;
+    const status = bs.allocatePages(.allocate_any_pages, .boot_services_data, 1, @ptrCast(&new_lv4ptr));
+    if (status != .success) return PageError.NoMemory;
 
     const new_lv4tbl = new_lv4ptr[0..num_table_entries];
     const lv4tbl = getLv4Table(am.readCr3());
@@ -216,8 +216,8 @@ pub fn map4kTo(virt: Virt, phys: Phys, attr: PageAttribute, bs: *BootServices) P
 /// Allocate new page tables and update the given page table entry.
 fn allocateNewTable(T: type, entry: *T, bs: *BootServices) PageError!void {
     var ptr: Phys = undefined;
-    const status = bs.allocatePages(.AllocateAnyPages, .BootServicesData, 1, @ptrCast(&ptr));
-    if (status != .Success) return PageError.NoMemory;
+    const status = bs.allocatePages(.allocate_any_pages, .boot_services_data, 1, @ptrCast(&ptr));
+    if (status != .success) return PageError.NoMemory;
 
     clearPage(ptr);
     entry.* = T.newMapTable(@ptrFromInt(ptr), true);

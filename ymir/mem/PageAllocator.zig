@@ -7,6 +7,7 @@ const std = @import("std");
 const log = std.log.scoped(.pa);
 const uefi = std.os.uefi;
 const Allocator = std.mem.Allocator;
+const Alignment = std.mem.Alignment;
 const surtr = @import("surtr");
 const MemoryMap = surtr.MemoryMap;
 const MemoryDescriptorIterator = surtr.MemoryDescriptorIterator;
@@ -30,6 +31,7 @@ pub const vtable = Allocator.VTable{
     .alloc = allocate,
     .free = free,
     .resize = resize,
+    .remap = remap,
 };
 
 /// Physical page frame ID.
@@ -115,7 +117,7 @@ pub fn discardBootService(self: *Self) void {
     var desc_iter = MemoryDescriptorIterator.new(self.memmap);
     while (true) {
         const desc: *uefi.tables.MemoryDescriptor = desc_iter.next() orelse break;
-        if (desc.type != .BootServicesData) continue;
+        if (desc.type != .boot_services_data) continue;
 
         const start = desc.physical_start;
         self.markNotUsed(phys2frame(start), desc.number_of_pages);
@@ -192,7 +194,7 @@ pub fn allocPages(self: *Self, num_pages: usize, align_size: usize) ?[]u8 {
     }
 }
 
-fn allocate(ctx: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
+fn allocate(ctx: *anyopaque, n: usize, _: Alignment, _: usize) ?[*]u8 {
     // NOTE: 3rd argument (`ptr_align`) can be safely ignored for the page allocator
     //  because the allocator always returns a page-aligned address
     //  and Zig does not assumes an align larger than a page size is not requested for Allocator interface.
@@ -219,7 +221,7 @@ fn allocate(ctx: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
     }
 }
 
-fn free(ctx: *anyopaque, slice: []u8, _: u8, _: usize) void {
+fn free(ctx: *anyopaque, slice: []u8, _: Alignment, _: usize) void {
     // NOTE: 3rd argument (`ptr_align`) can be safely ignored for the page allocator.
     //  See the comment in `allocate` function.
 
@@ -233,8 +235,12 @@ fn free(ctx: *anyopaque, slice: []u8, _: u8, _: usize) void {
     self.markNotUsed(start_frame, num_frames);
 }
 
-fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
+fn resize(_: *anyopaque, _: []u8, _: Alignment, _: usize, _: usize) bool {
     @panic("PageAllocator does not support resizing");
+}
+
+fn remap(_: *anyopaque, _: []u8, _: Alignment, _: usize, _: usize) ?[*]u8 {
+    @panic("PageAllocator does not support remap");
 }
 
 inline fn phys2frame(phys: Phys) FrameId {
@@ -251,8 +257,8 @@ inline fn frame2phys(frame: FrameId) Phys {
 /// You MUST copy them before using the area.
 inline fn isUsableMemory(descriptor: *uefi.tables.MemoryDescriptor) bool {
     return switch (descriptor.type) {
-        .ConventionalMemory,
-        .BootServicesCode,
+        .conventional_memory,
+        .boot_services_code,
         => true,
         else => false,
     };
