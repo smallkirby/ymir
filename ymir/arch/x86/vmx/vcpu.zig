@@ -270,7 +270,7 @@ pub const Vcpu = struct {
 
     /// Print guest state and stack trace, and abort.
     pub fn abort(self: *Self) noreturn {
-        @setCold(true);
+        @branchHint(.cold);
         self.dump() catch log.err("Failed to dump VM information.", .{});
         ymir.endlessHalt();
     }

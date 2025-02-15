@@ -57,15 +57,15 @@ pub fn vmread(field: anytype) VmxError!u64 {
 /// If the operation fails, an error is returned.
 pub fn vmwrite(field: anytype, value: anytype) VmxError!void {
     const value_int = switch (@typeInfo(@TypeOf(value))) {
-        .Int, .ComptimeInt => @as(u64, value),
-        .Struct => switch (@sizeOf(@TypeOf(value))) {
+        .int, .comptime_int => @as(u64, value),
+        .@"struct" => switch (@sizeOf(@TypeOf(value))) {
             1 => @as(u8, @bitCast(value)),
             2 => @as(u16, @bitCast(value)),
             4 => @as(u32, @bitCast(value)),
             8 => @as(u64, @bitCast(value)),
             else => @compileError("Unsupported structure size for vmwrite"),
         },
-        .Pointer => @as(u64, @intFromPtr(value)),
+        .pointer => @as(u64, @intFromPtr(value)),
         else => @compileError("Unsupported type for vmwrite"),
     };
 

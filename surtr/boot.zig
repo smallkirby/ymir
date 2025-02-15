@@ -27,7 +27,7 @@ pub fn main() uefi.Status {
     var status: uefi.Status = undefined;
 
     // Initialize log.
-    const con_out = uefi.system_table.con_out orelse return .Aborted;
+    const con_out = uefi.system_table.con_out orelse return .aborted;
     status = con_out.clearScreen();
     blog.init(con_out);
 
@@ -36,50 +36,50 @@ pub fn main() uefi.Status {
     // Get boot services.
     const boot_service: *uefi.tables.BootServices = uefi.system_table.boot_services orelse {
         log.err("Failed to get boot services.", .{});
-        return .Aborted;
+        return .aborted;
     };
     log.info("Got boot services.", .{});
 
     // Locate simple file system protocol.
     var fs: *uefi.protocol.SimpleFileSystem = undefined;
     status = boot_service.locateProtocol(&uefi.protocol.SimpleFileSystem.guid, null, @ptrCast(&fs));
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to locate simple file system protocol.", .{});
         return status;
     }
     log.info("Located simple file system protocol.", .{});
 
     // Open volume.
-    var root_dir: *uefi.protocol.File = undefined;
+    var root_dir: *const uefi.protocol.File = undefined;
     status = fs.openVolume(&root_dir);
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to open volume.", .{});
         return status;
     }
     log.info("Opened filesystem volume.", .{});
 
     // Open kernel file.
-    const kernel = openFile(root_dir, "ymir.elf") catch return .Aborted;
+    const kernel = openFile(root_dir, "ymir.elf") catch return .aborted;
     log.info("Opened kernel file.", .{});
 
     // Read kernel ELF header
     var header_size: usize = @sizeOf(elf.Elf64_Ehdr);
     var header_buffer: [*]align(8) u8 = undefined;
-    status = boot_service.allocatePool(.LoaderData, header_size, &header_buffer);
-    if (status != .Success) {
+    status = boot_service.allocatePool(.loader_data, header_size, &header_buffer);
+    if (status != .success) {
         log.err("Failed to allocate memory for kernel ELF header.", .{});
         return status;
     }
 
     status = kernel.read(&header_size, header_buffer);
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to read kernel ELF header.", .{});
         return status;
     }
 
     const elf_header = elf.Header.parse(header_buffer[0..@sizeOf(elf.Elf64_Ehdr)]) catch |err| {
         log.err("Failed to parse kernel ELF header: {?}", .{err});
-        return .Aborted;
+        return .aborted;
     };
     log.info("Parsed kernel ELF header.", .{});
     log.debug(
@@ -102,11 +102,11 @@ pub fn main() uefi.Status {
     var kernel_start_virt: Addr = std.math.maxInt(Addr);
     var kernel_start_phys: Addr align(page_size) = std.math.maxInt(Addr);
     var kernel_end_phys: Addr = 0;
-    var iter = elf_header.program_header_iterator(kernel);
+    var iter = elf_header.program_header_iterator(@constCast(kernel));
     while (true) {
         const phdr = iter.next() catch |err| {
             log.err("Failed to get program header: {?}\n", .{err});
-            return .LoadError;
+            return .load_error;
         } orelse break;
         if (phdr.p_type != elf.PT_LOAD) continue;
         if (phdr.p_paddr < kernel_start_phys) kernel_start_phys = phdr.p_paddr;
@@ -117,8 +117,8 @@ pub fn main() uefi.Status {
     log.info("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start_phys, kernel_end_phys, pages_4kib });
 
     // Allocate memory for kernel image.
-    status = boot_service.allocatePages(.AllocateAddress, .LoaderData, pages_4kib, @ptrCast(&kernel_start_phys));
-    if (status != .Success) {
+    status = boot_service.allocatePages(.allocate_address, .loader_data, pages_4kib, @ptrCast(&kernel_start_phys));
+    if (status != .success) {
         log.err("Failed to allocate memory for kernel image: {?}", .{status});
         return status;
     }
@@ -127,7 +127,7 @@ pub fn main() uefi.Status {
     // Map memory for kernel image.
     arch.page.setLv4Writable(boot_service) catch |err| {
         log.err("Failed to set page table writable: {?}", .{err});
-        return .LoadError;
+        return .load_error;
     };
     log.debug("Set page table writable.", .{});
 
@@ -139,31 +139,31 @@ pub fn main() uefi.Status {
             boot_service,
         ) catch |err| {
             log.err("Failed to map memory for kernel image: {?}", .{err});
-            return .LoadError;
+            return .load_error;
         };
     }
     log.info("Mapped memory for kernel image.", .{});
 
     // Load kernel image.
     log.info("Loading kernel image...", .{});
-    iter = elf_header.program_header_iterator(kernel);
+    iter = elf_header.program_header_iterator(@constCast(kernel));
     while (true) {
         const phdr = iter.next() catch |err| {
             log.err("Failed to get program header: {?}\n", .{err});
-            return .LoadError;
+            return .load_error;
         } orelse break;
         if (phdr.p_type != elf.PT_LOAD) continue;
 
         // Load data
         status = kernel.setPosition(phdr.p_offset);
-        if (status != .Success) {
+        if (status != .success) {
             log.err("Failed to set position for kernel image.", .{});
             return status;
         }
         const segment: [*]u8 = @ptrFromInt(phdr.p_vaddr);
         var mem_size = phdr.p_memsz;
         status = kernel.read(&mem_size, segment);
-        if (status != .Success) {
+        if (status != .success) {
             log.err("Failed to read kernel image.", .{});
             return status;
         }
@@ -192,7 +192,7 @@ pub fn main() uefi.Status {
                 attribute,
             ) catch |err| {
                 log.err("Failed to change memory protection: {?}", .{err});
-                return .LoadError;
+                return .load_error;
             };
         }
     }
@@ -201,14 +201,14 @@ pub fn main() uefi.Status {
     arch.enableNxBit();
 
     // Get guest kernel image info.
-    const guest = openFile(root_dir, "bzImage") catch return .Aborted;
+    const guest = openFile(root_dir, "bzImage") catch return .aborted;
     log.info("Opened guest kernel file.", .{});
 
     const guest_info_buffer_size: usize = @sizeOf(uefi.FileInfo) + 0x100;
     var guest_info_actual_size = guest_info_buffer_size;
     var guest_info_buffer: [guest_info_buffer_size]u8 align(@alignOf(uefi.FileInfo)) = undefined;
     status = guest.getInfo(&uefi.FileInfo.guid, &guest_info_actual_size, &guest_info_buffer);
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to get guest kernel file info.", .{});
         return status;
     }
@@ -218,29 +218,29 @@ pub fn main() uefi.Status {
     // Load guest kernel image.
     var guest_start: u64 align(page_size) = undefined;
     const guest_size_pages = (guest_info.file_size + (page_size - 1)) / page_size;
-    status = boot_service.allocatePages(.AllocateAnyPages, .LoaderData, guest_size_pages, @ptrCast(&guest_start));
-    if (status != .Success) {
+    status = boot_service.allocatePages(.allocate_any_pages, .loader_data, guest_size_pages, @ptrCast(&guest_start));
+    if (status != .success) {
         log.err("Failed to allocate memory for guest kernel image.", .{});
         return status;
     }
     var guest_size = guest_info.file_size;
 
     status = guest.read(&guest_size, @ptrFromInt(guest_start));
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to read guest kernel image.", .{});
         return status;
     }
     log.info("Loaded guest kernel image @ 0x{X:0>16} ~ 0x{X:0>16}", .{ guest_start, guest_start + guest_size });
 
     // Load initrd.
-    const initrd = openFile(root_dir, "rootfs.cpio.gz") catch return .Aborted;
+    const initrd = openFile(root_dir, "rootfs.cpio.gz") catch return .aborted;
     log.info("Opened initrd file.", .{});
 
     const initrd_info_buffer_size: usize = @sizeOf(uefi.FileInfo) + 0x100;
     var initrd_info_actual_size = initrd_info_buffer_size;
     var initrd_info_buffer: [initrd_info_buffer_size]u8 align(@alignOf(uefi.FileInfo)) = undefined;
     status = initrd.getInfo(&uefi.FileInfo.guid, &initrd_info_actual_size, &initrd_info_buffer);
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to get initrd file info.", .{});
         return status;
     }
@@ -250,14 +250,14 @@ pub fn main() uefi.Status {
 
     var initrd_start: u64 = undefined;
     const initrd_size_pages = (initrd_size + (page_size - 1)) / page_size;
-    status = boot_service.allocatePages(.AllocateAnyPages, .LoaderData, initrd_size_pages, @ptrCast(&initrd_start));
-    if (status != .Success) {
+    status = boot_service.allocatePages(.allocate_any_pages, .loader_data, initrd_size_pages, @ptrCast(&initrd_start));
+    if (status != .success) {
         log.err("Failed to allocate memory for initrd.", .{});
         return status;
     }
 
     status = initrd.read(&initrd_size, @ptrFromInt(initrd_start));
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to read initrd.", .{});
         return status;
     }
@@ -279,28 +279,28 @@ pub fn main() uefi.Status {
         }
     } else {
         log.err("Failed to find ACPI table.", .{});
-        return .LoadError;
+        return .load_error;
     };
     log.info("ACPI table @ 0x{X:0>16}", .{@intFromPtr(acpi_table)});
 
     // Clean up memory.
     status = boot_service.freePool(header_buffer);
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to free memory for kernel ELF header.", .{});
         return status;
     }
     status = initrd.close();
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to close initrd file.", .{});
         return status;
     }
     status = kernel.close();
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to close kernel file.", .{});
         return status;
     }
     status = root_dir.close();
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to close filesystem volume.", .{});
         return status;
     }
@@ -317,7 +317,7 @@ pub fn main() uefi.Status {
         .descriptor_version = 0,
     };
     status = getMemoryMap(&map, boot_service);
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to get memory map.", .{});
         return status;
     }
@@ -343,18 +343,18 @@ pub fn main() uefi.Status {
     // After this point, we can't use any boot services including logging.
     log.info("Exiting boot services.", .{});
     status = boot_service.exitBootServices(uefi.handle, map.map_key);
-    if (status != .Success) {
+    if (status != .success) {
         // May fail if the memory map has been changed.
         // Retry after getting the memory map again.
         map.buffer_size = map_buffer.len;
         map.map_size = map_buffer.len;
         status = getMemoryMap(&map, boot_service);
-        if (status != .Success) {
+        if (status != .success) {
             log.err("Failed to get memory map after failed to exit boot services.", .{});
             return status;
         }
         status = boot_service.exitBootServices(uefi.handle, map.map_key);
-        if (status != .Success) {
+        if (status != .success) {
             log.err("Failed to exit boot services.", .{});
             return status;
         }
@@ -390,10 +390,10 @@ inline fn toUcs2(comptime s: [:0]const u8) [s.len * 2:0]u16 {
 
 /// Open a file using Simple File System protocol.
 fn openFile(
-    root: *uefi.protocol.File,
+    root: *const uefi.protocol.File,
     comptime name: [:0]const u8,
-) !*uefi.protocol.File {
-    var file: *uefi.protocol.File = undefined;
+) !*const uefi.protocol.File {
+    var file: *const uefi.protocol.File = undefined;
     const status = root.open(
         &file,
         &toUcs2(name),
@@ -401,9 +401,9 @@ fn openFile(
         0,
     );
 
-    if (status != .Success) {
+    if (status != .success) {
         log.err("Failed to open file: {s}", .{name});
-        return error.Aborted;
+        return error.aborted;
     }
     return file;
 }

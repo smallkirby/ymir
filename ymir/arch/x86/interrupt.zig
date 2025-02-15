@@ -125,7 +125,7 @@ pub fn dispatch(context: *Context) void {
 }
 
 fn unhandledHandler(context: *Context) void {
-    @setCold(true);
+    @branchHint(.cold);
 
     log.err("============ Oops! ===================", .{});
     log.err("Unhandled interrupt: {s} ({})", .{
@@ -157,7 +157,7 @@ fn unhandledHandler(context: *Context) void {
 }
 
 fn unhandledFaultHandler(context: *Context) void {
-    @setCold(true);
+    @branchHint(.cold);
 
     log.err("============ Unhandled Fault ===================", .{});
 
