@@ -89,6 +89,19 @@ pub fn build(b: *std.Build) void {
     install_ymir.step.dependOn(&ymir.step);
     b.getInstallStep().dependOn(&install_ymir.step);
 
+    // Install sample assets.
+    const install_rootfs = b.addInstallFile(
+        b.path("assets/samples/rootfs.cpio.gz"),
+        b.fmt("{s}/rootfs.cpio.gz", .{out_dir_name}),
+    );
+    const install_bzimage = b.addInstallFile(
+        b.path("assets/samples/bzImage"),
+        b.fmt("{s}/bzImage", .{out_dir_name}),
+    );
+    const install_samples_step = b.step("install-samples", "Install sample assets");
+    install_samples_step.dependOn(&install_rootfs.step);
+    install_samples_step.dependOn(&install_bzimage.step);
+
     // ymirsh
     const ymirsh = b.addExecutable(.{
         .name = "ymirsh",

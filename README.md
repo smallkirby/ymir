@@ -37,8 +37,10 @@ sudo apt install ovmf
 ## Development
 
 ```sh
+zig build install-samples
 zig build run -Dlog_level=info -Doptimize=ReleaseFast
 ```
 
-You need to put your kernel image (`bzImage`) and initramfs (`initramfs.cpio`) to `/zig-out/img`.
+If you want to use your own kernel image and initramfs,
+you can put your kernel image (`bzImage`) and initramfs (`initramfs.cpio`) to `/zig-out/img`.
 It is tested that Ymir can boot Linux kernel v6.9 that is compiled with `defconfig` of x86-64.
