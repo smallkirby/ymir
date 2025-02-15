@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
@@ -27,6 +27,12 @@ pub fn build(b: *std.Build) void {
         else
             @panic("Invalid log level");
     };
+
+    const wait_qemu = b.option(
+        bool,
+        "wait_qemu",
+        "QEMU waits for GDB connection.",
+    ) orelse false;
 
     const options = b.addOptions();
     options.addOption(std.log.Level, "log_level", log_level);
@@ -121,7 +127,9 @@ pub fn build(b: *std.Build) void {
     // WARN: VVFAT somehow overwrites /ymir.elf.
     //  DO NOT use /zig-out/img/ymir.elf to analyze/debug ymir.
     //  Use /zig-out/bin/ymir.elf instead.
-    const qemu_args = [_][]const u8{
+    var qemu_args = std.ArrayList([]const u8).init(b.allocator);
+    defer qemu_args.deinit();
+    try qemu_args.appendSlice(&.{
         "qemu-system-x86_64",
         "-m",
         "512M",
@@ -137,8 +145,10 @@ pub fn build(b: *std.Build) void {
         "-cpu",
         "host",
         "-s",
-    };
-    const qemu_cmd = b.addSystemCommand(&qemu_args);
+    });
+    if (wait_qemu) try qemu_args.append("-S");
+
+    const qemu_cmd = b.addSystemCommand(qemu_args.items);
     qemu_cmd.step.dependOn(b.getInstallStep());
 
     const run_qemu_cmd = b.step("run", "Run QEMU");
