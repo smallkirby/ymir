@@ -13,7 +13,7 @@ const Vcpu = @import("vcpu.zig").Vcpu;
 const VmxError = vmx.VmxError;
 const Leaf = cpuid.Leaf;
 
-const feature_info_ecx = cpuid.FeatureInfoEcx{
+var feature_info_ecx = cpuid.FeatureInfoEcx{
     .pcid = true,
 };
 const feature_info_edx = cpuid.FeatureInfoEdx{
@@ -54,6 +54,18 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
         },
         .vers_and_feat_info => {
             const orig = Leaf.query(.vers_and_feat_info, null);
+
+            // BUG: Intel Core CPU, since Alder Lake (12th Gen),
+            // has a bug that INVLPG does not flush global translatinos.
+            // To mitigate it, Linux kernel 6.4 and later disables PCID.
+            // So check if PCID is supported for Ymir, and if not, disable it also for the guest.
+            //
+            // See: https://git.kernel.org/pub/scm/linux/kernel/git/tip/tip.git/commit/?h=x86/urgent&id=ce0b15d11ad837fbacc5356941712218e38a0a83
+            const feat: cpuid.FeatureInfoEcx = @bitCast(cpuid.Leaf.from(0).query(null).ecx);
+            if (!feat.pcid) {
+                feature_info_ecx.pcid = false;
+            }
+
             setValue(&regs.rax, orig.eax); // Version information.
             setValue(&regs.rbx, orig.ebx); // Brand index / CLFLUSH line size / Addressable IDs / Initial APIC ID
             setValue(&regs.rcx, @as(u32, @bitCast(feature_info_ecx)));
