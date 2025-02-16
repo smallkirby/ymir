@@ -34,3 +34,9 @@ jobs:
       - name: Lint Zig
         run: |
           zig fmt --check **/*.zig --exclude .zig-cache/**/*.zig
+
+      - name: Spell Check
+        uses: crate-ci/typos@v1.29.5
+        with:
+          files: .github/** scripts/** surtr/** ymir/** *.zig *.zig.zon *.md *.bash
+          config: _typos.toml
