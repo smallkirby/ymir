@@ -1,0 +1,6 @@
+[default.extend-words]
+# ba: acronym for BinAllocator.
+ba = "ba"
+# IST: acronym for Interrupt Stack Table.
+ist = "ist"
+ists = "ists"
