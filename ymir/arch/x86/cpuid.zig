@@ -98,7 +98,7 @@ pub const FeatureInfoEcx = packed struct(u32) {
     cnxt_id: bool = false,
     /// IA32_DEBUG_INTERFACE.
     sdbg: bool = false,
-    /// FMA extesions using YMM state.
+    /// FMA extensions using YMM state.
     fma: bool = false,
     /// CMPXCHG16B available.
     cmpxchg16b: bool = false,

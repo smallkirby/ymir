@@ -190,7 +190,7 @@ const alignment_check = 17;
 const machine_check = 18;
 const simd_exception = 19;
 const virtualization_exception = 20;
-const control_protection_excepton = 21;
+const control_protection_exception = 21;
 
 pub const num_system_exceptions = 32;
 
@@ -217,7 +217,7 @@ pub inline fn exceptionName(vector: u64) []const u8 {
         machine_check => "#MC: Machine check",
         simd_exception => "#XM: SIMD exception",
         virtualization_exception => "#VE: Virtualization exception",
-        control_protection_excepton => "#CP: Control protection exception",
+        control_protection_exception => "#CP: Control protection exception",
         else => "Unknown exception",
     };
 }

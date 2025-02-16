@@ -395,7 +395,7 @@ pub const EntryIntrInfo = packed struct(u32) {
         nmi = 2,
         hw = 3,
         _unused2 = 4,
-        priviledged_sw = 5,
+        privileged_sw = 5,
         exception = 6,
         _unused3 = 7,
     };
@@ -428,7 +428,7 @@ pub const ExitIntrInfo = packed struct(u32) {
         nmi = 2,
         hw = 3,
         _unused2 = 4,
-        priviledged_sw = 5,
+        privileged_sw = 5,
         exception = 6,
         _unused3 = 7,
     };

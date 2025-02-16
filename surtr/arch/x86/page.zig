@@ -250,7 +250,7 @@ fn EntryBase(table_level: TableLevel) type {
         /// Present.
         present: bool = true,
         /// Read/Write.
-        /// If set to false, wirte access is not allowed to the region.
+        /// If set to false, write access is not allowed to the region.
         rw: bool,
         /// User/Supervisor.
         /// If set to false, user-mode access is not allowed to the region.
@@ -262,10 +262,10 @@ fn EntryBase(table_level: TableLevel) type {
         /// Indirectly determines the memory type used to access the page or page table.
         pcd: bool = false,
         /// Accessed.
-        /// Indicates wheter this entry has been used for translation.
+        /// Indicates whether this entry has been used for translation.
         accessed: bool = false,
         /// Dirty bit.
-        /// Indicates wheter software has written to this page.
+        /// Indicates whether software has written to this page.
         /// Ignored when this entry references a page table.
         dirty: bool = false,
         /// Page Size.

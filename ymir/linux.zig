@@ -49,7 +49,7 @@ pub const SetupHeader = extern struct {
     ext_loader_type: u8 align(1),
     /// W. The 32-bit linear address of the kernel command line.
     cmd_line_ptr: u32 align(1),
-    /// R. Higest address that can be used for initrd.
+    /// R. Highest address that can be used for initrd.
     initrd_addr_max: u32 align(1),
     kernel_alignment: u32 align(1),
     relocatable_kernel: u8 align(1),

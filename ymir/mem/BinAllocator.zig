@@ -211,7 +211,7 @@ test "allocation exceeds page size" {
     }
 }
 
-test "no mitigation agains double free" {
+test "no mitigation against double free" {
     const ba = getTestingAllocator();
 
     const ptr = try ba.alloc(u8, 0x20);

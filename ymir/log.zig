@@ -35,8 +35,8 @@ pub const default_log_options = std.Options{
 
 /// Initialize the logger with the given serial console.
 /// You MUST call this function before using the logger.
-pub fn init(ser: Serial) void {
-    serial = ser;
+pub fn init(s: Serial) void {
+    serial = s;
 }
 
 fn write(_: void, bytes: []const u8) LogError!usize {

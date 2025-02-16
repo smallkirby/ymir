@@ -339,7 +339,7 @@ pub const PinExecCtrl = packed struct(u32) {
     /// If set to true, the VMX-preemption timer counts down in VMX non-root operation.
     /// When the timer counts down to zero, a VM exit occurs.
     activate_vmx_preemption_timer: bool,
-    /// If set to true, the processor treats interrupts with the posted-interrupt notificatin vector.
+    /// If set to true, the processor treats interrupts with the posted-interrupt notification vector.
     process_posted_interrupts: bool,
     /// Reserved.
     /// You MUST consult IA32_VMX_PINBASED_CTLS and IA32_VMX_TRUE_PINBASED_CTLS
@@ -392,12 +392,12 @@ pub const PrimaryProcExecCtrl = packed struct(u32) {
     rdtsc: bool,
     /// Reserved.
     _reserved4: u2,
-    /// MOV to CR3 in conjuction with CR3-target controls.
+    /// MOV to CR3 in conjunction with CR3-target controls.
     cr3load: bool,
     /// MOV from CR3.
     cr3store: bool,
-    /// If set to false, the logical processor operates as if all the teritary processor-based VM-execution controls were also 0.
-    activate_teritary_controls: bool,
+    /// If set to false, the logical processor operates as if all the tertiary processor-based VM-execution controls were also 0.
+    activate_tertiary_controls: bool,
     /// Reserved.
     _reserved: u1,
     /// MOV to CR8.
@@ -559,7 +559,7 @@ pub const ExceptionBitmap = packed struct(u32) {
     machine_check: bool,
     simd_exception: bool,
     virtualization_exception: bool,
-    control_protection_excepton: bool,
+    control_protection_exception: bool,
     _reserved: u11,
 };
 

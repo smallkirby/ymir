@@ -88,7 +88,7 @@ pub fn initEpt(
     allocator: Allocator,
 ) Error!Eptp {
     if (size & page_mask_2mb != 0) {
-        @panic("Requested end adderss is not 2MiB page aligned.");
+        @panic("Requested end address is not 2MiB page aligned.");
     }
     if (size > page_size_1gb * num_table_entries) {
         @panic("Requested end address is too large.");

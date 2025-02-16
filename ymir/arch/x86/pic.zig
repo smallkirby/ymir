@@ -41,7 +41,7 @@ const Icw = union(icw) {
     const Icw1 = packed struct(u8) {
         /// ICW4 is needed.
         icw4: bool = true,
-        /// Sigle or cascade mode.
+        /// Single or cascade mode.
         single: bool = false,
         /// CALL address interval 4 or 8.
         interval4: bool = false,

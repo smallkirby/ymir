@@ -55,7 +55,7 @@ const offsets = struct {
 /// Initialize a serial console, then set a write-function to `Serial.write_fn`.
 pub fn initSerial(serial: *Serial, port: Ports, baud: u32) void {
     const p = @intFromEnum(port);
-    am.outb(0b00_000_0_00, p + offsets.lcr); // 8n1: no paritiy, 1 stop bit, 8 data bit
+    am.outb(0b00_000_0_00, p + offsets.lcr); // 8n1: no parity, 1 stop bit, 8 data bit
     am.outb(0, p + offsets.ier); // Disable interrupts
     am.outb(0, p + offsets.fcr); // Disable FIFO
 
