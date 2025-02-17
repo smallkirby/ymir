@@ -15,11 +15,7 @@ var gdt: [max_num_gdt]SegmentDescriptor align(16) = [_]SegmentDescriptor{
 /// GDT Register.
 var gdtr = GdtRegister{
     .limit = @sizeOf(@TypeOf(gdt)) - 1,
-    // TODO: BUG: Zig v0.13.0. https://github.com/ziglang/zig/issues/17856
-    // .base = &gdt,
-    // This initialization invokes LLVM error.
-    // As a workaround, we make `gdtr` mutable and initialize it in `init()`.
-    .base = undefined,
+    .base = &gdt,
 };
 
 /// Index of the kernel data segment.
