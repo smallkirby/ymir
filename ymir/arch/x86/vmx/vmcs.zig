@@ -1,7 +1,6 @@
 const std = @import("std");
 
 const vmx = @import("common.zig");
-const vmcs = @import("vmcs.zig");
 
 const VmxError = vmx.VmxError;
 
