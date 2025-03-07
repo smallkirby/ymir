@@ -1,6 +1,6 @@
 # Ymir: The Type-1 Hypervisor
 
-![Zig](https://shields.io/badge/Zig-v0%2E13%2E0-blue?logo=zig&color=F7A41D&style=for-the-badge)
+![Zig](https://shields.io/badge/Zig-v0%2E14%2E0-blue?logo=zig&color=F7A41D&style=for-the-badge)
 
 ![Lint](https://github.com/smallkirby/ymir/actions/workflows/lint.yml/badge.svg)
 ![Test](https://github.com/smallkirby/ymir/actions/workflows/test.yml/badge.svg)
