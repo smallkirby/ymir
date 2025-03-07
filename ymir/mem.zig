@@ -121,8 +121,8 @@ pub fn reconstructMapping(allocator: Allocator) !void {
 /// To do page table walk, use arch-specific functions.
 pub fn virt2phys(addr: anytype) Phys {
     const value = switch (@typeInfo(@TypeOf(addr))) {
-        .Int, .ComptimeInt => @as(u64, addr),
-        .Pointer => @as(u64, @intFromPtr(addr)),
+        .int, .comptime_int => @as(u64, addr),
+        .pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
     return if (!mapping_reconstructed.load(.acquire)) b: {
@@ -141,8 +141,8 @@ pub fn virt2phys(addr: anytype) Phys {
 /// To do page table walk, use arch-specific functions.
 pub fn phys2virt(addr: anytype) Virt {
     const value = switch (@typeInfo(@TypeOf(addr))) {
-        .Int, .ComptimeInt => @as(u64, addr),
-        .Pointer => @as(u64, @intFromPtr(addr)),
+        .int, .comptime_int => @as(u64, addr),
+        .pointer => @as(u64, @intFromPtr(addr)),
         else => @compileError("phys2virt: invalid type"),
     };
     return if (!mapping_reconstructed.load(.acquire)) b: {

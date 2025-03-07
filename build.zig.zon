@@ -1,6 +1,8 @@
 .{
-    .name = "ymir",
+    .name = .ymir,
     .version = "0.0.0",
+    .fingerprint = 0x7d48a88726f78b85,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{},
     .paths = .{
         "",

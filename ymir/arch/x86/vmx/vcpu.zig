@@ -270,7 +270,7 @@ pub const Vcpu = struct {
 
     /// Print guest state and stack trace, and abort.
     pub fn abort(self: *Self) noreturn {
-        @setCold(true);
+        @branchHint(.cold);
         self.dump() catch log.err("Failed to dump VM information.", .{});
         ymir.endlessHalt();
     }
@@ -770,7 +770,7 @@ fn setupGuestState(vcpu: *Vcpu) VmxError!void {
 
 /// Set host stack pointer.
 /// This function is called directly from assembly.
-export fn setHostStack(rsp: u64) callconv(.C) void {
+export fn setHostStack(rsp: u64) callconv(.c) void {
     vmwrite(vmcs.host.rsp, rsp) catch {};
 }
 

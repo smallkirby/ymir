@@ -28,7 +28,7 @@ pub fn setVm(target_vm: *vmx.Vm) void {
 }
 
 fn panic(msg: []const u8, _: ?*builtin.StackTrace, _: ?usize) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     arch.disableIntr();
 

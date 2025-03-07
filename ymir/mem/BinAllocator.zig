@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Alignment = std.mem.Alignment;
 const spin = @import("ymir").spin;
 
 const Self = @This();
@@ -10,6 +11,7 @@ pub const vtable = Allocator.VTable{
     .alloc = allocate,
     .free = free,
     .resize = resize,
+    .remap = remap,
 };
 
 const bin_sizes = [_]usize{
@@ -109,10 +111,10 @@ fn pop(list_head: *ChunkMetaPointer) *ChunkMetaNode {
     }
 }
 
-fn allocate(ctx: *anyopaque, n: usize, log2_align: u8, _: usize) ?[*]u8 {
+fn allocate(ctx: *anyopaque, n: usize, log2_align: Alignment, _: usize) ?[*]u8 {
     const self: *Self = @alignCast(@ptrCast(ctx));
 
-    const ptr_align = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
+    const ptr_align = log2_align.toByteUnits();
     const bin_index = binIndex(@max(ptr_align, n));
 
     if (bin_index) |index| {
@@ -126,10 +128,10 @@ fn allocate(ctx: *anyopaque, n: usize, log2_align: u8, _: usize) ?[*]u8 {
     }
 }
 
-fn free(ctx: *anyopaque, slice: []u8, log2_align: u8, _: usize) void {
+fn free(ctx: *anyopaque, slice: []u8, log2_align: Alignment, _: usize) void {
     const self: *Self = @alignCast(@ptrCast(ctx));
 
-    const ptr_align = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
+    const ptr_align = log2_align.toByteUnits();
     const bin_index = binIndex(@max(ptr_align, slice.len));
 
     if (bin_index) |index| {
@@ -139,8 +141,12 @@ fn free(ctx: *anyopaque, slice: []u8, log2_align: u8, _: usize) void {
     }
 }
 
-fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
+fn resize(_: *anyopaque, _: []u8, _: Alignment, _: usize, _: usize) bool {
     @panic("BinAllocator does not support resizing");
+}
+
+fn remap(_: *anyopaque, _: []u8, _: Alignment, _: usize, _: usize) ?[*]u8 {
+    @panic("BinAllocator does not support remap");
 }
 
 /// Metadata of free chunk.

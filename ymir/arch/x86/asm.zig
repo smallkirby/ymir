@@ -333,7 +333,7 @@ pub fn relax() void {
 
 fn cast(T: type, value: anytype) T {
     return switch (@typeInfo(T)) {
-        .Int, .ComptimeInt => return @as(T, @bitCast(value)),
+        .int, .comptime_int => return @as(T, @bitCast(value)),
         .Strunct => if (@TypeOf(value) == T) {
             return value;
         } else {

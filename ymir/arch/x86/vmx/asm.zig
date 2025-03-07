@@ -6,7 +6,7 @@ const Vcpu = @import("vcpu.zig").Vcpu;
 
 /// VMLAUNCH or VMRESUME.
 /// Returns 0 if succeeded, 1 if failed.
-export fn asmVmEntry() callconv(.Naked) u8 {
+export fn asmVmEntry() callconv(.naked) u8 {
     // Save callee saved registers.
     asm volatile (
         \\push %%rbp
@@ -143,7 +143,7 @@ export fn asmVmEntry() callconv(.Naked) u8 {
     );
 }
 
-pub fn asmVmExit() callconv(.Naked) void {
+pub fn asmVmExit() callconv(.naked) void {
     // Disable IRQ.
     asm volatile (
         \\cli

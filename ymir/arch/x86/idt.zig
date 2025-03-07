@@ -47,15 +47,11 @@ var idt: [max_num_gates]GateDescriptor align(4096) = [_]GateDescriptor{std.mem.z
 /// IDT Register.
 var idtr = IdtRegister{
     .limit = @sizeOf(@TypeOf(idt)) - 1,
-    // TODO: BUG: Zig v0.13.0. https://github.com/ziglang/zig/issues/17856
-    //.base = &idt,
-    // This initialization invokes LLVM error.
-    // As a workaround, we make `idtr` mutable and initialize it in `init()`.
-    .base = undefined,
+    .base = &idt,
 };
 
 /// ISR signature.
-pub const Isr = fn () callconv(.Naked) void;
+pub const Isr = fn () callconv(.naked) void;
 
 /// Initialize the IDT.
 pub fn init() void {

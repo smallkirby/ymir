@@ -9,8 +9,8 @@ on:
       - master
 
 env:
-  ZIG_VERSION: 0.13.0
-  LLVM_VERSION: 18
+  ZIG_VERSION: 0.14.0
+  LLVM_VERSION: 19
 
 jobs:
   lint:
