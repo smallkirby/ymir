@@ -23,7 +23,7 @@ extern const __stackguard_lower: [*]const u8;
 
 /// Kernel entry point called by surtr.
 /// The function switches stack from the surtr stack to the kernel stack.
-export fn kernelEntry() callconv(.Naked) noreturn {
+export fn kernelEntry() callconv(.naked) noreturn {
     asm volatile (
         \\movq %[new_stack], %%rsp
         \\call kernelTrampoline
@@ -34,7 +34,7 @@ export fn kernelEntry() callconv(.Naked) noreturn {
 
 /// Trampoline function to call the kernel main function.
 /// The role of this function is to make main function return errors.
-export fn kernelTrampoline(boot_info: surtr.BootInfo) callconv(.Win64) noreturn {
+export fn kernelTrampoline(boot_info: surtr.BootInfo) callconv(.{ .x86_64_win = .{} }) noreturn {
     kernelMain(boot_info) catch |err| {
         log.err("Kernel aborted with error: {}", .{err});
         @panic("Exiting...");

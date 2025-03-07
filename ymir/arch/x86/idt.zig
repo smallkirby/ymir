@@ -51,7 +51,7 @@ var idtr = IdtRegister{
 };
 
 /// ISR signature.
-pub const Isr = fn () callconv(.Naked) void;
+pub const Isr = fn () callconv(.naked) void;
 
 /// Initialize the IDT.
 pub fn init() void {
