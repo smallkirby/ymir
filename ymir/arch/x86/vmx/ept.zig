@@ -246,7 +246,7 @@ fn EntryBase(table_level: TableLevel) type {
         type: MemoryType = .uncacheable,
         /// Ignore PAT memory type.
         ignore_pat: bool = false,
-        /// If true, this entry maps an memory, Otherwise, this references a page table.
+        /// If true, this entry maps memory. Otherwise, this references a page table.
         map_memory: bool,
         /// If EPTP[6] is 1, accessed flag. Otherwise, ignored.
         accessed: bool = false,
