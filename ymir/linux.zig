@@ -27,7 +27,7 @@ pub const SetupHeader = extern struct {
     header: u32 align(1),
     /// RO. Boot protocol version supported.
     version: u16 align(1),
-    realmode_swtch: u32 align(1),
+    realmode_switch: u32 align(1),
     start_sys_seg: u16 align(1),
     kernel_version: u16 align(1),
     /// M. The type of loader. Specify 0xFF if no ID is assigned.
