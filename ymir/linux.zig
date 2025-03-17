@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const layout = struct {
     /// Where the kernel boot parameters are loaded, known as "zero page".
-    /// Must be initialized by zeros.
+    /// Must be initialized with zeros.
     pub const bootparam = 0x0001_0000;
     /// Where the kernel cmdline is located.
     pub const cmdline = 0x0002_0000;
@@ -77,7 +77,7 @@ pub const SetupHeader = extern struct {
         _unused: u3 = 0,
         /// If false, print early messages.
         quiet_flag: bool = false,
-        /// If false, reload the segment registers in the 32bit entry point.
+        /// If false, reload the segment registers in the 32 bit entry point.
         keep_segments: bool = false,
         /// Set true to indicate that the value entered in the `heap_end_ptr` is valid.
         can_use_heap: bool = false,
@@ -182,7 +182,7 @@ pub const BootParams = extern struct {
         }
     }
 
-    /// Instantiate a boot params from bzImage.
+    /// Instantiate boot params from bzImage.
     pub fn from(bytes: []u8) @This() {
         return std.mem.bytesToValue(
             @This(),
