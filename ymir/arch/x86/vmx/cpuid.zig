@@ -49,8 +49,8 @@ pub fn handleCpuidExit(vcpu: *Vcpu) VmxError!void {
             setValue(&regs.rcx, 0x72_69_6D_59); // Ymir
             setValue(&regs.rdx, 0x72_69_6D_59); // Ymir
         },
-        .version_info => {
-            const orig = Leaf.query(.version_info, null);
+        .vers_and_feat_info => {
+            const orig = Leaf.query(.vers_and_feat_info, null);
             setValue(&regs.rax, orig.eax); // Version information.
             setValue(&regs.rbx, orig.ebx); // Brand index / CLFLUSH line size / Addressable IDs / Initial APIC ID
             setValue(&regs.rcx, @as(u32, @bitCast(feature_info_ecx)));
