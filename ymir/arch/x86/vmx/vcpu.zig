@@ -358,7 +358,7 @@ pub const Vcpu = struct {
         // No interrupts to inject.
         if (pending == 0) return false;
         // PIC is not initialized.
-        if (self.pic.primary_phase != .inited) return false;
+        if (self.pic.primary_phase != .initialized) return false;
 
         // Guest is blocking interrupts.
         const eflags: am.FlagsRegister = @bitCast(try vmread(vmcs.guest.rflags));

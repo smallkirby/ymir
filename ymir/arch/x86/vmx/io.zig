@@ -126,7 +126,7 @@ fn handlePicIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
     switch (qual.port) {
         // Primary PIC data.
         0x21 => switch (pic.primary_phase) {
-            .uninitialized, .inited => regs.rax = pic.primary_mask,
+            .uninitialized, .initialized => regs.rax = pic.primary_mask,
             else => {
                 log.err("Unsupported I/O-in to primary PIC: phase={s}", .{@tagName(pic.primary_phase)});
                 vcpu.abort();
@@ -134,7 +134,7 @@ fn handlePicIn(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         },
         // Secondary PIC data.
         0xA1 => switch (pic.secondary_phase) {
-            .uninitialized, .inited => regs.rax = pic.secondary_mask,
+            .uninitialized, .initialized => regs.rax = pic.secondary_mask,
             else => {
                 log.err("Unsupported I/O-in to secondary PIC: phase={s}", .{@tagName(pic.secondary_phase)});
                 vcpu.abort();
@@ -171,7 +171,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         },
         // Primary PIC data.
         0x21 => switch (pic.primary_phase) {
-            .uninitialized, .inited => pic.primary_mask = dx,
+            .uninitialized, .initialized => pic.primary_mask = dx,
             .phase1 => {
                 log.info("Primary PIC vector offset: 0x{X}", .{dx});
                 pic.primary_base = dx;
@@ -183,7 +183,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             } else {
                 pic.primary_phase = .phase3;
             },
-            .phase3 => pic.primary_phase = .inited,
+            .phase3 => pic.primary_phase = .initialized,
         },
         // Secondary PIC command.
         0xA0 => switch (dx) {
@@ -198,7 +198,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
         },
         // Secondary PIC data.
         0xA1 => switch (pic.secondary_phase) {
-            .uninitialized, .inited => pic.secondary_mask = dx,
+            .uninitialized, .initialized => pic.secondary_mask = dx,
             .phase1 => {
                 log.info("Secondary PIC vector offset: 0x{X}", .{dx});
                 pic.secondary_base = dx;
@@ -210,7 +210,7 @@ fn handlePicOut(vcpu: *Vcpu, qual: QualIo) VmxError!void {
             } else {
                 pic.secondary_phase = .phase3;
             },
-            .phase3 => pic.secondary_phase = .inited,
+            .phase3 => pic.secondary_phase = .initialized,
         },
         else => {
             log.err("Unsupported I/O-out to PIC: port=0x{X}", .{qual.port});
@@ -239,7 +239,7 @@ pub const Pic = struct {
         phase1,
         phase2,
         phase3,
-        inited,
+        initialized,
     };
 
     pub fn new() Pic {
