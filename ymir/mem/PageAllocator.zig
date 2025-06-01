@@ -93,6 +93,11 @@ pub fn init(self: *Self, map: MemoryMap) void {
     while (true) {
         const desc: *uefi.tables.MemoryDescriptor = desc_iter.next() orelse break;
 
+        if (desc.physical_start >= max_physical_size) {
+            self.markAllocated(phys2frame(avail_end), frame_count - phys2frame(avail_end));
+            break;
+        }
+
         // Mark holes between regions as allocated (used).
         if (avail_end < desc.physical_start) {
             self.markAllocated(phys2frame(avail_end), desc.number_of_pages);
