@@ -4,6 +4,7 @@
 
 ![Lint](https://github.com/smallkirby/ymir/actions/workflows/lint.yml/badge.svg)
 ![Test](https://github.com/smallkirby/ymir/actions/workflows/test.yml/badge.svg)
+![Boot Linux](https://img.shields.io/travis/com/smallkirby/ymir?style=flat&logo=travis&label=Boot%20Linux)
 
 Ymir is an Intel VT-x based baremetal hypervisor written in Zig.
 It is minimalistic but can boot latest Linux kernel (v6.9).

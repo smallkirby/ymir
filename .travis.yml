@@ -1,0 +1,27 @@
+branches:
+  only:
+    - master
+language: cpp
+dist: noble
+
+env:
+  - ZIG_VERSION=0.14.0
+  - BUILD_TYPE=ReleaseFast
+
+before_install:
+  - sudo apt install -y sudo binutils curl wget tar xz-utils qemu-system-x86 qemu-utils ovmf
+  - curl https://ziglang.org/download/$ZIG_VERSION/zig-linux-x86_64-$ZIG_VERSION.tar.xz -L -o zig.tar.xz
+  - tar -xf zig.tar.xz
+  - export PATH="$(pwd)/zig-linux-x86_64-0.14.0:$PATH"
+
+  - git lfs pull
+  - sudo apt update
+
+  - zig version
+  - uname -a
+  - ls /dev/kvm -la
+
+script:
+  - zig build install-samples
+  - zig build install -Dlog_level=debug -Doptimize=$BUILD_TYPE
+  - bash ./.github/workflows/boot.bash
