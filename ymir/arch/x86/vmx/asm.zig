@@ -42,7 +42,7 @@ export fn asmVmEntry() callconv(.Naked) u8 {
 
     // Restore guest registers.
     asm volatile (std.fmt.comptimePrint(
-            \\mov %%rdi, %%rax
+            \\lea {[guest_regs]}(%%rdi), %%rax
             \\mov {[rcx]}(%%rax), %%rcx
             \\mov {[rdx]}(%%rax), %%rdx
             \\mov {[rbx]}(%%rax), %%rbx
@@ -67,6 +67,7 @@ export fn asmVmEntry() callconv(.Naked) u8 {
             \\movaps {[xmm7]}(%%rax), %%xmm7
             \\mov {[rax]}(%%rax), %%rax
         , .{
+            .guest_regs = @offsetOf(Vcpu, "guest_regs"),
             .rax = @offsetOf(vmx.GuestRegisters, "rax"),
             .rcx = @offsetOf(vmx.GuestRegisters, "rcx"),
             .rdx = @offsetOf(vmx.GuestRegisters, "rdx"),
