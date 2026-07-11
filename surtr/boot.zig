@@ -379,11 +379,10 @@ pub fn main() uefi.Status {
     unreachable;
 }
 
-inline fn toUcs2(comptime s: [:0]const u8) [s.len * 2:0]u16 {
-    var ucs2: [s.len * 2:0]u16 = [_:0]u16{0} ** (s.len * 2);
+inline fn toUcs2(comptime s: [:0]const u8) [s.len:0]u16 {
+    var ucs2 = [_:0]u16{0} ** s.len;
     for (s, 0..) |c, i| {
         ucs2[i] = c;
-        ucs2[i + 1] = 0;
     }
     return ucs2;
 }
