@@ -65,11 +65,12 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
 
     // Initialize GDT.
     // It switches GDT from the one prepared by surtr to the ymir GDT.
+    arch.disableIntr();
     arch.gdt.init();
     log.info("Initialized GDT.", .{});
 
     // Initialize IDT.
-    // From this moment, interrupts are enabled.
+    // Interrupts are still disabled here.
     arch.intr.init();
     log.info("Initialized IDT.", .{});
 
@@ -101,6 +102,9 @@ fn kernelMain(boot_info: surtr.BootInfo) !void {
     arch.intr.registerHandler(idefs.pic_serial1, blobIrqHandler);
     arch.pic.unsetMask(.serial1);
     arch.serial.enableInterrupt(.com1);
+
+    // Enable interrupts.
+    arch.enableIntr();
 
     // Enable XSAVE features.
     arch.enableXstateFeature();

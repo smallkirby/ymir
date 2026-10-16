@@ -83,8 +83,6 @@ pub fn init() void {
     registerHandler(page_fault, unhandledFaultHandler);
 
     idt.init();
-
-    am.sti();
 }
 
 /// Register interrupt handler.
